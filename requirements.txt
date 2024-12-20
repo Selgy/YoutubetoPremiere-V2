@@ -1,0 +1,9 @@
+flask==2.0.1
+flask-cors==3.0.10
+flask-socketio==5.1.1
+yt-dlp==2024.12.13
+psutil==5.8.0
+pygame==2.1.2
+pyinstaller==5.6.2
+requests
+tqdm 
