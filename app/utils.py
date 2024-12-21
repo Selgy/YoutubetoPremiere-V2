@@ -241,14 +241,39 @@ def generate_new_filename(base_path, original_name, extension, suffix=""):
 def play_notification_sound(volume=0.3): 
     pygame.mixer.init()
 
-    base_path = sys._MEIPASS if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
-    notification_sound_path = os.path.join(base_path, 'notification_sound.mp3')
-
-    pygame.mixer.music.load(notification_sound_path)  # Load the notification sound file
-    pygame.mixer.music.set_volume(volume)  # Set the volume
-    pygame.mixer.music.play()
-    while pygame.mixer.music.get_busy():
-        pygame.time.Clock().tick(10)
+    # Get the correct base path whether running as exe or script
+    if getattr(sys, 'frozen', False):
+        # If running as exe, use the directory containing the exe
+        base_path = os.path.dirname(sys.executable)
+    else:
+        # If running as script, use the script's directory
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    
+    # Look in multiple possible locations for the sound file
+    possible_paths = [
+        os.path.join(base_path, 'notification_sound.mp3'),
+        os.path.join(base_path, 'app', 'notification_sound.mp3'),
+        os.path.join(base_path, 'exec', 'notification_sound.mp3')
+    ]
+    
+    notification_sound_path = None
+    for path in possible_paths:
+        if os.path.exists(path):
+            notification_sound_path = path
+            break
+    
+    if not notification_sound_path:
+        logging.error(f"Notification sound file not found. Searched in: {possible_paths}")
+        return
+            
+    try:
+        pygame.mixer.music.load(notification_sound_path)
+        pygame.mixer.music.set_volume(volume)
+        pygame.mixer.music.play()
+        while pygame.mixer.music.get_busy():
+            pygame.time.Clock().tick(10)
+    except Exception as e:
+        logging.error(f"Error playing notification sound: {e}")
 
 def is_premiere_running():
     for process in psutil.process_iter(['pid', 'name']):
