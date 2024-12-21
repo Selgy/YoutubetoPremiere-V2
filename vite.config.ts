@@ -60,23 +60,25 @@ export default defineConfig({
   preview: {
     port: cepConfig.servePort,
   },
-
+  optimizeDeps: {
+    exclude: ['socket.io-client']
+  },
   build: {
     sourcemap: isPackage ? cepConfig.zxp.sourceMap : cepConfig.build?.sourceMap,
     watch: {
       include: "src/jsx/**",
     },
-    // commonjsOptions: {
-    //   transformMixedEsModules: true,
-    // },
     rollupOptions: {
       input,
       output: {
         manualChunks: {},
-        // esModule: false,
-        preserveModules: false,
         format: "cjs",
+        preserveModules: false,
+        globals: {
+          'socket.io-client': 'io'
+        }
       },
+      external: ['socket.io-client']
     },
     target: "chrome74",
     outDir,

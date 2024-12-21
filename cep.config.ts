@@ -1,6 +1,16 @@
 import { CEP_Config } from "vite-cep-plugin";
 import { version } from "./package.json";
 
+// Add custom type declaration to extend CEF_Command
+declare module "vite-cep-plugin" {
+  type CEF_Command = 
+    | "--v=0"
+    | "--enable-nodejs"
+    | "--mixed-context"
+    | "--allow-file-access"
+    | "--allow-file-access-from-files"
+    | "--allow-insecure-localhost";
+}
 
 const config: CEP_Config = {
   version,
@@ -20,7 +30,12 @@ const config: CEP_Config = {
   iconNormal: "./src/assets/dark-icon.png",
   iconDarkNormalRollOver: "./src/assets/light-icon.png",
   iconNormalRollOver: "./src/assets/dark-icon.png",
-  parameters: ["--v=0", "--enable-nodejs", "--mixed-context"],
+  parameters: [
+    "--v=0",
+    "--enable-nodejs",
+    "--mixed-context",
+    "--allow-file-access",
+  ],
   width: 500,
   height: 550,
 
@@ -36,13 +51,7 @@ const config: CEP_Config = {
       minHeight: 350,
       maxWidth: 710,
       maxHeight: 850,
-      type: "Modeless", // Change the panel type
-      // Other possible types for the panel
-      // "Panel" - Standard panel
-      // "ModalDialog" - Modal dialog
-      // "Modeless" - Modeless dialog
-      // "Custom" - Custom type, often used for background tasks or other custom implementations
-
+      type: "Modeless",
     },
     {
       mainPath: "./settings/index.html", 
@@ -71,8 +80,6 @@ const config: CEP_Config = {
     "./js",
     "./jsx",
   ],
-
-
   copyZipAssets: [],
 };
 

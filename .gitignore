@@ -4,3 +4,4 @@ dist
 node_modules
 app/ffmpeg.exe
 build
+.venv

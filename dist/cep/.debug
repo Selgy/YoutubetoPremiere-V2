@@ -2,12 +2,12 @@
 <ExtensionList>
   <Extension Id="com.YoutubetoPremiereV2.cep.main">
     <HostList>
-      <Host Name="PPRO" Port="8860"/>
+      <Host Name="PPRO" Port="8880"/>
     </HostList>
   </Extension>
   <Extension Id="com.YoutubetoPremiereV2.cep.settings">
     <HostList>
-      <Host Name="PPRO" Port="8861"/>
+      <Host Name="PPRO" Port="8881"/>
     </HostList>
   </Extension>
 </ExtensionList>

@@ -21,7 +21,40 @@ logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
 
 app = Flask(__name__)
 CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+try:
+    socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+except ValueError:
+    try:
+        socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+    except ValueError:
+        socketio = SocketIO(app, cors_allowed_origins="*", async_mode=None)
+
+# Add this after socketio initialization
+@socketio.on('connect')
+def handle_connect():
+    logging.info('Client connected')
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    logging.info('Client disconnected')
+
+@socketio.on('import_video')
+def handle_import_video(data):
+    video_path = data.get('video_path')
+    logging.info(f'Received request to import video: {video_path}')
+    socketio.emit('import_video', {'path': video_path})
+
+@socketio.on('import_complete')
+def handle_import_complete(data):
+    success = data.get('success', False)
+    path = data.get('path', '')
+    if success:
+        logging.info(f'Successfully imported video: {path}')
+        socketio.emit('import_status', {'success': True, 'message': 'Video imported successfully'})
+    else:
+        error = data.get('error', 'Unknown error')
+        logging.error(f'Failed to import video: {path}. Error: {error}')
+        socketio.emit('import_status', {'success': False, 'message': f'Import failed: {error}'})
 
 should_shutdown = False
 

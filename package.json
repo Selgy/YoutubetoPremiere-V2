@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "scripts": {
     "prebuild": "node scripts/ensure-dirs.js",
-    "build": "rimraf dist/* && tsc -p \"tsconfig-build.json\" && vite build --watch false && python -m PyInstaller --clean --noupx --onefile app/YoutubetoPremiere.py --workpath build --distpath build --add-data \"app/notification_sound.mp3;app\" --hidden-import \"engineio.async_drivers.threading\" --name YoutubetoPremiere && mkdir dist\\cep\\exec && copy /Y \"build\\YoutubetoPremiere.exe\" \"dist\\cep\\exec\\\"",
+    "build": "rimraf dist/* && tsc -p \"tsconfig-build.json\" && vite build --watch false && .\\.venv\\Scripts\\activate && .\\.venv\\Scripts\\python -m PyInstaller YoutubetoPremiere.spec --workpath build --distpath build && mkdir dist\\cep\\exec\\app && copy /Y \"build\\YoutubetoPremiere.exe\" \"dist\\cep\\exec\\\" && copy /Y \"app\\notification_sound.mp3\" \"dist\\cep\\exec\\notification_sound.mp3\"",
     "dev": "vite",
     "watch": "tsc && vite build --watch true",
     "zxp": "rimraf dist/* && tsc -p \"tsconfig-build.json\" && cross-env ZXP_PACKAGE=true vite build --watch false",
@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
     "@babel/core": "^7.19.0",
@@ -55,8 +56,7 @@
     "typescript": "^4.6.4",
     "vite": "^4.5.2",
     "vite-cep-plugin": "^1.1.12",
-    "yarn": "^1.22.17",
-    "pyinstaller": "^5.0.0"
+    "yarn": "^1.22.17"
   },
   "main": "index.js",
   "license": "MIT"

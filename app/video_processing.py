@@ -123,7 +123,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             socketio.emit('download-failed', {'message': 'Failed to add metadata.'})
             return
 
-        import_video_to_premiere(video_file_path)
+        socketio.emit('import_video', {'path': video_file_path})
         logging.info("Clip imported to Premiere Pro")
         play_notification_sound()
         socketio.emit('download-complete')
@@ -208,7 +208,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     socketio.emit('download-failed', {'message': 'Failed to add metadata.'})
                     return
 
-                import_video_to_premiere(sanitized_output_template)
+                socketio.emit('import_video', {'path': sanitized_output_template})
                 play_notification_sound()
                 socketio.emit('download-complete')
             else:
@@ -262,7 +262,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio):
             result = ydl.download([video_url])
         if result == 0 and os.path.exists(sanitized_output_template):
             logging.info(f"Audio downloaded: {sanitized_output_template}")
-            import_video_to_premiere(sanitized_output_template)
+            socketio.emit('import_video', {'path': sanitized_output_template})
             play_notification_sound()
             socketio.emit('download-complete')
         else:

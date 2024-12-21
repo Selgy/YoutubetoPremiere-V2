@@ -1,6 +1,7 @@
 // Import CSInterface
 import CSInterface from '../lib/cep/csinterface';
 import { SystemPath } from '../lib/cep/csinterface';
+import { setupVideoImportHandler } from './videoImport';
 
 let PythonServerProcess = null;
 let csInterface = null;
@@ -166,6 +167,8 @@ async function startPythonServer() {
 
         // Set up script watcher after CSInterface is initialized
         await setupScriptWatcher();
+
+        setupVideoImportHandler();
 
         let PythonExecutablePath;
         if (process.platform === 'win32') {

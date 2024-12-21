@@ -238,7 +238,7 @@ def generate_new_filename(base_path, original_name, extension, suffix=""):
         new_name = f"{original_name}{suffix}_{counter}.{extension}"
     return new_name
 
-def play_notification_sound(volume=0.4):  # Default volume set to 50%
+def play_notification_sound(volume=0.3): 
     pygame.mixer.init()
 
     base_path = sys._MEIPASS if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
