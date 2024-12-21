@@ -8,6 +8,7 @@ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
 >
 <ExtensionList>
   <Extension Id="com.YoutubetoPremiereV2.cep.main" Version="0.0.1" />
+  <Extension Id="com.YoutubetoPremiereV2.cep.settings" Version="0.0.1" />
 </ExtensionList>
 <ExecutionEnvironment>
   <HostList>
@@ -35,12 +36,55 @@ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         <AutoVisible>true</AutoVisible>
       </Lifecycle>
       <UI>
-        <Type>Panel</Type>
-        <Menu>YoutubetoPremiere V2</Menu>
+        <Type>Modeless</Type>
+        <Menu>YoutubetoPremiere</Menu>
         <Geometry>
           <Size>
-            <Width>600</Width>
-            <Height>650</Height>
+            <Width>710</Width>
+            <Height>500</Height>
+          </Size>
+          <MaxSize>
+            <Width>710</Width>
+            <Height>850</Height>
+          </MaxSize>
+          <MinSize>
+            <Width>710</Width>
+            <Height>350</Height>
+          </MinSize>
+        </Geometry>
+        <Icons>
+          <Icon Type="Normal">./src/assets/dark-icon.png</Icon>
+          <Icon Type="DarkNormal">./src/assets/light-icon.png</Icon>
+          <Icon Type="RollOver">./src/assets/dark-icon.png</Icon>
+          <Icon Type="DarkRollOver">./src/assets/light-icon.png</Icon>
+        </Icons>
+      </UI>
+    </DispatchInfo>
+  </Extension>
+  <Extension Id="com.YoutubetoPremiereV2.cep.settings">
+    <DispatchInfo>
+      <Resources>
+        <MainPath>./settings/index.html</MainPath>
+        <CEFCommandLine>
+          <Parameter>--v=0</Parameter>
+          <Parameter>--enable-nodejs</Parameter>
+          <Parameter>--mixed-context</Parameter>
+        </CEFCommandLine>
+      </Resources>
+      <Lifecycle>
+        <AutoVisible>false</AutoVisible>
+        <StartOn>
+          <Event>com.adobe.csxs.events.ApplicationInitialized</Event>
+          <Event>applicationActive</Event>
+        </StartOn>
+      </Lifecycle>
+      <UI>
+        <Type>Custom</Type>
+        
+        <Geometry>
+          <Size>
+            <Width>500</Width>
+            <Height>1</Height>
           </Size>
         </Geometry>
         <Icons>

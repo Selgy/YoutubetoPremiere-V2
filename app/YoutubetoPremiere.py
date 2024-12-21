@@ -13,6 +13,12 @@ from utils import load_settings, monitor_premiere_and_shutdown
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# Add ffmpeg to PATH
+script_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+ffmpeg_dir = os.path.join(script_dir, 'app')
+os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
+logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
+
 app = Flask(__name__)
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
@@ -46,6 +52,54 @@ def monitor_premiere_and_shutdown_wrapper():
     global should_shutdown
     monitor_premiere_and_shutdown()
     should_shutdown = True
+
+def run_extendscript(script):
+    try:
+        script_path = os.path.join(os.environ['TEMP'], 'YoutubetoPremiere_script.jsx')
+        result_path = os.path.join(os.environ['TEMP'], 'YoutubetoPremiere_result.txt')
+
+        # Remove any existing result file
+        if os.path.exists(result_path):
+            try:
+                os.remove(result_path)
+            except:
+                pass
+
+        # Write the script
+        with open(script_path, 'w', encoding='utf-8') as f:
+            f.write(script)
+
+        # Wait for the result file to be created by the panel extension
+        timeout = 30  # 30 seconds timeout
+        start_time = time.time()
+        while not os.path.exists(result_path):
+            if time.time() - start_time > timeout:
+                raise TimeoutError("Timeout waiting for ExtendScript result")
+            time.sleep(0.1)
+
+        # Give a small delay to ensure the file is completely written
+        time.sleep(0.1)
+
+        # Read the result
+        try:
+            with open(result_path, 'r', encoding='utf-8') as f:
+                result = f.read().strip()
+            return result
+        except Exception as e:
+            logging.error(f"Error reading result file: {e}")
+            return None
+
+    except Exception as e:
+        logging.error(f'Error running ExtendScript: {e}')
+        return None
+    finally:
+        # Clean up
+        for file_path in [script_path, result_path]:
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except:
+                    pass
 
 if __name__ == "__main__":
     run_server()

@@ -7,9 +7,9 @@ const config: CEP_Config = {
   id: "com.YoutubetoPremiereV2.cep",
   displayName: "YoutubetoPremiere V2",
   symlink: "local",
-  port: 3000,
-  servePort: 5000,
-  startingDebugPort: 8860,
+  port: 4000,
+  servePort: 6000,
+  startingDebugPort: 8880,
   extensionManifestVersion: 6.0,
   requiredRuntimeVersion: 9.0,
   hosts: [
@@ -28,28 +28,52 @@ const config: CEP_Config = {
     {
       mainPath: "./main/index.html",
       name: "main",
-      panelDisplayName: "YoutubetoPremiere V2",
+      panelDisplayName: "YoutubetoPremiere",
       autoVisible: true,
-      width: 600,
-      height: 650,
-    },
+      width: 710,
+      height: 500,
+      minWidth: 710,
+      minHeight: 350,
+      maxWidth: 710,
+      maxHeight: 850,
+      type: "Modeless", // Change the panel type
+      // Other possible types for the panel
+      // "Panel" - Standard panel
+      // "ModalDialog" - Modal dialog
+      // "Modeless" - Modeless dialog
+      // "Custom" - Custom type, often used for background tasks or other custom implementations
 
+    },
+    {
+      mainPath: "./settings/index.html", 
+      name: "settings", 
+      autoVisible: false, 
+      type: "Custom", 
+      startOnEvents: ["com.adobe.csxs.events.ApplicationInitialized", "applicationActive"], 
+      height: 1, 
+    }
   ],
   build: {
     jsxBin: "off",
     sourceMap: true,
   },
   zxp: {
-    country: "US",
+    country: "FR",
     province: "CA",
-    org: "MyCompany",
-    password: "mypassword",
+    org: "Selgy",
+    password: "test",
     tsa: "http://timestamp.digicert.com/",
     sourceMap: false,
     jsxBin: "off",
   },
   installModules: [],
-  copyAssets: [],
+  copyAssets: [
+    "./js",
+    "./jsx",
+  ],
+
+
   copyZipAssets: [],
 };
+
 export default config;

@@ -45,6 +45,10 @@ def load_settings():
     # Find or download ffmpeg
     try:
         settings['ffmpeg_path'] = find_ffmpeg()
+        # Add ffmpeg directory to PATH
+        ffmpeg_dir = os.path.dirname(settings['ffmpeg_path'])
+        os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
+        logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
         logging.info(f"Using ffmpeg from: {settings['ffmpeg_path']}")
     except Exception as e:
         logging.error(f"Error setting up ffmpeg: {e}")
@@ -84,22 +88,22 @@ def get_default_download_path():
 
 def get_current_project_path():
     try:
-        # Use ExtendScript to get project path
-        script = """
-        if (app.project) {
-            app.project.path;
-        } else {
-            '';
-        }
-        """
-        result = run_extendscript(script)
-        if result and result.strip():
-            project_dir_path = os.path.dirname(result.strip())
-            logging.info(f"Project directory path: {project_dir_path}")
-            return project_dir_path
+        # Get the default Premiere Pro project directory
+        if platform.system() == 'Windows':
+            project_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'Adobe', 'Premiere Pro')
         else:
-            logging.warning("No active project found in Premiere Pro")
+            project_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'Adobe', 'Premiere Pro')
+        
+        # Find the most recent version folder
+        version_folders = [f for f in os.listdir(project_dir) if os.path.isdir(os.path.join(project_dir, f))]
+        if not version_folders:
             return None
+            
+        latest_version = sorted(version_folders)[-1]
+        project_dir_path = os.path.join(project_dir, latest_version)
+        
+        logging.info(f"Project directory path: {project_dir_path}")
+        return project_dir_path
     except Exception as e:
         logging.error(f'Error getting project path: {e}', exc_info=True)
         return None
@@ -108,123 +112,118 @@ def import_video_to_premiere(video_path):
     """Import video file into the active Premiere Pro project and open it in the source monitor."""
     if not os.path.exists(video_path):
         logging.error(f'File does not exist: {video_path}')
-        return
+        return False
 
     try:
         logging.info('Attempting to import video to Premiere...')
+        temp_dir = os.path.join(os.environ['TEMP'], 'YoutubetoPremiere')
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        script_path = os.path.join(temp_dir, 'script.jsx')
+        result_path = os.path.join(temp_dir, 'result.txt')
 
-        # Pre-process path to avoid backslash issues in f-string
-        imported_path = video_path.replace('\\', '\\\\')
+        # Remove any existing files
+        for file in [script_path, result_path]:
+            if os.path.exists(file):
+                try:
+                    os.remove(file)
+                except:
+                    pass
 
-        # Use ExtendScript to import and open in source monitor
+        # Prepare the path for ExtendScript
+        video_path_escaped = video_path.replace('\\', '\\\\')
+        
+        # Create the ExtendScript with debug alerts
         script = f"""
-        var success = false;
-        if (app.project) {{
-            try {{
-                var importedFile = app.project.importFiles(["{imported_path}"], 
-                    false, // suppressUI
-                    app.project.rootItem, // targetBin
-                    false // importAsNumberedStills
+        var result = "false";
+        try {{
+            if (app.project) {{
+                var importedFile = app.project.importFiles(["{video_path_escaped}"], 
+                    false, 
+                    app.project.rootItem, 
+                    false
                 );
                 
                 if (importedFile && importedFile.length > 0) {{
-                    app.sourceMonitor.openProjectItem(importedFile[0]);
-                    success = true;
+                    // Try using QE DOM first
+                    if (typeof qe !== 'undefined' && qe.project) {{
+                        var qeProject = qe.project;
+                        var importedItem = null;
+                        
+                        for (var i = 0; i < qeProject.numItems; i++) {{
+                            var item = qeProject.getItemAt(i);
+                            if (item && item.filePath === "{video_path_escaped}") {{
+                                importedItem = item;
+                                break;
+                            }}
+                        }}
+                        
+                        if (importedItem) {{
+                            importedItem.openInSource();
+                            result = "true";
+                        }} else {{
+                            importedFile[0].openInSource();
+                            result = "true";
+                        }}
+                    }} else {{
+                        importedFile[0].openInSource();
+                        result = "true";
+                    }}
                 }}
-            }} catch(e) {{
-                '$ERROR:' + e.toString();
             }}
+        }} catch(e) {{
+            result = "Error: " + e.toString();
         }}
-        success;
+
+        // Write the result to file
+        var resultFile = new File("{result_path}".replace(/\\\\/g, '/'));
+        resultFile.open('w');
+        resultFile.write(result);
+        resultFile.close();
         """
-        result = run_extendscript(script)
-        
-        if result and not result.startswith('$ERROR:'):
-            logging.info('Video imported and opened in source monitor successfully')
-        else:
-            error_msg = result.replace('$ERROR:', '') if result else 'Unknown error'
-            logging.error(f'Failed to import video: {error_msg}')
 
-    except Exception as e:
-        logging.error(f'Error during import or opening video in source monitor: {e}', exc_info=True)
-
-def run_extendscript(script):
-    try:
-        if platform.system() == 'Windows':
-            script_path = os.path.join(os.environ['TEMP'], 'temp_script.jsx')
-            result_path = os.path.join(os.environ['TEMP'], 'temp_result.txt')
-            
-            # Check if ExtendScript Toolkit exists
-            extendscript_paths = [
-                r"C:\Program Files\Adobe\Adobe ExtendScript Toolkit CC\ExtendScript Toolkit.exe",
-                r"C:\Program Files (x86)\Adobe\Adobe ExtendScript Toolkit CC\ExtendScript Toolkit.exe"
-            ]
-            
-            extendscript_exe = next((path for path in extendscript_paths if os.path.exists(path)), None)
-            
-            if not extendscript_exe:
-                logging.error("ExtendScript Toolkit not found")
-                return None
-        else:
-            script_path = '/tmp/temp_script.jsx'
-            result_path = '/tmp/temp_result.txt'
-
-        # Prepare the result path with proper escaping
-        escaped_result_path = result_path.replace('\\', '\\\\')
-        
-        # Write the script without using f-strings for the backslash parts
-        script_content = (
-            'try {\n'
-            '    var result = (function() {\n'
-            f'        {script}\n'
-            '    })();\n'
-            f'    var f = new File("{escaped_result_path}");\n'
-            '    f.open("w");\n'
-            '    f.write(result !== undefined ? result.toString() : "");\n'
-            '    f.close();\n'
-            '} catch(e) {\n'
-            f'    var f = new File("{escaped_result_path}");\n'
-            '    f.open("w");\n'
-            '    f.write("$ERROR:" + e.toString());\n'
-            '    f.close();\n'
-            '}'
-        )
-
+        # Write the script
         with open(script_path, 'w', encoding='utf-8') as f:
-            f.write(script_content)
+            f.write(script)
 
-        if platform.system() == 'Windows':
-            subprocess.run([extendscript_exe, script_path], capture_output=True, check=True)
+        # Wait for the result file (max 30 seconds)
+        start_time = time.time()
+        while not os.path.exists(result_path):
+            if time.time() - start_time > 30:
+                logging.error("Timeout waiting for import result")
+                return False
+            time.sleep(0.1)
+
+        # Read the result
+        with open(result_path, 'r', encoding='utf-8') as f:
+            result = f.read().strip()
+
+        # Clean up
+        try:
+            os.remove(script_path)
+            os.remove(result_path)
+        except:
+            pass
+
+        if result == "true":
+            logging.info('Video imported and opened in source monitor successfully')
+            return True
         else:
-            subprocess.run(['osascript', '-e', 
-                f'tell application "Adobe Premiere Pro" to do javascript file "{script_path}"'], 
-                capture_output=True, check=True)
-
-        if os.path.exists(result_path):
-            with open(result_path, 'r', encoding='utf-8') as f:
-                result = f.read().strip()
-            return result
-        return None
+            logging.error(f'Failed to import video: {result}')
+            return False
 
     except Exception as e:
-        logging.error(f'Error running ExtendScript: {e}')
-        return None
-    finally:
-        if os.path.exists(script_path):
-            try:
-                os.remove(script_path)
-            except:
-                pass
-        if os.path.exists(result_path):
-            try:
-                os.remove(result_path)
-            except:
-                pass
+        logging.error(f'Error during import: {e}', exc_info=True)
+        return False
 
 def sanitize_title(title):
-    valid_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
-    sanitized_title = ''.join(c for c in title if c in valid_chars)
+    # Keep more characters, only remove problematic ones
+    invalid_chars = '<>:"/\\|?*'
+    sanitized_title = ''.join(c for c in title if c not in invalid_chars)
     sanitized_title = sanitized_title.strip()
+    # Limit length to avoid path length issues
+    if len(sanitized_title) > 100:
+        sanitized_title = sanitized_title[:100]
     return sanitized_title
 
 def generate_new_filename(base_path, original_name, extension, suffix=""):
@@ -363,5 +362,10 @@ def find_ffmpeg():
     # Set executable permissions on Unix-like systems
     if platform.system() != 'Windows':
         os.chmod(ffmpeg_path, 0o755)
+
+    # Add ffmpeg directory to PATH
+    ffmpeg_dir = os.path.dirname(ffmpeg_path)
+    if platform.system() == 'Windows':
+        os.environ['PATH'] = ffmpeg_dir + os.pathsep + os.environ['PATH']
     
     return ffmpeg_path
