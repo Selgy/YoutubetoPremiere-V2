@@ -2,8 +2,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Get version from command line argument
-const version = process.argv[2].replace(/%npm_package_version%/g, require('../package.json').version);
-
+const version = process.argv[2];
 if (!version) {
   console.error('Version argument is required');
   process.exit(1);
@@ -37,4 +36,10 @@ files.forEach(file => {
     fs.writeFileSync(filePath, content);
     console.log(`Updated version in ${file.path} to ${version}`);
   }
-});  
+});
+
+// Clean up any leftover files in dist
+const distPath = path.join(process.cwd(), 'dist');
+if (fs.existsSync(distPath)) {
+  fs.rmSync(distPath, { recursive: true, force: true });
+}  
