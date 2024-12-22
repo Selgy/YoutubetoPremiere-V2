@@ -31,11 +31,21 @@ jobs:
         run: |
           echo "${{ matrix.node-path }}/bin" >> $GITHUB_PATH
           
+      - name: Install macOS dependencies
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install sdl2 pkg-config
+          
       - name: Setup Python
         run: |
           echo "${{ matrix.python-path }}/bin" >> $GITHUB_PATH
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install wheel setuptools
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            pip install -r requirements.txt
+          else
+            pip install -r requirements.txt
+          fi
           pip install pyinstaller
           
       - name: Install Node dependencies
