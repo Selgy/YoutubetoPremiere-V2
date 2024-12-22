@@ -374,15 +374,11 @@ socket.on('download-failed', (data) => {
         resetButtonState(button);
     }
 
-    // Show specific error notifications based on error type
+    // Show error notification
     if (data.error === 'Invalid license key' || data.error === 'No license key found') {
-        showNotification('No valid license found. Please enter a valid license key in YoutubetoPremiere.', 'error', 8000);
-    } else if (data.error === 'License expired') {
-        showNotification('Your license has expired. Please renew your license in YoutubetoPremiere.', 'error', 8000);
-    } else if (data.error && data.error.includes('license')) {
-        showNotification('License validation failed. Please check your license key in YoutubetoPremiere.', 'error', 8000);
+        showNotification('No valid license found. Please enter a valid license key.', 'error');
     } else {
-        showNotification(data.message || 'Failed to download video. Please try again.', 'error', 5000);
+        showNotification(data.message || 'Failed to download video', 'error');
     }
 });
 
@@ -465,46 +461,27 @@ function sendURL(downloadType, additionalData = {}) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(requestData)
             })
-            .then(async response => {
-                const data = await response.json();
-                if (!response.ok) {
-                    if (response.status === 403) {
-                        throw { 
-                            status: 403, 
-                            error: 'License validation failed',
-                            message: data.error || 'No valid license found. Please enter a valid license key in YoutubetoPremiere.'
-                        };
-                    }
-                    throw { 
-                        status: response.status, 
-                        error: data.error || 'Failed to process video',
-                        message: data.message || 'An error occurred while processing the video.'
-                    };
+            .then(response => response.json().then(data => ({status: response.status, data})))
+            .then(({status, data}) => {
+                if (status === 403) {
+                    throw new Error(data.error || 'License validation failed');
                 }
-                return data;
+                if (status !== 200) {
+                    throw new Error(data.error || 'Failed to process video');
+                }
             })
             .catch(error => {
                 console.error('Error:', error);
                 button.classList.remove('downloading', 'loading');
                 button.classList.add('failure');
-                
-                // Show appropriate error notification based on error type
-                if (error.status === 403) {
-                    showNotification(error.message, 'error', 8000);
-                } else if (error.message && error.message.includes('license')) {
-                    showNotification('License validation failed. Please check your license key in YoutubetoPremiere.', 'error', 8000);
-                } else {
-                    showNotification(error.message || 'Failed to process video. Please try again.', 'error', 5000);
-                }
-
-                // Reset button state after error
+                showNotification(error.message || 'Failed to process video', 'error');
                 setTimeout(() => {
-                    resetButtonState(button);
+                    button.classList.remove('failure');
+                    buttonStates[buttonType].isDownloading = false;
+                    const progressText = button.querySelector('.progress-text');
+                    progressText.textContent = button.dataset.originalText;
                 }, 1000);
             });
-        } else {
-            showNotification('Could not find video ID. Please try again on a valid YouTube video page.', 'error');
-            resetButtonState(button);
         }
     }
 }

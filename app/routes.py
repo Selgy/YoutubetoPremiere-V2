@@ -54,6 +54,7 @@ def register_routes(app, socketio, settings):
             # Check license validity first
             license_key = get_license_key()
             if not license_key:
+                socketio.emit('download-failed', {'error': 'No license key found'})
                 return jsonify(success=False, error='No license key found'), 403
 
             # Try Gumroad validation
@@ -71,14 +72,24 @@ def register_routes(app, socketio, settings):
                 )
 
                 if not (shopify_response.ok and shopify_response.json().get('status') == 'success'):
+                    socketio.emit('download-failed', {'error': 'Invalid license key'})
                     return jsonify(success=False, error='Invalid license key'), 403
 
             # If we get here, license is valid, proceed with video download
-            result = handle_video_url(request, settings, socketio, current_download)
-            return result
+            try:
+                result = handle_video_url(request, settings, socketio, current_download)
+                return result
+            except Exception as e:
+                error_message = str(e)
+                logging.error(f"Error in video processing: {error_message}")
+                socketio.emit('download-failed', {'error': error_message})
+                return jsonify(success=False, error=error_message), 500
+
         except Exception as e:
-            logging.error(f"Error handling video URL: {e}")
-            return jsonify(success=False, error=str(e)), 500
+            error_message = str(e)
+            logging.error(f"Error handling video URL: {error_message}")
+            socketio.emit('download-failed', {'error': error_message})
+            return jsonify(success=False, error=error_message), 500
 
     @app.route('/update-sound-settings', methods=['POST'])
     def update_sound_settings():
@@ -163,7 +174,6 @@ def register_routes(app, socketio, settings):
 
             if gumroad_response.ok and gumroad_response.json().get('success'):
                 save_license_key(license_key)
-                logging.info(f'License validated successfully via Gumroad')
                 return jsonify({'success': True, 'message': 'License validated successfully'})
 
             # Try Shopify validation
@@ -175,10 +185,8 @@ def register_routes(app, socketio, settings):
 
             if shopify_response.ok and shopify_response.json().get('status') == 'success':
                 save_license_key(license_key)
-                logging.info(f'License validated successfully via Shopify')
                 return jsonify({'success': True, 'message': 'License validated successfully'})
 
-            logging.error('License validation failed for key')
             return jsonify({'success': False, 'message': 'Invalid license key'}), 400
 
         except Exception as e:
@@ -190,20 +198,17 @@ def register_routes(app, socketio, settings):
         try:
             license_key = get_license_key()
             if not license_key:
-                logging.info('No license key found')
                 return jsonify({'isValid': False, 'message': 'No license key found'})
 
-            # Try Gumroad validation
+            # Perform the same validation as above
             gumroad_response = requests.post('https://api.gumroad.com/v2/licenses/verify', {
                 'product_id': '9yYJT15dJO3wB4Z74N-EUg==',
                 'license_key': license_key
             })
 
             if gumroad_response.ok and gumroad_response.json().get('success'):
-                logging.info('License is valid (Gumroad)')
                 return jsonify({'isValid': True, 'message': 'License is valid'})
 
-            # Try Shopify validation
             api_token = 'eHyU10yFizUV5qUJaFS8koE1nIx2UCDFNSoPVdDRJDI7xtunUK6ZWe40vfwp'
             shopify_response = requests.post(
                 f'https://app-easy-product-downloads.fr/api/get-license-key',
@@ -211,10 +216,8 @@ def register_routes(app, socketio, settings):
             )
 
             if shopify_response.ok and shopify_response.json().get('status') == 'success':
-                logging.info('License is valid (Shopify)')
                 return jsonify({'isValid': True, 'message': 'License is valid'})
 
-            logging.error('Invalid license key')
             return jsonify({'isValid': False, 'message': 'Invalid license key'})
 
         except Exception as e:

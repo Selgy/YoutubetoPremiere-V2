@@ -18,7 +18,7 @@ a = Analysis(
     ['app\\YoutubetoPremiere.py'],
     pathex=[get_python_path()],  # Add Python path explicitly
     binaries=[],  # Remove the nested Analysis call
-    datas=[('app/notification_sound.mp3', 'app')],
+    datas=[('app', 'app')],  # Only include the app directory
     hiddenimports=[
         'engineio.async_drivers.threading',
         'engineio.async_drivers.eventlet',

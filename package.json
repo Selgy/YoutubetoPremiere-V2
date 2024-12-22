@@ -1,15 +1,16 @@
 {
   "name": "bolt-cep",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "scripts": {
     "version": "cross-env-shell \"node scripts/version-update.js $npm_package_version && git add -A && (git commit -m v$npm_package_version || true) && git tag -f v$npm_package_version\" && git push && git push --tags -f",
     "postversion": "",
     "prebuild": "node scripts/ensure-dirs.js",
-    "build": "rimraf dist/* && tsc -p \"tsconfig-build.json\" && vite build --watch false && .\\.venv\\Scripts\\activate && .\\.venv\\Scripts\\python -m PyInstaller YoutubetoPremiere.spec --workpath build --distpath build && mkdir dist\\cep\\exec\\app && copy /Y \"build\\YoutubetoPremiere.exe\" \"dist\\cep\\exec\\\" && copy /Y \"app\\notification_sound.mp3\" \"dist\\cep\\exec\\notification_sound.mp3\"",
-    "dev": "vite",
-    "watch": "tsc && vite build --watch true",
-    "zxp": "rimraf dist/* && tsc -p \"tsconfig-build.json\" && cross-env ZXP_PACKAGE=true vite build --watch false",
-    "zip": "rimraf dist/* && tsc -p \"tsconfig-build.json\" && cross-env ZIP_PACKAGE=true vite build --watch false",
+    "clean": "rimraf dist/* node_modules/.vite",
+    "build": "yarn clean && tsc -p \"tsconfig-build.json\" && vite build --force --watch false && .\\.venv\\Scripts\\activate && .\\.venv\\Scripts\\python -m PyInstaller YoutubetoPremiere.spec --workpath build --distpath build && mkdir dist\\cep\\exec\\app && copy /Y \"build\\YoutubetoPremiere.exe\" \"dist\\cep\\exec\\\" && mkdir dist\\cep\\exec\\sounds && xcopy /E /I /Y \"app\\sounds\" \"dist\\cep\\exec\\sounds\"",
+    "dev": "rimraf node_modules/.vite && vite --force",
+    "watch": "rimraf node_modules/.vite && tsc && vite build --force --watch true",
+    "zxp": "yarn clean && tsc -p \"tsconfig-build.json\" && cross-env ZXP_PACKAGE=true vite build --force --watch false",
+    "zip": "yarn clean && tsc -p \"tsconfig-build.json\" && cross-env ZIP_PACKAGE=true vite build --force --watch false",
     "serve": "cross-env SERVE_PANEL=true vite preview",
     "symlink": "cross-env ACTION=symlink vite",
     "delsymlink": "cross-env ACTION=delsymlink vite"

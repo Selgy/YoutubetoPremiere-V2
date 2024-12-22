@@ -19,11 +19,11 @@ const Main = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [latestVersion, setLatestVersion] = useState('');
-  const currentVersion = '3.0.2';
+  const currentVersion = '3.0.3'; // Get this from your package.json
   const [currentPage, setCurrentPage] = useState('main');
 
   useEffect(() => {
-    const checkLicense = async () => {
+    const checkLicenseAndStart = async () => {
       setIsLoading(true);
       try {
         const response = await fetch('http://localhost:3001/check-license');
@@ -39,13 +39,38 @@ const Main = () => {
       setIsLoading(false);
     };
 
-    checkLicense();
+    checkLicenseAndStart();
   }, []);
 
   useEffect(() => {
-    setUpdateAvailable(false);
-    setLatestVersion(currentVersion);
+    checkForUpdates();
   }, []);
+
+  const checkForUpdates = async () => {
+    try {
+      const response = await fetch('http://localhost:3001/get-version');
+      const data = await response.json();
+      const latestVersion = data.version;
+      setLatestVersion(latestVersion);
+      
+      // Compare versions
+      const isNewer = compareVersions(latestVersion, currentVersion);
+      setUpdateAvailable(isNewer);
+    } catch (error) {
+      console.error('Error checking for updates:', error);
+    }
+  };
+
+  const compareVersions = (latest: string, current: string) => {
+    const latestParts = latest.split('.').map(Number);
+    const currentParts = current.split('.').map(Number);
+    
+    for (let i = 0; i < 3; i++) {
+      if (latestParts[i] > currentParts[i]) return true;
+      if (latestParts[i] < currentParts[i]) return false;
+    }
+    return false;
+  };
 
   const handleLicenseSubmit = async () => {
     setIsLoading(true);
@@ -78,16 +103,8 @@ const Main = () => {
     setIsLoading(false);
   };
 
-  const handleDownloadError = (error: any) => {
-    if (error?.status === 403) {
-      setIsLicenseValid(false);
-      setErrorMessage('Your license is invalid or has expired. Please enter a valid license key.');
-      return true;
-    }
-    return false;
-  };
-
   const loadSettings = () => {
+    // Load settings from localStorage or your preferred storage method
     const savedSettings = localStorage.getItem('settings');
     if (savedSettings) {
       setSettings(JSON.parse(savedSettings));
@@ -134,7 +151,7 @@ const Main = () => {
       <div className="min-h-screen flex items-center justify-center bg-background p-4 sm:p-6">
         <div className="w-full max-w-md bg-background-panel rounded-xl shadow-lg p-6 sm:p-8 text-center">
           <h2 className="text-xl sm:text-2xl font-bold text-white mb-4">Loading...</h2>
-          <p className="text-gray-300 text-sm sm:text-base">Please wait while we check your license.</p>
+          <p className="text-gray-300 text-sm sm:text-base">Please wait while we check the version and settings.</p>
         </div>
       </div>
     );

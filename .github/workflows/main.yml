@@ -53,21 +53,28 @@ jobs:
           security unlock-keychain -p "" build.keychain
           security import certificate.p12 -k build.keychain -P $APPLE_DEVELOPER_CERTIFICATE_PASSWORD -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
-          
-      - name: Build ZXP and Executables
+
+      - name: Build Executables
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          yarn zxp
           if [ "${{ matrix.os }}" = "macos-latest" ]; then
-            python -m PyInstaller YoutubetoPremiere.spec --target-arch universal2
-            codesign --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime --timestamp --force --verbose=4 ./dist/YoutubetoPremiere
+            python -m PyInstaller YoutubetoPremiere.spec --target-arch universal2 --workpath build --distpath build
+            codesign --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime --timestamp --force --verbose=4 ./build/YoutubetoPremiere
           else
-            python -m PyInstaller YoutubetoPremiere.spec
+            python -m PyInstaller YoutubetoPremiere.spec --workpath build --distpath build
           fi
+          mkdir -p dist/cep/exec
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            cp -r build/YoutubetoPremiere dist/cep/exec/YoutubetoPremiere
+          else
+            cp build/YoutubetoPremiere.exe dist/cep/exec/YoutubetoPremiere.exe
+          fi
+          mkdir -p dist/cep/exec/sounds
+          cp -r app/sounds/* dist/cep/exec/sounds/
 
       - name: Notarize macOS Executable
         if: matrix.os == 'macos-latest'
@@ -76,19 +83,41 @@ jobs:
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          ditto -c -k --keepParent ./dist/YoutubetoPremiere ./YoutubetoPremiere.zip
+          ditto -c -k --keepParent ./dist/cep/exec/YoutubetoPremiere ./YoutubetoPremiere.zip
           xcrun notarytool submit ./YoutubetoPremiere.zip --wait --apple-id "$APPLE_ID" --password "$APPLE_ID_PASSWORD" --team-id "$TEAM_ID"
-          xcrun stapler staple ./dist/YoutubetoPremiere
+          xcrun stapler staple ./dist/cep/exec/YoutubetoPremiere
 
-      - name: Notarize ZXP Package
-        if: matrix.os == 'macos-latest'
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: dist-${{ matrix.os }}
+          path: dist/
+
+  package:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v2
+      
+      - name: Use Node.js 18.x
+        uses: actions/setup-node@v2
+        with:
+          node-version: 18.x
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v2
+        with:
+          path: artifacts
+
+      - name: Merge executables and create ZXP
         run: |
-          ditto -c -k --keepParent ./dist/zxp/com.YoutubetoPremiereV2.cep.zxp ./dist/zxp/package.zip
-          xcrun notarytool submit ./dist/zxp/package.zip --wait --apple-id "$APPLE_ID" --password "$APPLE_ID_PASSWORD" --team-id "$TEAM_ID"
+          mkdir -p dist/cep/exec
+          cp -r artifacts/dist-windows-latest/cep/exec/* dist/cep/exec/
+          cp -r artifacts/dist-macos-latest/cep/exec/* dist/cep/exec/
+          yarn zxp
 
       - name: GitHub Release
         uses: softprops/action-gh-release@v1
@@ -98,5 +127,4 @@ jobs:
         with:
           files: |
             ./dist/zxp/com.YoutubetoPremiereV2.cep.zxp
-            ./dist/YoutubetoPremiere*
           generate_release_notes: true

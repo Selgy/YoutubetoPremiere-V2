@@ -7,16 +7,56 @@ from flask import jsonify
 import sys
 import platform
 import time
+import requests
 from utils import (
     is_premiere_running,
     import_video_to_premiere,
     sanitize_title,
     generate_new_filename,
     play_notification_sound,
-    get_default_download_path
+    get_default_download_path,
+    get_license_key
 )
 
+def validate_license(license_key):
+    if not license_key:
+        return False
+
+    # Try Gumroad validation
+    try:
+        gumroad_response = requests.post('https://api.gumroad.com/v2/licenses/verify', {
+            'product_id': '9yYJT15dJO3wB4Z74N-EUg==',
+            'license_key': license_key
+        })
+
+        if gumroad_response.ok and gumroad_response.json().get('success'):
+            return True
+
+        # Try Shopify validation
+        api_token = 'eHyU10yFizUV5qUJaFS8koE1nIx2UCDFNSoPVdDRJDI7xtunUK6ZWe40vfwp'
+        shopify_response = requests.post(
+            f'https://app-easy-product-downloads.fr/api/get-license-key',
+            params={'license_key': license_key, 'api_token': api_token}
+        )
+
+        if shopify_response.ok and shopify_response.json().get('status') == 'success':
+            return True
+
+    except Exception as e:
+        logging.error(f"Error validating license: {e}")
+        return False
+
+    return False
+
 def handle_video_url(request, settings, socketio, current_download):
+    # Check license validity first
+    license_key = get_license_key()
+    if not validate_license(license_key):
+        error_message = "No valid license found. Please enter a valid license key."
+        logging.error(error_message)
+        socketio.emit('download-failed', {'error': error_message})
+        return jsonify(error=error_message), 403
+
     data = request.get_json()
     logging.info(f"Received data: {data}")
 
