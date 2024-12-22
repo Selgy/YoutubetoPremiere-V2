@@ -1,8 +1,12 @@
 import { useState, useEffect } from 'react';
-import { FaDiscord } from 'react-icons/fa';
+import { FaDiscord, FaArrowLeft } from 'react-icons/fa';
 import { openLinkInBrowser } from '../lib/utils/bolt';
 
-const Settings = () => {
+interface SettingsProps {
+  onBack: () => void;
+}
+
+const Settings = ({ onBack }: SettingsProps) => {
   const [notificationVolume, setNotificationVolume] = useState(30);
   const [selectedSound, setSelectedSound] = useState('default');
   const [isTestPlaying, setIsTestPlaying] = useState(false);
@@ -109,7 +113,15 @@ const Settings = () => {
   return (
     <div className="min-h-screen bg-background p-4 sm:p-6">
       <div className="max-w-2xl mx-auto">
-        <h1 className="text-2xl sm:text-3xl font-bold text-white mb-6 sm:mb-8">Settings</h1>
+        <div className="flex items-center mb-6 sm:mb-8">
+          <button 
+            onClick={onBack}
+            className="mr-4 p-2 rounded-lg hover:bg-background-panel transition-colors"
+          >
+            <FaArrowLeft className="w-6 h-6 text-white" />
+          </button>
+          <h1 className="text-2xl sm:text-3xl font-bold text-white">Settings</h1>
+        </div>
         
         <div className="space-y-6">
           {/* Notification Settings */}

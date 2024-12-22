@@ -55,7 +55,7 @@ def handle_video_url(request, settings, socketio):
     if download_type == 'clip':
         clip_start = max(0, current_time - seconds_before)
         clip_end = current_time + seconds_after
-        download_and_process_clip(video_url, resolution, download_path, clip_start, clip_end, download_mp3, settings['ffmpeg_path'], socketio)
+        download_and_process_clip(video_url, resolution, download_path, clip_start, clip_end, download_mp3, settings['ffmpeg_path'], socketio, settings)
     elif download_type == 'full':
         download_video(video_url, resolution, download_path, download_mp3, settings['ffmpeg_path'], socketio, settings)
     elif download_type == 'audio':
@@ -65,77 +65,100 @@ def handle_video_url(request, settings, socketio):
 
 
 
-def download_and_process_clip(video_url, resolution, download_path, clip_start, clip_end, download_mp3, ffmpeg_path, socketio):
+def download_and_process_clip(video_url, resolution, download_path, clip_start, clip_end, download_mp3, ffmpeg_path, socketio, settings):
     clip_duration = clip_end - clip_start
     logging.info(f"Received clip parameters: clip_start={clip_start}, clip_end={clip_end}, clip_duration={clip_duration}")
 
-    download_path = download_path if download_path else get_default_download_path()
-    if download_path is None:
+    final_download_path = download_path if download_path else get_default_download_path(socketio)
+    if final_download_path is None:
         logging.error("No active Premiere Pro project found.")
+        socketio.emit('download-failed', {'message': 'No active Premiere Pro project found.'})
         return
 
-    video_info = youtube_dl.YoutubeDL().extract_info(video_url, download=False)
-    sanitized_title = sanitize_title(video_info['title'])
-    clip_suffix = "_clip"
-    video_filename = generate_new_filename(download_path, sanitized_title, 'mp4', clip_suffix)
-    video_file_path = os.path.join(download_path, video_filename)
-
-    clip_start_str = time.strftime('%H:%M:%S', time.gmtime(clip_start))
-    clip_end_str = time.strftime('%H:%M:%S', time.gmtime(clip_end))
-
-    base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
-
-    # Check the operating system
-    if platform.system() == "Windows":
-        yt_dlp_filename = "yt-dlp.exe"
-        yt_dlp_path = os.path.join(base_path, 'app', '_include', yt_dlp_filename)
-    else:
-        yt_dlp_filename = "yt-dlp"
-        yt_dlp_path = os.path.join(base_path, yt_dlp_filename)
-
-    yt_dlp_command = [
-        yt_dlp_path,
-        '--format', f'bestvideo[vcodec^=avc1][ext=mp4][height<={resolution}]+bestaudio[ext=m4a]/best[ext=mp4]',
-        '--ffmpeg-location', os.path.dirname(ffmpeg_path),
-        '--download-sections', f'*{clip_start_str}-{clip_end_str}',
-        '--output', video_file_path,
-        '--postprocessor-args', 'ffmpeg:-c:v copy -c:a copy',
-        '--no-check-certificate',
-        '--extractor-args', 'youtube:player_client=ios,mweb',
-        video_url
-    ]
-
-    logging.info(f"Using ffmpeg from directory: {os.path.dirname(ffmpeg_path)}")
     try:
-        subprocess.run(yt_dlp_command, check=True)
-        logging.info(f"Clip downloaded: {video_file_path}")
+        video_info = youtube_dl.YoutubeDL().extract_info(video_url, download=False)
+        sanitized_title = sanitize_title(video_info['title'])
+        clip_suffix = "_clip"
+        video_filename = generate_new_filename(final_download_path, sanitized_title, 'mp4', clip_suffix)
+        video_file_path = os.path.join(final_download_path, video_filename)
 
-        # Add URL to metadata
-        metadata_command = [
-            ffmpeg_path,
-            '-i', video_file_path,
-            '-metadata', f'comment={video_url}',
-            '-codec', 'copy',  # To avoid re-encoding the video
-            f'{video_file_path}_with_metadata.mp4'
+        # Configure yt-dlp options
+        ydl_opts = {
+            'format': f'bestvideo[ext=mp4][vcodec^=avc1][height<={resolution}]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'outtmpl': video_file_path,
+            'force_keyframes_at_cuts': True,
+            'ffmpeg_location': os.path.dirname(ffmpeg_path),
+            'extractor_args': {'youtube': {'player_client': ['ios', 'mweb']}},
+            'progress_hooks': [lambda d: progress_hook(d, socketio)],
+            'postprocessor_hooks': [lambda d: logging.info(f"Postprocessing: {d}")],
+            'force_generic_extractor': False
+        }
+
+        def progress_hook(d, socketio):
+            if d['status'] == 'downloading':
+                try:
+                    percentage = d.get('_percent_str', '0%')
+                    percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
+                    logging.info(f'Progress: {percentage}')
+                    socketio.emit('percentage', {'percentage': percentage})
+                except Exception as e:
+                    logging.error(f"Error in progress hook: {e}")
+
+        # Download the clip using command line arguments
+        command = [
+            sys.executable, '-m', 'yt_dlp',
+            '--download-sections', f'*{clip_start}-{clip_end}',
+            '--force-keyframes-at-cuts',
+            '-f', ydl_opts['format'],
+            '-o', video_file_path,
+            '--ffmpeg-location', os.path.dirname(ffmpeg_path),
+            '--postprocessor-args', f'ffmpeg:-ss {clip_start} -t {clip_end - clip_start}',
+            '--no-keep-video',
+            video_url
         ]
-
+        
         try:
-            subprocess.run(metadata_command, check=True)
-            # Replace original file with the one containing metadata
-            os.replace(f'{video_file_path}_with_metadata.mp4', video_file_path)
-            logging.info(f"Metadata added: {video_file_path}")
+            subprocess.run(command, check=True, capture_output=True, text=True)
         except subprocess.CalledProcessError as e:
-            logging.error(f"Error adding metadata: {e}")
-            socketio.emit('download-failed', {'message': 'Failed to add metadata.'})
+            error_message = f"Error downloading clip: {e.stderr}"
+            logging.error(error_message)
+            socketio.emit('download-failed', {'message': error_message})
             return
 
-        socketio.emit('import_video', {'path': video_file_path})
-        logging.info("Clip imported to Premiere Pro")
-        play_notification_sound()
-        socketio.emit('download-complete')
-    except subprocess.CalledProcessError as e:
-        logging.error(f"Error downloading clip: {e}")
-        socketio.emit('download-failed', {'message': 'Failed to download clip.'})
+        if os.path.exists(video_file_path):
+            logging.info(f"Clip downloaded: {video_file_path}")
+
+            # Add URL to metadata
+            metadata_command = [
+                ffmpeg_path,
+                '-i', video_file_path,
+                '-metadata', f'comment={video_url}',
+                '-codec', 'copy',
+                f'{video_file_path}_with_metadata.mp4'
+            ]
+
+            try:
+                subprocess.run(metadata_command, check=True)
+                os.replace(f'{video_file_path}_with_metadata.mp4', video_file_path)
+                logging.info(f"Metadata added: {video_file_path}")
+                
+                # Play notification sound
+                volume = settings.get('notificationVolume', 30) / 100
+                sound_type = settings.get('notificationSound', 'default')
+                play_notification_sound(volume=volume, sound_type=sound_type)
+                
+                socketio.emit('import_video', {'path': video_file_path})
+                socketio.emit('download-complete')
+            except subprocess.CalledProcessError as e:
+                logging.error(f"Error adding metadata: {e}")
+                socketio.emit('download-failed', {'message': 'Failed to add metadata.'})
+                return
+
+    except Exception as e:
+        error_message = f"Error downloading clip: {str(e)}"
+        logging.error(error_message)
+        logging.error(f"Full error details: {type(e).__name__}")
+        socketio.emit('download-failed', {'message': error_message})
 
 
 

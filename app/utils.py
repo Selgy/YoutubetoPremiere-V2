@@ -22,7 +22,9 @@ def load_settings():
         'downloadPath': '',
         'downloadMP3': False,
         'secondsBefore': '15',
-        'secondsAfter': '15'
+        'secondsAfter': '15',
+        'notificationVolume': 30,
+        'notificationSound': 'notification_sound'
     }
 
     script_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
@@ -263,7 +265,7 @@ def generate_new_filename(base_path, original_name, extension, suffix=""):
         new_name = f"{original_name}{suffix}_{counter}.{extension}"
     return new_name
 
-def play_notification_sound(volume=0.3, sound_type='default'): 
+def play_notification_sound(volume=0.3, sound_type='notification_sound'): 
     pygame.mixer.init()
 
     # Get the correct base path whether running as exe or script
@@ -307,10 +309,18 @@ def play_notification_sound(volume=0.3, sound_type='default'):
             sound_filename = f'{sound_type}{ext}'
             break
     
-    # If requested sound doesn't exist, use the first available sound
+    # If requested sound doesn't exist, use notification_sound or first available sound
     if not sound_filename:
-        sound_filename = sound_files[0]
-        logging.warning(f"Requested sound {sound_type} not found, using {sound_filename} instead")
+        # First try notification_sound
+        for ext in ['.mp3', '.wav']:
+            if f'notification_sound{ext}' in sound_files:
+                sound_filename = f'notification_sound{ext}'
+                logging.info(f"Using default notification sound: {sound_filename}")
+                break
+        # If notification_sound not found, use first available sound
+        if not sound_filename:
+            sound_filename = sound_files[0]
+            logging.info(f"Using fallback sound: {sound_filename}")
 
     notification_sound_path = os.path.join(sounds_dir, sound_filename)
             

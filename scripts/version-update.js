@@ -19,6 +19,11 @@ const files = [
     path: 'ChromeExtension/manifest.json',
     regex: /"version":\s*"[^"]+"/,
     template: (version) => `"version": "${version}"`,
+  },
+  {
+    path: 'src/js/main/main.tsx',
+    regex: /const currentVersion = '[^']+'/,
+    template: (version) => `const currentVersion = '${version}'`,
   }
 ];
 
