@@ -2,7 +2,7 @@
 <ExtensionManifest
 Version="6.0"
 ExtensionBundleId="com.YoutubetoPremiereV2.cep"
-ExtensionBundleVersion="0.0.1"
+ExtensionBundleVersion="3.0.2"
 ExtensionBundleName="YoutubetoPremiere V2"
 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
 >
@@ -41,15 +41,15 @@ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         <Menu>YoutubetoPremiere</Menu>
         <Geometry>
           <Size>
-            <Width>710</Width>
+            <Width>500</Width>
             <Height>500</Height>
           </Size>
           <MaxSize>
-            <Width>710</Width>
-            <Height>850</Height>
+            <Width>1200</Width>
+            <Height>800</Height>
           </MaxSize>
           <MinSize>
-            <Width>710</Width>
+            <Width>400</Width>
             <Height>350</Height>
           </MinSize>
         </Geometry>

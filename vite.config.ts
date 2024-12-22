@@ -5,6 +5,8 @@ import { cep, runAction } from "vite-cep-plugin";
 import cepConfig from "./cep.config";
 import path from "path";
 import { extendscriptConfig } from "./vite.es.config";
+import tailwindcss from 'tailwindcss'
+import autoprefixer from 'autoprefixer'
 
 const extensions = [".js", ".ts", ".tsx"];
 
@@ -83,6 +85,17 @@ export default defineConfig({
     target: "chrome74",
     outDir,
   },
+  css: {
+    postcss: {
+      plugins: [
+        tailwindcss,
+        autoprefixer,
+      ],
+    },
+  },
+  define: {
+    'process.env.APP_VERSION': JSON.stringify(process.env.npm_package_version)
+  },
 });
 
 // rollup es3 build
@@ -95,3 +108,5 @@ extendscriptConfig(
   isProduction,
   isPackage
 );
+
+const currentVersion = process.env.APP_VERSION || '2.1.6';

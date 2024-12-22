@@ -16,6 +16,9 @@ const Main = () => {
   const [isLicenseValid, setIsLicenseValid] = useState(false);
   const [licenseKey, setLicenseKey] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [latestVersion, setLatestVersion] = useState('');
+  const currentVersion = '2.1.6'; // Get this from your package.json
 
   useEffect(() => {
     const checkLicenseAndStart = async () => {
@@ -34,6 +37,37 @@ const Main = () => {
 
     checkLicenseAndStart();
   }, []);
+
+  useEffect(() => {
+    checkForUpdates();
+  }, []);
+
+  const checkForUpdates = async () => {
+    try {
+      const response = await fetch('https://api.github.com/repos/YOUR_USERNAME/YOUR_REPO/releases/latest');
+      const data = await response.json();
+      
+      const latestVersion = data.tag_name.replace('v', '');
+      setLatestVersion(latestVersion);
+      
+      // Compare versions
+      const isNewer = compareVersions(latestVersion, currentVersion);
+      setUpdateAvailable(isNewer);
+    } catch (error) {
+      console.error('Error checking for updates:', error);
+    }
+  };
+
+  const compareVersions = (latest: string, current: string) => {
+    const latestParts = latest.split('.').map(Number);
+    const currentParts = current.split('.').map(Number);
+    
+    for (let i = 0; i < 3; i++) {
+      if (latestParts[i] > currentParts[i]) return true;
+      if (latestParts[i] < currentParts[i]) return false;
+    }
+    return false;
+  };
 
   const validateLicenseKey = async (key: string) => {
     try {
@@ -142,111 +176,148 @@ const Main = () => {
 
   if (isLoading) {
     return (
-      <div className="loading-section">
-        <h2>Loading...</h2>
-        <p>Please wait while we check the version and settings.</p>
+      <div className="min-h-screen flex items-center justify-center bg-background p-4 sm:p-6">
+        <div className="w-full max-w-md bg-background-panel rounded-xl shadow-lg p-6 sm:p-8 text-center">
+          <h2 className="text-xl sm:text-2xl font-bold text-white mb-4">Loading...</h2>
+          <p className="text-gray-300 text-sm sm:text-base">Please wait while we check the version and settings.</p>
+        </div>
       </div>
     );
   }
 
   if (!isLicenseValid) {
     return (
-      <div className="license-section">
-        <h2>Enter Your License Key</h2>
-        <input
-          type="text"
-          value={licenseKey}
-          onChange={(e) => setLicenseKey(e.target.value)}
-          placeholder="Enter your key here"
-        />
-        <button onClick={handleLicenseSubmit}>Submit</button>
-        {errorMessage && <p className="error-message">{errorMessage}</p>}
+      <div className="min-h-screen flex items-center justify-center bg-background p-4 sm:p-6">
+        <div className="w-full max-w-md bg-background-panel rounded-xl shadow-lg p-6 sm:p-8">
+          <h2 className="text-xl sm:text-2xl font-bold text-white text-center mb-4 sm:mb-6">Enter Your License Key</h2>
+          <input
+            type="text"
+            value={licenseKey}
+            onChange={(e) => setLicenseKey(e.target.value)}
+            placeholder="Enter your key here"
+            className="input-base mb-4"
+          />
+          <button onClick={handleLicenseSubmit} className="btn w-full">
+            Submit
+          </button>
+          {errorMessage && <p className="text-red-500 mt-4 text-center text-sm sm:text-base">{errorMessage}</p>}
+        </div>
       </div>
     );
   }
 
   return (
-    <div style={{ padding: '20px' }}>
-      <h1>Youtube to Premiere Settings</h1>
-      
-      <label htmlFor="resolution">Resolution:</label>
-      <select 
-        id="resolution"
-        value={settings.resolution}
-        onChange={(e) => saveSettings({ ...settings, resolution: e.target.value })}
-      >
-        <option value="1080">1080p</option>
-        <option value="720">720p</option>
-        <option value="480">480p</option>
-        <option value="360">360p</option>
-      </select>
-
-      <label htmlFor="download-path">Download Path:</label>
-      <div className="input-container">
-        <input
-          type="text"
-          id="download-path"
-          className="path-input"
-          value={settings.downloadPath}
-          onChange={(e) => handlePathChange(e.target.value)}
-          placeholder="Enter path here"
-        />
-        <button 
-          className="dropdown-button"
-          onClick={() => setShowDropdown(!showDropdown)}
-        >
-          ▼
-        </button>
+    <div className="min-h-screen bg-background p-4 sm:p-6">
+      <div className="max-w-2xl mx-auto">
+        <h1 className="text-2xl sm:text-3xl font-bold text-white mb-6 sm:mb-8">Youtube to Premiere Settings</h1>
         
-        {showDropdown && lastPaths.length > 0 && (
-          <ul className="paths-dropdown">
-            {lastPaths.map((path, index) => (
-              <li 
-                key={index}
-                onClick={() => {
-                  handlePathChange(path);
-                  setShowDropdown(false);
-                }}
+        <div className="space-y-4 sm:space-y-6">
+          <div className="bg-background-panel rounded-lg p-4 sm:p-6">
+            <label htmlFor="resolution" className="block text-white font-medium mb-2">
+              Resolution:
+            </label>
+            <select 
+              id="resolution"
+              value={settings.resolution}
+              onChange={(e) => saveSettings({ ...settings, resolution: e.target.value })}
+              className="input-base"
+            >
+              <option value="1080">1080p</option>
+              <option value="720">720p</option>
+              <option value="480">480p</option>
+              <option value="360">360p</option>
+            </select>
+          </div>
+
+          <div className="bg-background-panel rounded-lg p-4 sm:p-6">
+            <label htmlFor="download-path" className="block text-white font-medium mb-2">
+              Download Path:
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                id="download-path"
+                value={settings.downloadPath}
+                onChange={(e) => handlePathChange(e.target.value)}
+                placeholder="Enter path here"
+                className="input-base pr-12"
+              />
+              <button 
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center bg-primary rounded-md hover:bg-primary-hover transition-colors"
+                onClick={() => setShowDropdown(!showDropdown)}
               >
-                {path}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-      <p className="path-info">
-        If left empty, the video will be saved in a folder next to the currently open Premiere Pro project.
-      </p>
+                <span className="transform transition-transform duration-200" style={{ transform: showDropdown ? 'rotate(180deg)' : 'rotate(0deg)' }}>▼</span>
+              </button>
+              
+              {showDropdown && lastPaths.length > 0 && (
+                <ul className="absolute w-full mt-1 bg-background-panel border border-border rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto">
+                  {lastPaths.map((path, index) => (
+                    <li 
+                      key={index}
+                      onClick={() => {
+                        handlePathChange(path);
+                        setShowDropdown(false);
+                      }}
+                      className="px-4 py-2 hover:bg-primary/20 cursor-pointer text-white text-sm sm:text-base"
+                    >
+                      {path}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <p className="text-gray-400 text-xs sm:text-sm mt-2">
+              If left empty, the video will be saved in a folder next to the currently open Premiere Pro project.
+            </p>
+          </div>
 
-      <div className="clip-settings">
-        <label>Clip Settings:</label>
-        <div className="input-container">
-          <select
-            value={settings.secondsBefore}
-            onChange={(e) => saveSettings({ ...settings, secondsBefore: e.target.value })}
-          >
-            <option value="0">0 sec</option>
-            <option value="5">-5 sec</option>
-            <option value="15">-15 sec</option>
-            <option value="30">-30 sec</option>
-            <option value="60">-1 min</option>
-            <option value="120">-2 min</option>
-          </select>
+          <div className="bg-background-panel rounded-lg p-4 sm:p-6">
+            <label className="block text-white font-medium mb-4">Clip Settings:</label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+              <div>
+                <label className="text-sm text-gray-300 mb-1 block">Time Before:</label>
+                <select
+                  value={settings.secondsBefore}
+                  onChange={(e) => saveSettings({ ...settings, secondsBefore: e.target.value })}
+                  className="input-base"
+                >
+                  <option value="0">0 sec</option>
+                  <option value="5">-5 sec</option>
+                  <option value="15">-15 sec</option>
+                  <option value="30">-30 sec</option>
+                  <option value="60">-1 min</option>
+                  <option value="120">-2 min</option>
+                </select>
+              </div>
+              
+              <div>
+                <label className="text-sm text-gray-300 mb-1 block">Time After:</label>
+                <select
+                  value={settings.secondsAfter}
+                  onChange={(e) => saveSettings({ ...settings, secondsAfter: e.target.value })}
+                  className="input-base"
+                >
+                  <option value="0">0 sec</option>
+                  <option value="5">+5 sec</option>
+                  <option value="15">+15 sec</option>
+                  <option value="30">+30 sec</option>
+                  <option value="60">+1 min</option>
+                  <option value="120">+2 min</option>
+                </select>
+              </div>
+            </div>
+          </div>
         </div>
-        
-        <div className="input-container">
-          <select
-            value={settings.secondsAfter}
-            onChange={(e) => saveSettings({ ...settings, secondsAfter: e.target.value })}
-          >
-            <option value="0">0 sec</option>
-            <option value="5">+5 sec</option>
-            <option value="15">+15 sec</option>
-            <option value="30">+30 sec</option>
-            <option value="60">+1 min</option>
-            <option value="120">+2 min</option>
-          </select>
-        </div>
+      </div>
+      <div className="mt-8 text-center">
+        <p className="text-gray-400 text-sm">
+          Current Version: {currentVersion}
+          {updateAvailable && (
+            <span className="text-primary ml-2">
+              (Update {latestVersion} available)
+            </span>
+          )}
+        </p>
       </div>
     </div>
   );

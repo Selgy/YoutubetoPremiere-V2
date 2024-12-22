@@ -1,5 +1,15 @@
 {
   "prettier.tabWidth": 2,
   "prettier.useTabs": false,
-  "prettier.printWidth": 80
+  "prettier.printWidth": 80,
+  "css.validate": false,
+  "tailwindCSS.includeLanguages": {
+    "javascript": "javascript",
+    "typescript": "typescript",
+    "javascriptreact": "javascriptreact",
+    "typescriptreact": "typescriptreact"
+  },
+  "editor.quickSuggestions": {
+    "strings": true
+  }
 }
