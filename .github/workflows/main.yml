@@ -56,27 +56,30 @@ jobs:
           security import certificate.p12 -k build.keychain -P "$KEYCHAIN_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
 
-      - name: Build Executables
+      - name: Build macOS Executable
+        if: matrix.os == 'macos-latest'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          if [ "${{ matrix.os }}" = "macos-latest" ]; then
-            python -m PyInstaller YoutubetoPremiere.spec --target-arch universal2 --workpath build --distpath build
-            codesign --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime --timestamp --force --verbose=4 ./build/YoutubetoPremiere
-          else
-            python -m PyInstaller YoutubetoPremiere.spec --workpath build --distpath build
-          fi
+          python -m PyInstaller YoutubetoPremiere.spec --target-arch universal2 --workpath build --distpath build
+          codesign --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime --timestamp --force --verbose=4 ./build/YoutubetoPremiere
           mkdir -p dist/cep/exec
-          if [ "${{ matrix.os }}" = "macos-latest" ]; then
-            cp -r build/YoutubetoPremiere dist/cep/exec/YoutubetoPremiere
-          else
-            cp build/YoutubetoPremiere.exe dist/cep/exec/YoutubetoPremiere.exe
-          fi
+          cp -r build/YoutubetoPremiere dist/cep/exec/YoutubetoPremiere
           mkdir -p dist/cep/exec/sounds
           cp -r app/sounds/* dist/cep/exec/sounds/
+
+      - name: Build Windows Executable
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          python -m PyInstaller YoutubetoPremiere.spec --workpath build --distpath build
+          New-Item -ItemType Directory -Force -Path dist/cep/exec
+          Copy-Item build/YoutubetoPremiere.exe dist/cep/exec/YoutubetoPremiere.exe
+          New-Item -ItemType Directory -Force -Path dist/cep/exec/sounds
+          Copy-Item -Recurse -Force app/sounds/* dist/cep/exec/sounds/
 
       - name: Notarize macOS Executable
         if: matrix.os == 'macos-latest'
@@ -116,10 +119,11 @@ jobs:
           merge-multiple: true
 
       - name: Merge executables and create ZXP
+        shell: pwsh
         run: |
-          mkdir -p dist/cep/exec
-          cp -r artifacts/dist-windows-latest/cep/exec/* dist/cep/exec/
-          cp -r artifacts/dist-macos-latest/cep/exec/* dist/cep/exec/
+          New-Item -ItemType Directory -Force -Path dist/cep/exec
+          Copy-Item -Recurse -Force artifacts/dist-windows-latest/cep/exec/* dist/cep/exec/
+          Copy-Item -Recurse -Force artifacts/dist-macos-latest/cep/exec/* dist/cep/exec/
           yarn zxp
 
       - name: GitHub Release
