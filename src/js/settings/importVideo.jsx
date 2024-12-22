@@ -1,67 +1,86 @@
+/* 
+    Premiere Pro ExtendScript snippet:
+    - Imports a video into the current project 
+    - Opens it in the Source Monitor
+    - No After Effects-specific calls (like new ImportOptions)
+*/
 (function() {
     if (typeof $._ext === 'undefined') {
         $._ext = {};
     }
 
+    // Simple logger for debugging
     $._ext.debug = function(message) {
-        $.writeln(message);
+        $.writeln("[DEBUG] " + message);
     };
 
+    // Main function to import a file and open it in the Source Monitor
     $._ext.importVideoToSource = function(videoPath) {
         try {
-            if (!app.project) {
-                throw new Error("No active project found");
-            }
-            
-            // Normalize path for Windows
-            videoPath = videoPath.replace(/\\/g, '/');
-            $._ext.debug("Attempting to import normalized path: " + videoPath);
-            
-            // Verify file exists and is accessible
-            var importFile = new File(videoPath);
-            if (!importFile.exists) {
-                throw new Error("File does not exist: " + videoPath);
-            }
-            
-            // Import the file with explicit error checking
-            var importedFile;
-            try {
-                importedFile = app.project.importFiles([videoPath], 
-                    false,  // suppress warnings
-                    app.project.rootItem,  // parent folder
-                    false   // import as numbered stills
-                );
-            } catch(importError) {
-                $._ext.debug("Import error: " + importError.toString());
-                throw new Error("Failed to import file: " + importError.toString());
-            }
-            
-            if (!importedFile || importedFile.length === 0) {
-                throw new Error("Import failed - no file imported");
-            }
+            $._ext.debug("Starting import for: " + videoPath);
 
-            $._ext.debug("File imported successfully");
-            $.sleep(2000); // Increased delay to ensure Premiere has time to process
+            // Get the active Premiere project
+            var project = app.project;
+            if (!project) {
+                throw new Error("No active Premiere project found.");
+            }
+            $._ext.debug("Project found.");
+
+            // Import the file using Premiere's project.importFiles()
+            $._ext.debug("Importing file...");
+            var importedFile = project.importFiles(
+                [videoPath],       // array of file paths
+                false,             // suppressUI?
+                project.rootItem,  // parent folder (bin)
+                false              // importAsNumberedStills?
+            );
             
-            // Try to open in source monitor with multiple attempts
-            var maxAttempts = 3;
-            for(var attempt = 1; attempt <= maxAttempts; attempt++) {
+            // Check if the import actually returned a valid item
+            if (!importedFile || importedFile.length === 0) {
+                throw new Error("Import returned null or empty array.");
+            }
+            $._ext.debug("File imported successfully.");
+
+            // Attempt to open the newly imported item in the Source Monitor
+            var success = false;
+            try {
+                $._ext.debug("Trying sourceMonitor access...");
+                if (app && app.sourceMonitor) {
+                    // Premiere's sourceMonitor is available
+                    var sourceMonitor = app.sourceMonitor;
+                    importedFile[0].openInSourceMonitor();
+                    success = true;
+                    $._ext.debug("Opened in Source Monitor via imported item.");
+                } else {
+                    throw new Error("Source monitor not available in this environment.");
+                }
+            } catch(e1) {
+                // If the direct approach fails, try an alternate path-based approach
+                $._ext.debug("Source monitor open failed: " + e1.toString());
+                $._ext.debug("Trying fallback openFilePath() method...");
                 try {
-                    $._ext.debug("Opening in source monitor (attempt " + attempt + ")");
-                    importedFile[0].openInSource();
-                    $.sleep(500);
-                    return "true";
-                } catch(e) {
-                    if(attempt === maxAttempts) {
-                        throw e;
+                    var fileObj = new File(videoPath);
+                    if (!fileObj.exists) {
+                        throw new Error("Video file not found at path: " + videoPath);
                     }
-                    $.sleep(1000);
+                    app.sourceMonitor.openFilePath(videoPath);
+                    success = true;
+                    $._ext.debug("Opened in Source Monitor via openFilePath().");
+                } catch(e2) {
+                    $._ext.debug("Fallback method failed: " + e2.toString());
                 }
             }
+
+            if (!success) {
+                throw new Error("Failed to open file in the Source Monitor.");
+            }
+
+            $._ext.debug("Import and Source Monitor open complete.");
+            return "true";
         } catch(e) {
             var errorMsg = "Error: " + e.toString();
-            $._ext.debug("Fatal error: " + errorMsg);
+            $._ext.debug(errorMsg);
             return errorMsg;
         }
     };
-}()); 
+}());
