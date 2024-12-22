@@ -38,13 +38,40 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
         
+      - name: Debug Certificate (macOS)
+        if: matrix.os == 'macos-latest'
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
+        shell: bash
+        run: |
+          if [ -z "$CERTIFICATE_BASE64" ]; then
+            echo "Error: SIGNING_CERTIFICATE secret is empty"
+            exit 1
+          fi
+          echo "Certificate length: ${#CERTIFICATE_BASE64}"
+          
       - name: Create signing certificate (macOS)
         if: matrix.os == 'macos-latest'
         env:
           CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
         shell: bash
         run: |
-          echo "$CERTIFICATE_BASE64" | base64 -d > certificate.p12
+          # Write to temp file first
+          echo "$CERTIFICATE_BASE64" > cert.b64
+          # Check if file exists and has content
+          if [ ! -s cert.b64 ]; then
+            echo "Error: Certificate file is empty"
+            exit 1
+          fi
+          # Decode
+          base64 -d cert.b64 > certificate.p12
+          # Check if decode was successful
+          if [ ! -s certificate.p12 ]; then
+            echo "Error: Failed to decode certificate"
+            exit 1
+          fi
+          # Cleanup
+          rm cert.b64
 
       - name: Create signing certificate (Windows)
         if: matrix.os == 'windows-latest'
@@ -52,7 +79,21 @@ jobs:
           CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
         shell: pwsh
         run: |
-          [System.Convert]::FromBase64String($env:CERTIFICATE_BASE64) | Set-Content certificate.p12 -Encoding Byte
+          if ([string]::IsNullOrEmpty($env:CERTIFICATE_BASE64)) {
+            Write-Error "SIGNING_CERTIFICATE secret is empty"
+            exit 1
+          }
+          try {
+            [System.Convert]::FromBase64String($env:CERTIFICATE_BASE64) | Set-Content certificate.p12 -Encoding Byte
+          }
+          catch {
+            Write-Error "Failed to decode certificate: $_"
+            exit 1
+          }
+          if (!(Test-Path certificate.p12)) {
+            Write-Error "Certificate file was not created"
+            exit 1
+          }
           
       - name: Setup Keychain (macOS)
         if: matrix.os == 'macos-latest'
