@@ -1,6 +1,6 @@
 {
   "name": "bolt-cep",
-  "version": "3.0.13",
+  "version": "3.0.14",
   "scripts": {
     "version": "cross-env-shell \"node scripts/version-update.js $npm_package_version && git add -A && git commit -m v$npm_package_version && git tag -f v$npm_package_version\" || true",
     "postversion": "git push && git push --tags -f",

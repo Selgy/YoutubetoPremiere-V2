@@ -16,11 +16,6 @@ const files = [
     template: (version) => `"version": "${version}"`,
   },
   {
-    path: 'cep.config.ts',
-    regex: /version:\s*"[^"]+"/,
-    template: (version) => `version: "${version}"`,
-  },
-  {
     path: 'ChromeExtension/manifest.json',
     regex: /"version":\s*"[^"]+"/,
     template: (version) => `"version": "${version}"`,
