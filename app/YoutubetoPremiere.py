@@ -8,7 +8,7 @@ from flask_cors import CORS
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO
 from routes import register_routes
-from utils import load_settings, monitor_premiere_and_shutdown
+from utils import load_settings, monitor_premiere_and_shutdown, play_notification_sound
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -57,6 +57,11 @@ def handle_import_complete(data):
     path = data.get('path', '')
     if success:
         logging.info(f'Successfully imported video: {path}')
+        # Play notification sound after successful import
+        settings = load_settings()
+        volume = settings.get('notificationVolume', 30) / 100
+        sound_type = settings.get('notificationSound', 'default')
+        play_notification_sound(volume=volume, sound_type=sound_type)
         socketio.emit('import_status', {'success': True, 'message': 'Video imported successfully'})
     else:
         error = data.get('error', 'Unknown error')

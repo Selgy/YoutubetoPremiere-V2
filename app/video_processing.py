@@ -16,7 +16,7 @@ from utils import (
     get_default_download_path
 )
 
-def handle_video_url(request, settings, socketio):
+def handle_video_url(request, settings, socketio, current_download):
     data = request.get_json()
     logging.info(f"Received data: {data}")
 
@@ -55,17 +55,17 @@ def handle_video_url(request, settings, socketio):
     if download_type == 'clip':
         clip_start = max(0, current_time - seconds_before)
         clip_end = current_time + seconds_after
-        download_and_process_clip(video_url, resolution, download_path, clip_start, clip_end, download_mp3, settings['ffmpeg_path'], socketio, settings)
+        download_and_process_clip(video_url, resolution, download_path, clip_start, clip_end, download_mp3, settings['ffmpeg_path'], socketio, settings, current_download)
     elif download_type == 'full':
-        download_video(video_url, resolution, download_path, download_mp3, settings['ffmpeg_path'], socketio, settings)
+        download_video(video_url, resolution, download_path, download_mp3, settings['ffmpeg_path'], socketio, settings, current_download)
     elif download_type == 'audio':
-        download_audio(video_url, download_path, settings['ffmpeg_path'], socketio, settings)
+        download_audio(video_url, download_path, settings['ffmpeg_path'], socketio, settings, current_download)
 
     return jsonify(success=True), 200
 
 
 
-def download_and_process_clip(video_url, resolution, download_path, clip_start, clip_end, download_mp3, ffmpeg_path, socketio, settings):
+def download_and_process_clip(video_url, resolution, download_path, clip_start, clip_end, download_mp3, ffmpeg_path, socketio, settings, current_download):
     clip_duration = clip_end - clip_start
     logging.info(f"Received clip parameters: clip_start={clip_start}, clip_end={clip_end}, clip_duration={clip_duration}")
 
@@ -118,12 +118,26 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         ]
         
         try:
-            subprocess.run(command, check=True, capture_output=True, text=True)
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            current_download['process'] = process
+            stdout, stderr = process.communicate()
+            
+            if process.returncode != 0 and process.returncode != -15:  # -15 is the signal for termination
+                error_message = f"Error downloading clip: {stderr}"
+                logging.error(error_message)
+                socketio.emit('download-failed', {'message': error_message})
+                return
+            elif process.returncode == -15:  # Download was cancelled
+                if os.path.exists(video_file_path):
+                    os.remove(video_file_path)
+                return
         except subprocess.CalledProcessError as e:
             error_message = f"Error downloading clip: {e.stderr}"
             logging.error(error_message)
             socketio.emit('download-failed', {'message': error_message})
             return
+        finally:
+            current_download['process'] = None
 
         if os.path.exists(video_file_path):
             logging.info(f"Clip downloaded: {video_file_path}")
@@ -142,11 +156,6 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                 os.replace(f'{video_file_path}_with_metadata.mp4', video_file_path)
                 logging.info(f"Metadata added: {video_file_path}")
                 
-                # Play notification sound
-                volume = settings.get('notificationVolume', 30) / 100
-                sound_type = settings.get('notificationSound', 'default')
-                play_notification_sound(volume=volume, sound_type=sound_type)
-                
                 socketio.emit('import_video', {'path': video_file_path})
                 socketio.emit('download-complete')
             except subprocess.CalledProcessError as e:
@@ -162,7 +171,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
 
 
 
-def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_path, socketio, settings):
+def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_path, socketio, settings, current_download):
     logging.info(f"Starting video download for URL: {video_url}")
     
     try:
@@ -178,6 +187,16 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
         logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
 
+        def progress_hook(d):
+            if d['status'] == 'downloading':
+                try:
+                    percentage = d.get('_percent_str', '0%').strip()
+                    percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
+                    logging.info(f'Download Progress: {percentage}')
+                    socketio.emit('percentage', {'percentage': percentage})
+                except Exception as e:
+                    logging.error(f"Error in progress hook: {e}")
+
         # Get video info first
         with youtube_dl.YoutubeDL() as ydl:
             video_info = ydl.extract_info(video_url, download=False)
@@ -189,34 +208,53 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             output_filename = generate_new_filename(final_download_path, sanitized_title, extension)
             sanitized_output_template = os.path.join(final_download_path, output_filename)
 
-            # Create yt-dlp options with the correct output path
-            ydl_opts = {
-                'outtmpl': sanitized_output_template,
-                'ffmpeg_location': ffmpeg_dir,
-                'merge_output_format': 'mp4',
-                'format': 'bestaudio[ext=m4a]/best' if download_mp3 else f'bestvideo[ext=mp4][vcodec^=avc1][height<={resolution}]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-                'progress_hooks': [lambda d: progress_hook(d, socketio)],
-                'verbose': True
-            }
+            # Create command for yt-dlp with progress hook
+            command = [
+                sys.executable, '-m', 'yt_dlp',
+                '-f', 'bestaudio[ext=m4a]/best' if download_mp3 else f'bestvideo[ext=mp4][vcodec^=avc1][height<={resolution}]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                '-o', sanitized_output_template,
+                '--ffmpeg-location', ffmpeg_dir,
+                '--merge-output-format', 'mp4',
+                '--progress-template', '%(progress._percent_str)s',
+                video_url
+            ]
 
-            def progress_hook(d, socketio):
-                if d['status'] == 'downloading':
-                    try:
-                        percentage = d.get('_percent_str', '0%')
-                        percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
-                        logging.info(f'Progress: {percentage}')
-                        socketio.emit('percentage', {'percentage': percentage})
-                    except Exception as e:
-                        logging.error(f"Error in progress hook: {e}")
+            try:
+                process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                current_download['process'] = process
+                
+                # Read output in real-time to get progress
+                while True:
+                    output = process.stdout.readline()
+                    if output == '' and process.poll() is not None:
+                        break
+                    if output:
+                        # Try to extract percentage
+                        if '%' in output:
+                            percentage = output.strip()
+                            logging.info(f'Download Progress: {percentage}')
+                            socketio.emit('percentage', {'percentage': percentage})
+                
+                stdout, stderr = process.communicate()
+                
+                if process.returncode != 0 and process.returncode != -15:  # -15 is the signal for termination
+                    error_message = f"Error downloading video: {stderr}"
+                    logging.error(error_message)
+                    socketio.emit('download-failed', {'message': error_message})
+                    return
+                elif process.returncode == -15:  # Download was cancelled
+                    if os.path.exists(sanitized_output_template):
+                        os.remove(sanitized_output_template)
+                    return
+            except subprocess.CalledProcessError as e:
+                error_message = f"Error downloading video: {e.stderr}"
+                logging.error(error_message)
+                socketio.emit('download-failed', {'message': error_message})
+                return
+            finally:
+                current_download['process'] = None
 
-            logging.info(f"Using ffmpeg from directory: {ffmpeg_dir}")
-            logging.info(f"Downloading to: {sanitized_output_template}")
-            
-            # Download with the new options
-            with youtube_dl.YoutubeDL(ydl_opts) as ydl_download:
-                result = ydl_download.download([video_url])
-
-            if result == 0 and os.path.exists(sanitized_output_template):
+            if os.path.exists(sanitized_output_template):
                 logging.info(f"Video downloaded: {sanitized_output_template}")
                 
                 # Add URL to metadata
@@ -233,12 +271,6 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     os.replace(f'{sanitized_output_template}_with_metadata.mp4', sanitized_output_template)
                     logging.info(f"Metadata added: {sanitized_output_template}")
                     
-                    # Use settings for notification sound
-                    volume = settings.get('notificationVolume', 30) / 100
-                    sound_type = settings.get('notificationSound', 'default')
-                    play_notification_sound(volume=volume, sound_type=sound_type)
-                    
-                    # Emit import event once and wait for completion
                     socketio.emit('import_video', {'path': sanitized_output_template})
                     time.sleep(0.5)  # Give time for import to process
                     socketio.emit('download-complete')
@@ -246,74 +278,101 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     logging.error(f"Error adding metadata: {e}")
                     socketio.emit('download-failed', {'message': 'Failed to add metadata.'})
                     return
-            else:
-                logging.error("Video download failed.")
-                socketio.emit('download-failed', {'message': 'Failed to download video.'})
+
     except Exception as e:
         logging.error(f"Error during download: {e}")
         socketio.emit('download-failed', {'message': str(e)})
 
 
-def download_audio(video_url, download_path, ffmpeg_path, socketio, settings=None):
+def download_audio(video_url, download_path, ffmpeg_path, socketio, settings=None, current_download=None):
     logging.info(f"Starting audio download for URL: {video_url}")
-    video_info = youtube_dl.YoutubeDL().extract_info(video_url, download=False)
-    sanitized_title = sanitize_title(video_info['title'])
-    final_download_path = download_path if download_path else get_default_download_path(socketio)
-    if final_download_path is None:
-        logging.error("No active Premiere Pro project found.")
-        socketio.emit('download-failed', {'message': 'No active Premiere Pro project found.'})
-        return
-
-    audio_filename = generate_new_filename(final_download_path, sanitized_title, 'wav')
-    sanitized_output_template = os.path.join(final_download_path, audio_filename)
-
-    ydl_opts = {
-        'outtmpl': sanitized_output_template.replace('.wav', ''),  # Avoid adding .wav twice
-        'ffmpeg_location': os.path.dirname(ffmpeg_path),  # Pass the directory containing ffmpeg
-        'format': 'bestaudio/best',
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['ios', 'mweb']  
-            }
-        },
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'wav',
-            'preferredquality': '192',
-        }],
-        'progress_hooks': [lambda d: progress_hook(d, socketio)]
-    }
-
-    def progress_hook(d, socketio):
-        if d['status'] == 'downloading':
-            percentage = d['_percent_str']
-            percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
-            logging.info(f'Progress: {percentage}')
-            socketio.emit('percentage', {'percentage': percentage})
-
-    logging.info(f"Using ffmpeg from directory: {os.path.dirname(ffmpeg_path)}")
     try:
-        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-            result = ydl.download([video_url])
-        if result == 0 and os.path.exists(sanitized_output_template):
-            logging.info(f"Audio downloaded: {sanitized_output_template}")
-            socketio.emit('import_video', {'path': sanitized_output_template})
+        video_info = youtube_dl.YoutubeDL().extract_info(video_url, download=False)
+        sanitized_title = sanitize_title(video_info['title'])
+        final_download_path = download_path if download_path else get_default_download_path(socketio)
+        if final_download_path is None:
+            logging.error("No active Premiere Pro project found.")
+            socketio.emit('download-failed', {'message': 'No active Premiere Pro project found.'})
+            return
+
+        audio_filename = generate_new_filename(final_download_path, sanitized_title, 'wav')
+        sanitized_output_template = os.path.join(final_download_path, audio_filename)
+
+        # Create command for yt-dlp with audio extraction and progress tracking
+        command = [
+            sys.executable, '-m', 'yt_dlp',
+            '-f', 'bestaudio/best',
+            '-o', sanitized_output_template.replace('.wav', ''),  # yt-dlp will add extension
+            '--ffmpeg-location', os.path.dirname(ffmpeg_path),
+            '--extract-audio',
+            '--audio-format', 'wav',
+            '--audio-quality', '192',
+            '--progress-template', '%(progress._percent_str)s',
+            video_url
+        ]
+
+        try:
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            current_download['process'] = process
             
-            # Use settings for notification sound if available
-            if settings:
-                volume = settings.get('notificationVolume', 30) / 100
-                sound_type = settings.get('notificationSound', 'default')
-                play_notification_sound(volume=volume, sound_type=sound_type)
-            else:
-                play_notification_sound()  # Use defaults
+            # Read output in real-time to get progress
+            while True:
+                output = process.stdout.readline()
+                if output == '' and process.poll() is not None:
+                    break
+                if output:
+                    # Try to extract percentage
+                    if '%' in output:
+                        percentage = output.strip()
+                        logging.info(f'Download Progress: {percentage}')
+                        socketio.emit('percentage', {'percentage': percentage})
+            
+            stdout, stderr = process.communicate()
+            
+            if process.returncode != 0 and process.returncode != -15:  # -15 is the signal for termination
+                error_message = f"Error downloading audio: {stderr}"
+                logging.error(error_message)
+                socketio.emit('download-failed', {'message': error_message})
+                return
+            elif process.returncode == -15:  # Download was cancelled
+                if os.path.exists(sanitized_output_template):
+                    os.remove(sanitized_output_template)
+                return
+        except subprocess.CalledProcessError as e:
+            error_message = f"Error downloading audio: {e.stderr}"
+            logging.error(error_message)
+            socketio.emit('download-failed', {'message': error_message})
+            return
+        finally:
+            current_download['process'] = None
+
+        if os.path.exists(sanitized_output_template):
+            logging.info(f"Audio downloaded: {sanitized_output_template}")
+            
+            # Add URL to metadata
+            metadata_command = [
+                ffmpeg_path,
+                '-i', sanitized_output_template,
+                '-metadata', f'comment={video_url}',
+                '-codec', 'copy',
+                f'{sanitized_output_template}_with_metadata.wav'
+            ]
+
+            try:
+                subprocess.run(metadata_command, check=True)
+                os.replace(f'{sanitized_output_template}_with_metadata.wav', sanitized_output_template)
+                logging.info(f"Metadata added: {sanitized_output_template}")
                 
-            socketio.emit('download-complete')
-        else:
-            logging.error("Audio download failed.")
-            socketio.emit('download-failed', {'message': 'Failed to download audio.'})
+                socketio.emit('import_video', {'path': sanitized_output_template})
+                socketio.emit('download-complete')
+            except subprocess.CalledProcessError as e:
+                logging.error(f"Error adding metadata: {e}")
+                socketio.emit('download-failed', {'message': 'Failed to add metadata.'})
+                return
+
     except Exception as e:
-        logging.error(f"Error downloading audio: {e}")
-        socketio.emit('download-failed', {'message': 'Failed to download audio.'})
+        logging.error(f"Error during audio download: {e}")
+        socketio.emit('download-failed', {'message': str(e)})
 
 # Main execution
 if __name__ == "__main__":

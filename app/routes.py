@@ -2,11 +2,26 @@ from flask import request, jsonify
 import logging
 import json
 from video_processing import handle_video_url
-from utils import play_notification_sound
+from utils import play_notification_sound, save_license_key, get_license_key
 import os
 import sys
+import requests
 
 def register_routes(app, socketio, settings):
+    current_download = {'process': None}
+
+    @socketio.on('cancel-download')
+    def handle_cancel_download(data):
+        try:
+            if current_download['process']:
+                logging.info('Cancelling download process')
+                current_download['process'].kill()
+                current_download['process'] = None
+                socketio.emit('download-cancelled')
+                logging.info('Download cancelled successfully')
+        except Exception as e:
+            logging.error(f"Error cancelling download: {e}")
+            socketio.emit('download-failed', {'message': str(e)})
 
     @app.route('/')
     def root():
@@ -36,7 +51,31 @@ def register_routes(app, socketio, settings):
     @app.route('/handle-video-url', methods=['POST'])
     def handle_video_url_route():
         try:
-            return handle_video_url(request, settings, socketio)
+            # Check license validity first
+            license_key = get_license_key()
+            if not license_key:
+                return jsonify(success=False, error='No license key found'), 403
+
+            # Try Gumroad validation
+            gumroad_response = requests.post('https://api.gumroad.com/v2/licenses/verify', {
+                'product_id': '9yYJT15dJO3wB4Z74N-EUg==',
+                'license_key': license_key
+            })
+
+            if not (gumroad_response.ok and gumroad_response.json().get('success')):
+                # Try Shopify validation
+                api_token = 'eHyU10yFizUV5qUJaFS8koE1nIx2UCDFNSoPVdDRJDI7xtunUK6ZWe40vfwp'
+                shopify_response = requests.post(
+                    f'https://app-easy-product-downloads.fr/api/get-license-key',
+                    params={'license_key': license_key, 'api_token': api_token}
+                )
+
+                if not (shopify_response.ok and shopify_response.json().get('status') == 'success'):
+                    return jsonify(success=False, error='Invalid license key'), 403
+
+            # If we get here, license is valid, proceed with video download
+            result = handle_video_url(request, settings, socketio, current_download)
+            return result
         except Exception as e:
             logging.error(f"Error handling video URL: {e}")
             return jsonify(success=False, error=str(e)), 500
@@ -106,3 +145,78 @@ def register_routes(app, socketio, settings):
         except Exception as e:
             logging.error(f"Error getting available sounds: {e}")
             return jsonify(sounds=[])
+
+    @app.route('/validate-license', methods=['POST'])
+    def validate_license():
+        try:
+            data = request.get_json()
+            license_key = data.get('licenseKey')
+            
+            if not license_key:
+                return jsonify({'success': False, 'message': 'No license key provided'}), 400
+
+            # Try Gumroad validation
+            gumroad_response = requests.post('https://api.gumroad.com/v2/licenses/verify', {
+                'product_id': '9yYJT15dJO3wB4Z74N-EUg==',
+                'license_key': license_key
+            })
+
+            if gumroad_response.ok and gumroad_response.json().get('success'):
+                save_license_key(license_key)
+                logging.info(f'License validated successfully via Gumroad')
+                return jsonify({'success': True, 'message': 'License validated successfully'})
+
+            # Try Shopify validation
+            api_token = 'eHyU10yFizUV5qUJaFS8koE1nIx2UCDFNSoPVdDRJDI7xtunUK6ZWe40vfwp'
+            shopify_response = requests.post(
+                f'https://app-easy-product-downloads.fr/api/get-license-key',
+                params={'license_key': license_key, 'api_token': api_token}
+            )
+
+            if shopify_response.ok and shopify_response.json().get('status') == 'success':
+                save_license_key(license_key)
+                logging.info(f'License validated successfully via Shopify')
+                return jsonify({'success': True, 'message': 'License validated successfully'})
+
+            logging.error('License validation failed for key')
+            return jsonify({'success': False, 'message': 'Invalid license key'}), 400
+
+        except Exception as e:
+            logging.error(f'Error validating license: {e}')
+            return jsonify({'success': False, 'message': str(e)}), 500
+
+    @app.route('/check-license', methods=['GET'])
+    def check_license():
+        try:
+            license_key = get_license_key()
+            if not license_key:
+                logging.info('No license key found')
+                return jsonify({'isValid': False, 'message': 'No license key found'})
+
+            # Try Gumroad validation
+            gumroad_response = requests.post('https://api.gumroad.com/v2/licenses/verify', {
+                'product_id': '9yYJT15dJO3wB4Z74N-EUg==',
+                'license_key': license_key
+            })
+
+            if gumroad_response.ok and gumroad_response.json().get('success'):
+                logging.info('License is valid (Gumroad)')
+                return jsonify({'isValid': True, 'message': 'License is valid'})
+
+            # Try Shopify validation
+            api_token = 'eHyU10yFizUV5qUJaFS8koE1nIx2UCDFNSoPVdDRJDI7xtunUK6ZWe40vfwp'
+            shopify_response = requests.post(
+                f'https://app-easy-product-downloads.fr/api/get-license-key',
+                params={'license_key': license_key, 'api_token': api_token}
+            )
+
+            if shopify_response.ok and shopify_response.json().get('status') == 'success':
+                logging.info('License is valid (Shopify)')
+                return jsonify({'isValid': True, 'message': 'License is valid'})
+
+            logging.error('Invalid license key')
+            return jsonify({'isValid': False, 'message': 'Invalid license key'})
+
+        except Exception as e:
+            logging.error(f'Error checking license: {e}')
+            return jsonify({'isValid': False, 'message': str(e)})

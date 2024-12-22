@@ -19,122 +19,75 @@ const Main = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [latestVersion, setLatestVersion] = useState('');
-  const currentVersion = '3.0.1'; // Get this from your package.json
+  const currentVersion = '3.0.2';
   const [currentPage, setCurrentPage] = useState('main');
 
   useEffect(() => {
-    const checkLicenseAndStart = async () => {
+    const checkLicense = async () => {
       setIsLoading(true);
-      const savedKey = localStorage.getItem('licenseKey');
-      if (savedKey) {
-        const isValid = await validateLicenseKey(savedKey);
-        if (isValid) {
+      try {
+        const response = await fetch('http://localhost:3001/check-license');
+        const data = await response.json();
+        
+        if (data.isValid) {
           setIsLicenseValid(true);
-          startServer();
           loadSettings();
         }
+      } catch (error) {
+        console.error('Error checking license:', error);
       }
       setIsLoading(false);
     };
 
-    checkLicenseAndStart();
+    checkLicense();
   }, []);
 
   useEffect(() => {
-    checkForUpdates();
+    setUpdateAvailable(false);
+    setLatestVersion(currentVersion);
   }, []);
-
-  const checkForUpdates = async () => {
-    try {
-      const response = await fetch('https://api.github.com/repos/YOUR_USERNAME/YOUR_REPO/releases/latest');
-      const data = await response.json();
-      
-      const latestVersion = data.tag_name.replace('v', '');
-      setLatestVersion(latestVersion);
-      
-      // Compare versions
-      const isNewer = compareVersions(latestVersion, currentVersion);
-      setUpdateAvailable(isNewer);
-    } catch (error) {
-      console.error('Error checking for updates:', error);
-    }
-  };
-
-  const compareVersions = (latest: string, current: string) => {
-    const latestParts = latest.split('.').map(Number);
-    const currentParts = current.split('.').map(Number);
-    
-    for (let i = 0; i < 3; i++) {
-      if (latestParts[i] > currentParts[i]) return true;
-      if (latestParts[i] < currentParts[i]) return false;
-    }
-    return false;
-  };
-
-  const validateLicenseKey = async (key: string) => {
-    try {
-      // Validate with Gumroad
-      const gumroadResponse = await fetch('https://api.gumroad.com/v2/licenses/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          product_id: '9yYJT15dJO3wB4Z74N-EUg==',
-          license_key: key
-        })
-      });
-
-      if (gumroadResponse.ok) {
-        const data = await gumroadResponse.json();
-        if (data.success) return true;
-      }
-
-      // If Gumroad fails, try Shopify
-      const apiToken = 'eHyU10yFizUV5qUJaFS8koE1nIx2UCDFNSoPVdDRJDI7xtunUK6ZWe40vfwp';
-      const shopifyResponse = await fetch(
-        `https://app-easy-product-downloads.fr/api/get-license-key?license_key=${encodeURIComponent(key)}&api_token=${encodeURIComponent(apiToken)}`,
-        { method: 'POST' }
-      );
-
-      if (shopifyResponse.ok) {
-        const data = await shopifyResponse.json();
-        return data.status === 'success';
-      }
-
-      return false;
-    } catch (error) {
-      console.error('License validation error:', error);
-      return false;
-    }
-  };
 
   const handleLicenseSubmit = async () => {
     setIsLoading(true);
     setErrorMessage('');
     
-    const isValid = await validateLicenseKey(licenseKey);
-    if (isValid) {
-      localStorage.setItem('licenseKey', licenseKey);
-      setIsLicenseValid(true);
-      startServer();
-      loadSettings();
-    } else {
-      setErrorMessage('Invalid license key. Please try again.');
+    try {
+      const response = await fetch('http://localhost:3001/validate-license', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ licenseKey }),
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setIsLicenseValid(true);
+        loadSettings();
+      } else {
+        setErrorMessage(data.message || 'Invalid license key. Please try again.');
+        setIsLicenseValid(false);
+      }
+    } catch (error) {
+      console.error('Error validating license:', error);
+      setErrorMessage('Error validating license. Please try again.');
+      setIsLicenseValid(false);
     }
+    
     setIsLoading(false);
   };
 
-  const startServer = async () => {
-    try {
-      const extensionPath = await window.cep.fs.getSystemPath('extension');
-      const execPath = `${extensionPath}/exec/YoutubetoPremiere.exe`;
-      window.cep.process.createProcess(execPath, "");
-    } catch (error) {
-      console.error('Error starting YoutubetoPremiere:', error);
+  const handleDownloadError = (error: any) => {
+    if (error?.status === 403) {
+      setIsLicenseValid(false);
+      setErrorMessage('Your license is invalid or has expired. Please enter a valid license key.');
+      return true;
     }
+    return false;
   };
 
   const loadSettings = () => {
-    // Load settings from localStorage or your preferred storage method
     const savedSettings = localStorage.getItem('settings');
     if (savedSettings) {
       setSettings(JSON.parse(savedSettings));
@@ -181,7 +134,7 @@ const Main = () => {
       <div className="min-h-screen flex items-center justify-center bg-background p-4 sm:p-6">
         <div className="w-full max-w-md bg-background-panel rounded-xl shadow-lg p-6 sm:p-8 text-center">
           <h2 className="text-xl sm:text-2xl font-bold text-white mb-4">Loading...</h2>
-          <p className="text-gray-300 text-sm sm:text-base">Please wait while we check the version and settings.</p>
+          <p className="text-gray-300 text-sm sm:text-base">Please wait while we check your license.</p>
         </div>
       </div>
     );

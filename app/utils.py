@@ -24,7 +24,8 @@ def load_settings():
         'secondsBefore': '15',
         'secondsAfter': '15',
         'notificationVolume': 30,
-        'notificationSound': 'notification_sound'
+        'notificationSound': 'notification_sound',
+        'licenseKey': None
     }
 
     script_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
@@ -38,6 +39,10 @@ def load_settings():
     if os.path.exists(settings_path):
         with open(settings_path, 'r') as f:
             settings = json.load(f)
+            # Ensure all default settings exist
+            for key, value in default_settings.items():
+                if key not in settings:
+                    settings[key] = value
     else:
         settings = default_settings
         with open(settings_path, 'w') as f:
@@ -59,6 +64,28 @@ def load_settings():
 
     logging.info(f'Loaded settings: {settings}')
     return settings
+
+def save_settings(settings):
+    settings_path = settings.get('SETTINGS_FILE')
+    if settings_path:
+        # Create a copy of settings without the SETTINGS_FILE path
+        settings_to_save = settings.copy()
+        settings_to_save.pop('SETTINGS_FILE', None)
+        settings_to_save.pop('ffmpeg_path', None)
+        
+        with open(settings_path, 'w') as f:
+            json.dump(settings_to_save, f, indent=4)
+        return True
+    return False
+
+def save_license_key(license_key):
+    settings = load_settings()
+    settings['licenseKey'] = license_key
+    return save_settings(settings)
+
+def get_license_key():
+    settings = load_settings()
+    return settings.get('licenseKey')
 
 def monitor_premiere_and_shutdown():
     global should_shutdown
