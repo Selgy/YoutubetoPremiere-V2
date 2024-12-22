@@ -1,9 +1,12 @@
 const fs = require('fs');
 const path = require('path');
 
-// Get package.json version
-const packageJson = require('../package.json');
-const version = packageJson.version;
+// Get version from command line argument
+const version = process.argv[2];
+if (!version) {
+  console.error('Version argument is required');
+  process.exit(1);
+}
 
 // Files to update
 const files = [
