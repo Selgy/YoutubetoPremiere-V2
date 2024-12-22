@@ -27,28 +27,46 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
       
-      - name: Setup Node.js
+      - name: Setup Node.js (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          echo "${{ matrix.node-path }}\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Setup Node.js (macOS)
+        if: matrix.os == 'macos-latest'
+        shell: bash
         run: |
           echo "${{ matrix.node-path }}/bin" >> $GITHUB_PATH
           
       - name: Install macOS dependencies
         if: matrix.os == 'macos-latest'
+        shell: bash
         run: |
           brew install sdl2 pkg-config
           
-      - name: Setup Python
+      - name: Setup Python (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          echo "${{ matrix.python-path }}" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          python -m pip install --upgrade pip
+          python -m pip install wheel setuptools
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Setup Python (macOS)
+        if: matrix.os == 'macos-latest'
+        shell: bash
         run: |
           echo "${{ matrix.python-path }}/bin" >> $GITHUB_PATH
           python -m pip install --upgrade pip
           python -m pip install wheel setuptools
-          if [ "${{ matrix.os }}" = "macos-latest" ]; then
-            pip install -r requirements.txt
-          else
-            pip install -r requirements.txt
-          fi
+          pip install -r requirements.txt
           pip install pyinstaller
           
       - name: Install Node dependencies
+        shell: bash
         run: yarn install --frozen-lockfile
 
       - name: Import Certificate
