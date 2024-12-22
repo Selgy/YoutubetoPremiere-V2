@@ -49,8 +49,6 @@ const config: CEP_Config = {
       height: 500,
       minWidth: 710,
       minHeight: 350,
-      maxWidth: 710,
-      maxHeight: 850,
       type: "Modeless",
     },
     {

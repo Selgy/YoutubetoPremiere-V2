@@ -1,0 +1,150 @@
+body {
+    font-family: 'Roboto', sans-serif;
+    padding: 20px;
+    background-color: #1e2057;
+    color: #ffffff;
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0 auto;
+}
+
+button, select, input {
+    width: 100%;
+    padding: 12px;
+    border-radius: 5px;
+    font-size: 16px;
+    border: none;
+    margin-bottom: 15px;
+    box-sizing: border-box;
+    outline: none;
+}
+
+button {
+    background-color: #4e52ff;
+    color: #ffffff;
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    transition: background-color 0.2s, box-shadow 0.2s;
+}
+
+button:hover, button:focus {
+    background-color: #6e72ff;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+}
+
+select, input {
+    background-color: #2e2f77;
+    color: #ffffff;
+    border: 1px solid #3e41a8;
+}
+
+select:focus, input:focus {
+    border-color: #6e72ff;
+}
+
+label {
+    display: block;
+    margin-bottom: 10px;
+    font-weight: 500;
+}
+
+.clip-settings {
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+}
+
+.clip-settings label {
+    margin-right: 10px;
+}
+
+.input-container {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+    gap: 5px;
+    margin-bottom: 20px;
+}
+
+.path-input {
+    flex-grow: 1;
+    height: 40px;
+    margin: 0;
+    padding: 8px 12px;
+    border-radius: 5px;
+    background-color: #2e2f77;
+    color: #ffffff;
+    border: 1px solid #3e41a8;
+}
+
+.dropdown-button {
+    height: auto;
+    width: 40px;
+    padding: 8px 0;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    background-color: #4e52ff;
+    color: #ffffff;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.dropdown-button:hover {
+    background-color: #6e72ff;
+}
+
+.paths-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    width: 100%;
+    background-color: #2e2f77;
+    border: 1px solid #3e41a8;
+    border-radius: 5px;
+    margin-top: 5px;
+    z-index: 1000;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.paths-dropdown li {
+    padding: 10px;
+    cursor: pointer;
+    list-style: none;
+}
+
+.paths-dropdown li:hover {
+    background-color: #3e41a8;
+}
+
+.loading-section {
+    text-align: center;
+    padding: 20px;
+    background-color: #2e2f77;
+    margin-bottom: 20px;
+    border-radius: 5px;
+}
+
+.license-section {
+    text-align: center;
+    padding: 20px;
+    background-color: #2e2f77;
+    margin-bottom: 20px;
+    border-radius: 5px;
+}
+
+.error-message {
+    color: red;
+    margin-top: 10px;
+}
+
+.path-info {
+    color: #c0c0ff;
+    font-size: 10px;
+    margin-top: -10px;
+    margin-bottom: 20px;
+} 

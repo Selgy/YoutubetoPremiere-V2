@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Youtube to Premiere Pro V2",
+  "version": "2.1.6",
+  "description": "",
+  "permissions": ["activeTab"], 
+  "host_permissions": ["https://www.youtube.com/*"],
+  "action": {
+    "default_icon": {
+      "48": "icon.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["socket.io.min.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "48": "icon.png"
+  }
+}
