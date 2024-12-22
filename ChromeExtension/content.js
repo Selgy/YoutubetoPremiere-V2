@@ -421,12 +421,7 @@ socket.on('download-cancelled', () => {
     showNotification('Download cancelled', 'warning');
 });
 
-// Add error handling for socket connection
-socket.on('connect_error', (error) => {
-    console.error('Socket connection error:', error);
-    showNotification('Failed to connect to YoutubetoPremiere. Please make sure the application is running.', 'error');
-});
-
+// Remove the connect_error handler since we'll handle errors in the fetch call
 function sendURL(downloadType, additionalData = {}) {
     const buttonType = downloadType === 'full' ? 'premiere' : downloadType;
     if (buttonStates[buttonType].isDownloading) return;
@@ -474,7 +469,12 @@ function sendURL(downloadType, additionalData = {}) {
                 console.error('Error:', error);
                 button.classList.remove('downloading', 'loading');
                 button.classList.add('failure');
-                showNotification(error.message || 'Failed to process video', 'error');
+                // Show the server connection error only when a button is pressed
+                if (error.message === 'Failed to fetch') {
+                    showNotification('Please make sure Adobe Premiere Pro is open and YoutubetoPremiere is running.', 'error');
+                } else {
+                    showNotification(error.message || 'Failed to process video', 'error');
+                }
                 setTimeout(() => {
                     button.classList.remove('failure');
                     buttonStates[buttonType].isDownloading = false;

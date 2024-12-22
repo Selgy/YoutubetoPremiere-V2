@@ -44,22 +44,8 @@ jobs:
           CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
         shell: bash
         run: |
-          # Write to temp file first
-          echo "$CERTIFICATE_BASE64" > cert.b64
-          # Check if file exists and has content
-          if [ ! -s cert.b64 ]; then
-            echo "Error: Certificate file is empty"
-            exit 1
-          fi
-          # Decode
-          base64 -d cert.b64 > certificate.p12
-          # Check if decode was successful
-          if [ ! -s certificate.p12 ]; then
-            echo "Error: Failed to decode certificate"
-            exit 1
-          fi
-          # Cleanup
-          rm cert.b64
+          # Decode directly to certificate file
+          echo "$CERTIFICATE_BASE64" | base64 --decode > certificate.p12
           
       - name: Setup Keychain (macOS)
         if: matrix.os == 'macos-latest'
