@@ -1,6 +1,6 @@
 {
   "name": "bolt-cep",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "scripts": {
     "version": "node scripts/version-update.js && git add -A",
     "postversion": "git push && git push --tags",

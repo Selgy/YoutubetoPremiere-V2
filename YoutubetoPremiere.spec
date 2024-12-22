@@ -2,6 +2,7 @@
 from PyInstaller.building.build_main import Analysis, PYZ, EXE, TOC
 from PyInstaller.utils.hooks import collect_submodules
 import os
+import sys
 
 block_cipher = None
 
@@ -72,7 +73,7 @@ exe = EXE(
     console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None
+    target_arch='universal2' if sys.platform == 'darwin' else None,
+    codesign_identity='Developer ID Application: mickael ducatez (9H8DB46V75)' if sys.platform == 'darwin' else None,
+    entitlements_file='entitlements.plist' if sys.platform == 'darwin' else None
 )

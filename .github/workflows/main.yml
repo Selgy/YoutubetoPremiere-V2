@@ -10,27 +10,95 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
-
     strategy:
       matrix:
+        os: [windows-latest, macos-latest]
         node-version: [18.x]
+        python-version: [3.9]
+    
+    runs-on: ${{ matrix.os }}
+    
     steps:
       - uses: actions/checkout@v2
+      
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v2
         with:
           node-version: ${{ matrix.node-version }}
-      - run: npm i --legacy-peer-deps
-      - run: npm run zxp
+          
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+          
+      - name: Install dependencies
+        run: |
+          yarn install --frozen-lockfile
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+        
+      - name: Create signing certificate
+        run: |
+          echo "${{ secrets.SIGNING_CERTIFICATE }}" > certificate.p12
+          
+      - name: Setup Keychain (macOS)
+        if: matrix.os == 'macos-latest'
+        env:
+          APPLE_DEVELOPER_CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
+          APPLE_DEVELOPER_CERTIFICATE_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security import certificate.p12 -k build.keychain -P $APPLE_DEVELOPER_CERTIFICATE_PASSWORD -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
+          
+      - name: Build ZXP and Executables
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          yarn zxp
+          mkdir -p dist/cep/exec
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            python -m PyInstaller YoutubetoPremiere.spec --distpath dist/cep/exec --target-arch universal2
+            codesign --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime --timestamp --force --verbose=4 ./dist/cep/exec/YoutubetoPremiere
+          else
+            python -m PyInstaller YoutubetoPremiere.spec --distpath dist/cep/exec
+          fi
+          cp app/notification_sound.mp3 dist/cep/exec/
+
+      - name: Notarize macOS Executable
+        if: matrix.os == 'macos-latest'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          ditto -c -k --keepParent ./dist/cep/exec/YoutubetoPremiere ./YoutubetoPremiere.zip
+          xcrun notarytool submit ./YoutubetoPremiere.zip --wait --apple-id "$APPLE_ID" --password "$APPLE_ID_PASSWORD" --team-id "$TEAM_ID"
+          xcrun stapler staple ./dist/cep/exec/YoutubetoPremiere
+
+      - name: Notarize ZXP Package
+        if: matrix.os == 'macos-latest'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          ditto -c -k --keepParent ./dist/zxp/com.YoutubetoPremiereV2.cep.zxp ./dist/zxp/package.zip
+          xcrun notarytool submit ./dist/zxp/package.zip --wait --apple-id "$APPLE_ID" --password "$APPLE_ID_PASSWORD" --team-id "$TEAM_ID"
 
       - name: GitHub Release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SOURCE_NAME: ${{ steps.extract_names.outputs.SOURCE_NAME }}
-          SOURCE_BRANCH: ${{ steps.extract_names.outputs.SOURCE_BRANCH }}
-          SOURCE_TAG: ${{ steps.extract_names.outputs.SOURCE_TAG }}
         with:
-          files: ./dist/zxp/com.bolt.cep.zxp
+          files: |
+            ./dist/zxp/com.YoutubetoPremiereV2.cep.zxp
+            ./dist/cep/exec/**/*
+          generate_release_notes: true
