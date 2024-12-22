@@ -38,12 +38,21 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
         
-      - name: Create signing certificate
+      - name: Create signing certificate (macOS)
         if: matrix.os == 'macos-latest'
         env:
           CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
+        shell: bash
         run: |
-          echo "$CERTIFICATE_BASE64" | base64 --decode > certificate.p12
+          echo "$CERTIFICATE_BASE64" | base64 -d > certificate.p12
+
+      - name: Create signing certificate (Windows)
+        if: matrix.os == 'windows-latest'
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
+        shell: pwsh
+        run: |
+          [System.Convert]::FromBase64String($env:CERTIFICATE_BASE64) | Set-Content certificate.p12 -Encoding Byte
           
       - name: Setup Keychain (macOS)
         if: matrix.os == 'macos-latest'
