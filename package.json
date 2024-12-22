@@ -1,8 +1,8 @@
 {
   "name": "bolt-cep",
-  "version": "3.0.10",
+  "version": "3.0.11",
   "scripts": {
-    "version": "cross-env-shell \"node scripts/version-update.js $npm_package_version && git add -A && git commit -m v$npm_package_version && git tag -f v$npm_package_version\"",
+    "version": "cross-env-shell \"node scripts/version-update.js $npm_package_version && git add -A && (git commit -m v$npm_package_version || true) && git tag -f v$npm_package_version\"",
     "postversion": "git push && git push --tags -f",
     "prebuild": "node scripts/ensure-dirs.js",
     "build": "rimraf dist/* && tsc -p \"tsconfig-build.json\" && vite build --watch false && .\\.venv\\Scripts\\activate && .\\.venv\\Scripts\\python -m PyInstaller YoutubetoPremiere.spec --workpath build --distpath build && mkdir dist\\cep\\exec\\app && copy /Y \"build\\YoutubetoPremiere.exe\" \"dist\\cep\\exec\\\" && copy /Y \"app\\notification_sound.mp3\" \"dist\\cep\\exec\\notification_sound.mp3\"",
