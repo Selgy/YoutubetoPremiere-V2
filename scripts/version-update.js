@@ -20,17 +20,16 @@ const files = [
   }
 ];
 
-// Read current version from package.json
-const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-const currentVersion = packageJson.version;
+// Get version from command line argument or package.json
+const version = process.argv[2] || require('./package.json').version;
 
 // Update version in all files
 files.forEach(file => {
   const filePath = path.join(process.cwd(), file.path);
   if (fs.existsSync(filePath)) {
     let content = fs.readFileSync(filePath, 'utf8');
-    content = content.replace(file.regex, file.template(currentVersion));
+    content = content.replace(file.regex, file.template(version));
     fs.writeFileSync(filePath, content);
-    console.log(`Updated version in ${file.path} to ${currentVersion}`);
+    console.log(`Updated version in ${file.path} to ${version}`);
   }
 }); 

@@ -3,7 +3,7 @@ name: ZXP Release
 on:
   push:
     tags:
-      - "*.*.*"
+      - "v*.*.*"
 
 permissions:
   contents: write
@@ -20,6 +20,8 @@ jobs:
     
     steps:
       - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
       
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v2
@@ -37,22 +39,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
+
+      - name: Update Version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          yarn version --new-version $VERSION --no-git-tag-version
+          node scripts/version-update.js
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add .
+          git commit -m "Update version to $VERSION [skip ci]"
+          git push
         
       - name: Create signing certificate
         run: |
           echo "${{ secrets.SIGNING_CERTIFICATE }}" > certificate.p12
-          
-      - name: Setup Keychain (macOS)
-        if: matrix.os == 'macos-latest'
-        env:
-          APPLE_DEVELOPER_CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
-          APPLE_DEVELOPER_CERTIFICATE_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          security create-keychain -p "" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "" build.keychain
-          security import certificate.p12 -k build.keychain -P $APPLE_DEVELOPER_CERTIFICATE_PASSWORD -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
           
       - name: Build ZXP and Executables
         env:
@@ -63,34 +64,8 @@ jobs:
         run: |
           yarn zxp
           mkdir -p dist/cep/exec
-          if [ "${{ matrix.os }}" = "macos-latest" ]; then
-            python -m PyInstaller YoutubetoPremiere.spec --distpath dist/cep/exec --target-arch universal2
-            codesign --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime --timestamp --force --verbose=4 ./dist/cep/exec/YoutubetoPremiere
-          else
-            python -m PyInstaller YoutubetoPremiere.spec --distpath dist/cep/exec
-          fi
+          python -m PyInstaller YoutubetoPremiere.spec --distpath dist/cep/exec
           cp app/notification_sound.mp3 dist/cep/exec/
-
-      - name: Notarize macOS Executable
-        if: matrix.os == 'macos-latest'
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          ditto -c -k --keepParent ./dist/cep/exec/YoutubetoPremiere ./YoutubetoPremiere.zip
-          xcrun notarytool submit ./YoutubetoPremiere.zip --wait --apple-id "$APPLE_ID" --password "$APPLE_ID_PASSWORD" --team-id "$TEAM_ID"
-          xcrun stapler staple ./dist/cep/exec/YoutubetoPremiere
-
-      - name: Notarize ZXP Package
-        if: matrix.os == 'macos-latest'
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          ditto -c -k --keepParent ./dist/zxp/com.YoutubetoPremiereV2.cep.zxp ./dist/zxp/package.zip
-          xcrun notarytool submit ./dist/zxp/package.zip --wait --apple-id "$APPLE_ID" --password "$APPLE_ID_PASSWORD" --team-id "$TEAM_ID"
 
       - name: GitHub Release
         uses: softprops/action-gh-release@v1
