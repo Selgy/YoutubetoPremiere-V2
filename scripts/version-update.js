@@ -2,7 +2,8 @@ const fs = require('fs');
 const path = require('path');
 
 // Get version from command line argument
-const version = process.argv[2];
+const version = process.argv[2].replace(/%npm_package_version%/g, require('../package.json').version);
+
 if (!version) {
   console.error('Version argument is required');
   process.exit(1);
@@ -17,7 +18,7 @@ const files = [
   },
   {
     path: 'cep.config.ts',
-    regex: /version: "[^"]+"/,
+    regex: /version:\s*"[^"]+"/,
     template: (version) => `version: "${version}"`,
   },
   {

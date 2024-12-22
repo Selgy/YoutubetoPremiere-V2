@@ -23,7 +23,7 @@ const config: CEP_Config = {
   extensionManifestVersion: 6.0,
   requiredRuntimeVersion: 9.0,
   hosts: [
-    { name: "PPRO", version: "$npm_package_new_version" }
+    { name: "PPRO", version: "3.0.911" }
   ],
   type: "Panel",
   iconDarkNormal: "./src/assets/light-icon.png",
