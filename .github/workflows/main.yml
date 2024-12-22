@@ -13,30 +13,33 @@ jobs:
     strategy:
       matrix:
         os: [windows-latest, macos-latest]
-        node-version: [18.x]
-        python-version: [3.9]
+        include:
+          - os: windows-latest
+            python-path: 'C:\hostedtoolcache\windows\Python\3.9.*\x64'
+            node-path: 'C:\hostedtoolcache\windows\node\18.*\x64'
+          - os: macos-latest
+            python-path: '/Users/runner/hostedtoolcache/Python/3.9.*/x64'
+            node-path: '/Users/runner/hostedtoolcache/node/18.*/x64'
     
     runs-on: ${{ matrix.os }}
     
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
       
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
-          
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          
-      - name: Install dependencies
+      - name: Setup Node.js
         run: |
-          yarn install --frozen-lockfile
+          echo "${{ matrix.node-path }}/bin" >> $GITHUB_PATH
+          
+      - name: Setup Python
+        run: |
+          echo "${{ matrix.python-path }}/bin" >> $GITHUB_PATH
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
+          
+      - name: Install Node dependencies
+        run: yarn install --frozen-lockfile
 
       - name: Import Certificate
         if: matrix.os == 'macos-latest'
@@ -44,11 +47,8 @@ jobs:
           CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
           CERTIFICATE_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          # Write base64 to file
           echo -n "$CERTIFICATE_BASE64" > certificate.b64
-          # Convert to binary
           base64 -i certificate.b64 -o certificate.p12 -D
-          # Clean up
           rm certificate.b64
           
       - name: Setup Keychain (macOS)
@@ -56,17 +56,12 @@ jobs:
         env:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          # Create a temporary keychain
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security list-keychains -d user -s build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security set-keychain-settings -t 3600 -l build.keychain
-
-          # Import the certificate
           security import certificate.p12 -k build.keychain -P "$KEYCHAIN_PASSWORD" -T /usr/bin/codesign -A
-          
-          # Update keychain search list
           security list-keychains -s build.keychain
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
 
@@ -106,41 +101,46 @@ jobs:
           xcrun notarytool submit ./YoutubetoPremiere.zip --wait --apple-id "$APPLE_ID" --password "$APPLE_ID_PASSWORD" --team-id "$TEAM_ID"
           xcrun stapler staple ./dist/cep/exec/YoutubetoPremiere
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      - name: Create Artifact
+        run: |
+          tar -czf dist-${{ matrix.os }}.tar.gz dist/
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
         with:
           name: dist-${{ matrix.os }}
-          path: dist/
+          path: dist-${{ matrix.os }}.tar.gz
+          retention-days: 1
 
   package:
     needs: build
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v3
       
-      - name: Use Node.js 18.x
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18.x
+      - name: Setup Node.js
+        run: |
+          echo "C:\hostedtoolcache\windows\node\18.*\x64\bin" >> $GITHUB_PATH
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
         with:
           path: artifacts
-          merge-multiple: true
 
-      - name: Merge executables and create ZXP
+      - name: Extract and merge artifacts
         shell: pwsh
         run: |
+          foreach ($file in Get-ChildItem -Path artifacts/*/*.tar.gz) {
+            tar -xzf $file
+          }
           New-Item -ItemType Directory -Force -Path dist/cep/exec
-          Copy-Item -Recurse -Force artifacts/dist-windows-latest/cep/exec/* dist/cep/exec/
-          Copy-Item -Recurse -Force artifacts/dist-macos-latest/cep/exec/* dist/cep/exec/
+          Copy-Item -Recurse -Force dist/cep/exec/* dist/cep/exec/
           yarn zxp
 
-      - name: GitHub Release
+      - name: Create Release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         env:
