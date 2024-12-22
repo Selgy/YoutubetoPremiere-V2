@@ -1,27 +1,28 @@
 const fs = require('fs');
 const path = require('path');
 
+// Get package.json version
+const packageJson = require('../package.json');
+const version = packageJson.version;
+
 // Files to update
 const files = [
   {
     path: 'package.json',
-    regex: /"version": "([^"]+)"/,
+    regex: /"version": "[^"]+"/,
     template: (version) => `"version": "${version}"`,
   },
   {
     path: 'dist/cep/CSXS/manifest.xml',
-    regex: /ExtensionBundleVersion="([^"]+)"/g,
+    regex: /ExtensionBundleVersion="[^"]+"/g,
     template: (version) => `ExtensionBundleVersion="${version}"`,
   },
   {
     path: 'ChromeExtension/manifest.json',
-    regex: /"version": "([^"]+)"/,
+    regex: /"version": "[^"]+"/,
     template: (version) => `"version": "${version}"`,
   }
 ];
-
-// Get version from command line argument or package.json
-const version = process.argv[2] || require('./package.json').version;
 
 // Update version in all files
 files.forEach(file => {
