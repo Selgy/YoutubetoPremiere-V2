@@ -6,36 +6,71 @@ const csInterface = new CSInterface();
 const extensionPath = csInterface.getSystemPath(SystemPath.EXTENSION);
 
 function connectWithRetry(socket) {
+    let importedPaths = new Set();
+    
     socket.on('connect', () => {
         console.log('Connected to Python server');
         
         socket.on('import_video', async (data) => {
+            const path = data.path;
+            
+            // Check if we've already imported this path
+            if (importedPaths.has(path)) {
+                console.log('Skipping duplicate import:', path);
+                return;
+            }
+            
+            importedPaths.add(path);
+            
             try {
-                const result = await importVideoToPremiereProject(data.path, csInterface);
+                const result = await importVideoToPremiereProject(path, csInterface);
                 socket.emit('import_complete', { 
                     success: true, 
-                    path: data.path 
+                    path: path 
                 });
             } catch (error) {
                 console.error('Import failed:', error);
                 socket.emit('import_complete', { 
                     success: false, 
-                    path: data.path,
+                    path: path,
                     error: error.message 
                 });
+            } finally {
+                // Remove the path after a delay to prevent rapid re-imports
+                setTimeout(() => {
+                    importedPaths.delete(path);
+                }, 5000);
             }
         });
     });
 
-    socket.on('connect_error', (error) => {
-        console.error('Connection error:', error);
-        setTimeout(() => {
-            socket.connect();
-        }, 1000);
-    });
-
     socket.on('disconnect', () => {
         console.log('Disconnected from Python server');
+        // Clear the imported paths set on disconnect
+        importedPaths.clear();
+    });
+
+    socket.on('request_project_path', async () => {
+        try {
+            const script = `
+                if (app.project) {
+                    app.project.path;
+                } else {
+                    "NO_PROJECT";
+                }
+            `;
+            
+            csInterface.evalScript(script, (result) => {
+                if (result && result !== "NO_PROJECT") {
+                    socket.emit('project_path_response', { path: result });
+                } else {
+                    socket.emit('project_path_response', { path: null });
+                }
+            });
+        } catch (error) {
+            console.error('Error getting project path:', error);
+            socket.emit('project_path_response', { path: null });
+        }
     });
 }
 

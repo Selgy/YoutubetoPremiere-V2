@@ -40,9 +40,16 @@ def handle_disconnect():
 
 @socketio.on('import_video')
 def handle_import_video(data):
-    video_path = data.get('video_path')
-    logging.info(f'Received request to import video: {video_path}')
-    socketio.emit('import_video', {'path': video_path})
+    video_path = data.get('path')
+    # Add a flag to track if this video has been imported
+    if not hasattr(handle_import_video, '_imported_videos'):
+        handle_import_video._imported_videos = set()
+
+    if video_path not in handle_import_video._imported_videos:
+        logging.info(f'Importing video: {video_path}')
+        handle_import_video._imported_videos.add(video_path)
+        # Emit import_video event to the client
+        socketio.emit('import_video', {'path': video_path})
 
 @socketio.on('import_complete')
 def handle_import_complete(data):
@@ -55,6 +62,11 @@ def handle_import_complete(data):
         error = data.get('error', 'Unknown error')
         logging.error(f'Failed to import video: {path}. Error: {error}')
         socketio.emit('import_status', {'success': False, 'message': f'Import failed: {error}'})
+
+@socketio.on('get_project_path')
+def handle_get_project_path():
+    logging.info('Requesting project path from panel')
+    socketio.emit('request_project_path')
 
 should_shutdown = False
 

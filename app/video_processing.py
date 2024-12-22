@@ -27,6 +27,13 @@ def handle_video_url(request, settings, socketio):
     video_url = data.get('videoUrl')
     current_time = data.get('currentTime')
     download_type = data.get('downloadType')
+    download_path = data.get('downloadPath', settings.get('downloadPath', '')).strip()
+
+    # If download_path is empty, get it from the project
+    if not download_path:
+        download_path = get_default_download_path(socketio)
+        if download_path is None:
+            return jsonify(error="No active Premiere Pro project found."), 400
 
     try:
         seconds_before = int(data.get('secondsBefore', settings['secondsBefore']))
@@ -40,7 +47,6 @@ def handle_video_url(request, settings, socketio):
         return jsonify(error="Invalid download type"), 400
 
     resolution = settings.get('resolution')
-    download_path = data.get('downloadPath', settings.get('downloadPath', '')).strip()
     download_mp3 = settings.get('downloadMP3')
 
     if not is_premiere_running():
@@ -51,9 +57,9 @@ def handle_video_url(request, settings, socketio):
         clip_end = current_time + seconds_after
         download_and_process_clip(video_url, resolution, download_path, clip_start, clip_end, download_mp3, settings['ffmpeg_path'], socketio)
     elif download_type == 'full':
-        download_video(video_url, resolution, download_path, download_mp3, settings['ffmpeg_path'], socketio)
+        download_video(video_url, resolution, download_path, download_mp3, settings['ffmpeg_path'], socketio, settings)
     elif download_type == 'audio':
-        download_audio(video_url, download_path, settings['ffmpeg_path'], socketio)
+        download_audio(video_url, download_path, settings['ffmpeg_path'], socketio, settings)
 
     return jsonify(success=True), 200
 
@@ -133,12 +139,12 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
 
 
 
-def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_path, socketio):
+def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_path, socketio, settings):
     logging.info(f"Starting video download for URL: {video_url}")
     
     try:
         # Get the download path first
-        final_download_path = download_path if download_path else get_default_download_path()
+        final_download_path = download_path if download_path else get_default_download_path(socketio)
         if final_download_path is None:
             logging.error("No active Premiere Pro project found.")
             socketio.emit('download-failed', {'message': 'No active Premiere Pro project found.'})
@@ -196,21 +202,27 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     '-i', sanitized_output_template,
                     '-metadata', f'comment={video_url}',
                     '-codec', 'copy',
-                    f'{sanitized_output_template}_with_metadata.{extension}'
+                    f'{sanitized_output_template}_with_metadata.mp4'
                 ]
 
                 try:
                     subprocess.run(metadata_command, check=True)
-                    os.replace(f'{sanitized_output_template}_with_metadata.{extension}', sanitized_output_template)
+                    os.replace(f'{sanitized_output_template}_with_metadata.mp4', sanitized_output_template)
                     logging.info(f"Metadata added: {sanitized_output_template}")
+                    
+                    # Use settings for notification sound
+                    volume = settings.get('notificationVolume', 30) / 100
+                    sound_type = settings.get('notificationSound', 'default')
+                    play_notification_sound(volume=volume, sound_type=sound_type)
+                    
+                    # Emit import event once and wait for completion
+                    socketio.emit('import_video', {'path': sanitized_output_template})
+                    time.sleep(0.5)  # Give time for import to process
+                    socketio.emit('download-complete')
                 except subprocess.CalledProcessError as e:
                     logging.error(f"Error adding metadata: {e}")
                     socketio.emit('download-failed', {'message': 'Failed to add metadata.'})
                     return
-
-                socketio.emit('import_video', {'path': sanitized_output_template})
-                play_notification_sound()
-                socketio.emit('download-complete')
             else:
                 logging.error("Video download failed.")
                 socketio.emit('download-failed', {'message': 'Failed to download video.'})
@@ -219,11 +231,11 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         socketio.emit('download-failed', {'message': str(e)})
 
 
-def download_audio(video_url, download_path, ffmpeg_path, socketio):
+def download_audio(video_url, download_path, ffmpeg_path, socketio, settings=None):
     logging.info(f"Starting audio download for URL: {video_url}")
     video_info = youtube_dl.YoutubeDL().extract_info(video_url, download=False)
     sanitized_title = sanitize_title(video_info['title'])
-    final_download_path = download_path if download_path else get_default_download_path()
+    final_download_path = download_path if download_path else get_default_download_path(socketio)
     if final_download_path is None:
         logging.error("No active Premiere Pro project found.")
         socketio.emit('download-failed', {'message': 'No active Premiere Pro project found.'})
@@ -263,7 +275,15 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio):
         if result == 0 and os.path.exists(sanitized_output_template):
             logging.info(f"Audio downloaded: {sanitized_output_template}")
             socketio.emit('import_video', {'path': sanitized_output_template})
-            play_notification_sound()
+            
+            # Use settings for notification sound if available
+            if settings:
+                volume = settings.get('notificationVolume', 30) / 100
+                sound_type = settings.get('notificationSound', 'default')
+                play_notification_sound(volume=volume, sound_type=sound_type)
+            else:
+                play_notification_sound()  # Use defaults
+                
             socketio.emit('download-complete')
         else:
             logging.error("Audio download failed.")

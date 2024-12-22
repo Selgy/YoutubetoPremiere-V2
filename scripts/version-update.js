@@ -31,10 +31,4 @@ files.forEach(file => {
     fs.writeFileSync(filePath, content);
     console.log(`Updated version in ${file.path} to ${version}`);
   }
-});
-
-// Clean up any leftover files in dist
-const distPath = path.join(process.cwd(), 'dist');
-if (fs.existsSync(distPath)) {
-  fs.rmSync(distPath, { recursive: true, force: true });
-}  
+});  

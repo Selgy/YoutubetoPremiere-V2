@@ -15,6 +15,8 @@ module.exports = {
           panel: '#2e2f77',
         },
         border: '#3e41a8',
+        discord: '#5865F2',
+        'discord-hover': '#4752C4',
       }
     }
   },

@@ -1,6 +1,6 @@
 {
   "name": "bolt-cep",
-  "version": "3.0.2",
+  "version": "3.0.0",
   "scripts": {
     "version": "cross-env-shell \"node scripts/version-update.js $npm_package_version && git add -A && (git commit -m v$npm_package_version || true) && git tag -f v$npm_package_version\" && git push && git push --tags -f",
     "postversion": "",
@@ -17,6 +17,7 @@
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-icons": "^5.4.0",
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {

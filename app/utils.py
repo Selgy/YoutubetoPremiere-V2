@@ -12,6 +12,7 @@ import tarfile
 import shutil
 from tqdm import tqdm
 import requests
+import threading
 
 import time
 
@@ -75,15 +76,39 @@ def monitor_premiere_and_shutdown():
     else:
         logging.info("Adobe Premiere Pro is not running.")
 
-def get_default_download_path():
-    project_dir_path = get_current_project_path()
-    if project_dir_path:
-        default_path = os.path.join(project_dir_path, 'YoutubeToPremiere_download')
-        if not os.path.exists(default_path):
-            os.makedirs(default_path)
-        return default_path
-    else:
-        logging.error("No active Premiere Pro project found.")
+def get_default_download_path(socketio=None):
+    try:
+        if socketio:
+            # Create an event to wait for the response
+            response_event = threading.Event()
+            project_path_response = {'path': None}
+            
+            def on_project_path_response(data):
+                project_path_response['path'] = data.get('path')
+                response_event.set()
+            
+            # Register temporary handler
+            socketio.on_event('project_path_response', on_project_path_response)
+            
+            # Request the path
+            socketio.emit('request_project_path')
+            
+            # Wait for response with timeout
+            if response_event.wait(timeout=5):
+                project_path = project_path_response['path']
+                if project_path:
+                    download_path = os.path.join(os.path.dirname(project_path), 'YoutubeToPremiere_download')
+                    os.makedirs(download_path, exist_ok=True)
+                    return download_path
+        
+        # Fallback to Documents path if no project path received
+        documents_path = os.path.expanduser('~/Documents')
+        fallback_path = os.path.join(documents_path, 'YoutubeToPremiere_download')
+        os.makedirs(fallback_path, exist_ok=True)
+        return fallback_path
+        
+    except Exception as e:
+        logging.error(f'Error getting download path: {e}')
         return None
 
 def get_current_project_path():
@@ -238,33 +263,56 @@ def generate_new_filename(base_path, original_name, extension, suffix=""):
         new_name = f"{original_name}{suffix}_{counter}.{extension}"
     return new_name
 
-def play_notification_sound(volume=0.3): 
+def play_notification_sound(volume=0.3, sound_type='default'): 
     pygame.mixer.init()
 
     # Get the correct base path whether running as exe or script
     if getattr(sys, 'frozen', False):
-        # If running as exe, use the directory containing the exe
         base_path = os.path.dirname(sys.executable)
     else:
-        # If running as script, use the script's directory
         base_path = os.path.dirname(os.path.abspath(__file__))
     
-    # Look in multiple possible locations for the sound file
-    possible_paths = [
-        os.path.join(base_path, 'notification_sound.mp3'),
-        os.path.join(base_path, 'app', 'notification_sound.mp3'),
-        os.path.join(base_path, 'exec', 'notification_sound.mp3')
+    # Define possible sound directories
+    sound_dirs = [
+        os.path.join(base_path, 'sounds'),
+        os.path.join(os.path.dirname(base_path), 'sounds'),
+        os.path.join(base_path, 'app', 'sounds'),
+        os.path.join(base_path, 'exec', 'sounds'),
+        os.path.join(os.path.dirname(base_path), 'app', 'sounds')
     ]
     
-    notification_sound_path = None
-    for path in possible_paths:
-        if os.path.exists(path):
-            notification_sound_path = path
+    # Find first existing sounds directory
+    sounds_dir = None
+    for dir_path in sound_dirs:
+        if os.path.exists(dir_path):
+            sounds_dir = dir_path
             break
     
-    if not notification_sound_path:
-        logging.error(f"Notification sound file not found. Searched in: {possible_paths}")
+    if not sounds_dir:
+        logging.error(f"No sounds directory found. Searched in: {sound_dirs}")
         return
+
+    # Get all sound files in the sounds directory
+    sound_files = [f for f in os.listdir(sounds_dir) 
+                  if f.endswith(('.mp3', '.wav'))]
+    
+    if not sound_files:
+        logging.error(f"No sound files found in {sounds_dir}")
+        return
+
+    # Try to find the requested sound with either extension
+    sound_filename = None
+    for ext in ['.mp3', '.wav']:
+        if f'{sound_type}{ext}' in sound_files:
+            sound_filename = f'{sound_type}{ext}'
+            break
+    
+    # If requested sound doesn't exist, use the first available sound
+    if not sound_filename:
+        sound_filename = sound_files[0]
+        logging.warning(f"Requested sound {sound_type} not found, using {sound_filename} instead")
+
+    notification_sound_path = os.path.join(sounds_dir, sound_filename)
             
     try:
         pygame.mixer.music.load(notification_sound_path)
