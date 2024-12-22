@@ -33,8 +33,6 @@ var config = {
     height: 500,
     minWidth: 710,
     minHeight: 350,
-    maxWidth: 710,
-    maxHeight: 850,
     type: "Modeless"
   }, {
     mainPath: "./settings/index.html",
