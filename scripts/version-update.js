@@ -36,4 +36,4 @@ files.forEach(file => {
     fs.writeFileSync(filePath, content);
     console.log(`Updated version in ${file.path} to ${version}`);
   }
-}); 
+});  
