@@ -12,17 +12,17 @@ if (!version) {
 const files = [
   {
     path: 'package.json',
-    regex: /"version": "[^"]+"/,
+    regex: /"version":\s*"[^"]+"/,
     template: (version) => `"version": "${version}"`,
   },
   {
-    path: 'dist/cep/CSXS/manifest.xml',
-    regex: /ExtensionBundleVersion="[^"]+"/g,
-    template: (version) => `ExtensionBundleVersion="${version}"`,
+    path: 'cep.config.ts',
+    regex: /version: "[^"]+"/,
+    template: (version) => `version: "${version}"`,
   },
   {
     path: 'ChromeExtension/manifest.json',
-    regex: /"version": "[^"]+"/,
+    regex: /"version":\s*"[^"]+"/,
     template: (version) => `"version": "${version}"`,
   }
 ];

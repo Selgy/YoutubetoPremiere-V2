@@ -7,8 +7,8 @@ ExtensionBundleName="YoutubetoPremiere V2"
 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
 >
 <ExtensionList>
-  <Extension Id="com.YoutubetoPremiereV2.cep.main" Version="0.0.1" />
-  <Extension Id="com.YoutubetoPremiereV2.cep.settings" Version="0.0.1" />
+  <Extension Id="com.YoutubetoPremiereV2.cep.main" Version="$npm_package_new_version" />
+  <Extension Id="com.YoutubetoPremiereV2.cep.settings" Version="$npm_package_new_version" />
 </ExtensionList>
 <ExecutionEnvironment>
   <HostList>
