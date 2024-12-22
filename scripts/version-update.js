@@ -33,14 +33,18 @@ files.forEach(file => {
   }
 });
 
-// Create an empty commit if there are no changes
+// Create an empty commit if there are no changes and push
 const execSync = require('child_process').execSync;
 try {
   execSync('git diff --quiet HEAD');
   // No changes detected, create empty commit
   execSync('git commit --allow-empty -m "Version bump to ' + version + '"');
+  execSync('git push');
+  execSync('git push --tags -f');
 } catch (error) {
   // Changes detected, normal flow will continue
+  execSync('git push');
+  execSync('git push --tags -f');
 }
 
 // Clean up any leftover files in dist
