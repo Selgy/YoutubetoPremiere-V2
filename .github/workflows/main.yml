@@ -44,6 +44,7 @@ jobs:
         shell: bash
         run: |
           brew install sdl2 pkg-config
+          python3 -m pip install --upgrade pip setuptools wheel
           
       - name: Setup Python (Windows)
         if: matrix.os == 'windows-latest'
@@ -60,10 +61,10 @@ jobs:
         shell: bash
         run: |
           echo "${{ matrix.python-path }}/bin" >> $GITHUB_PATH
-          python -m pip install --upgrade pip
-          python -m pip install wheel setuptools
-          pip install -r requirements.txt
-          pip install pyinstaller
+          python3 -m pip install --upgrade pip
+          python3 -m pip install wheel setuptools
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install pyinstaller
           
       - name: Install Node dependencies
         shell: bash

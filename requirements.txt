@@ -9,8 +9,7 @@ simple-websocket>=0.10.0
 gevent-websocket>=0.10.1
 yt-dlp==2024.12.13
 psutil==5.8.0
-pygame==2.1.2
 pyinstaller
 requests
-tqdm 
+tqdm
 curl_cffi
