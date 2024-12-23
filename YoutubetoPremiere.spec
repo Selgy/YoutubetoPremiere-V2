@@ -8,10 +8,11 @@ import shutil
 
 block_cipher = None
 
-# Clean build directory
+# Clean and recreate build directory
 build_dir = os.path.join('build', 'YoutubetoPremiere')
 if os.path.exists(build_dir):
     shutil.rmtree(build_dir)
+os.makedirs(build_dir, exist_ok=True)
 
 def get_python_path():
     return os.path.dirname(os.path.dirname(os.__file__))
@@ -29,6 +30,12 @@ def get_target_arch():
     if machine == 'arm64':
         return 'arm64'
     return 'x86_64'
+
+# Clean dist directory as well
+dist_dir = 'dist'
+if os.path.exists(dist_dir):
+    shutil.rmtree(dist_dir)
+os.makedirs(dist_dir, exist_ok=True)
 
 a = Analysis(
     [os.path.join('app', 'YoutubetoPremiere.py')],
