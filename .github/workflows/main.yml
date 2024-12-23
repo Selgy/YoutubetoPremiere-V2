@@ -119,7 +119,7 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           source venv/bin/activate
-          python -m PyInstaller YoutubetoPremiere.spec --target-arch universal2 --workpath build --distpath build
+          python -m PyInstaller YoutubetoPremiere.spec --workpath build --distpath build
           codesign --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime --timestamp --force --verbose=4 ./build/YoutubetoPremiere
           mkdir -p dist/cep/exec
           cp -r build/YoutubetoPremiere dist/cep/exec/YoutubetoPremiere
