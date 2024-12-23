@@ -195,3 +195,9 @@ jobs:
           files: |
             ./dist/zxp/com.YoutubetoPremiereV2.cep.zxp
           generate_release_notes: true
+
+      - name: Build macOS executable
+        if: runner.os == 'macOS'
+        run: |
+          source venv/bin/activate
+          pyinstaller YoutubetoPremiere.spec -y

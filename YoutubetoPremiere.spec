@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.building.build_main import Analysis, PYZ, EXE, TOC
+from PyInstaller.building.build_main import Analysis, PYZ, EXE, TOC, COLLECT
 from PyInstaller.utils.hooks import collect_submodules
 import os
 import sys
@@ -8,11 +8,26 @@ import shutil
 
 block_cipher = None
 
-# Clean and recreate build directory
-build_dir = os.path.join('build', 'YoutubetoPremiere')
-if os.path.exists(build_dir):
-    shutil.rmtree(build_dir)
-os.makedirs(build_dir, exist_ok=True)
+# Clean build and dist directories
+def clean_directories():
+    dirs_to_clean = [
+        os.path.join('build', 'YoutubetoPremiere'),
+        os.path.join('build', 'YoutubetoPremiere', 'localpycs'),
+        'dist',
+        'build'
+    ]
+    for dir_path in dirs_to_clean:
+        if os.path.exists(dir_path):
+            try:
+                shutil.rmtree(dir_path)
+            except Exception as e:
+                print(f"Warning: Could not remove {dir_path}: {e}")
+        try:
+            os.makedirs(dir_path, exist_ok=True)
+        except Exception as e:
+            print(f"Warning: Could not create {dir_path}: {e}")
+
+clean_directories()
 
 def get_python_path():
     return os.path.dirname(os.path.dirname(os.__file__))
@@ -30,12 +45,6 @@ def get_target_arch():
     if machine == 'arm64':
         return 'arm64'
     return 'x86_64'
-
-# Clean dist directory as well
-dist_dir = 'dist'
-if os.path.exists(dist_dir):
-    shutil.rmtree(dist_dir)
-os.makedirs(dist_dir, exist_ok=True)
 
 a = Analysis(
     [os.path.join('app', 'YoutubetoPremiere.py')],
@@ -82,21 +91,28 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='YoutubetoPremiere',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    upx_exclude=[],
-    runtime_tmpdir=None,
     console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=get_target_arch(),
     codesign_identity='Developer ID Application: mickael ducatez (9H8DB46V75)' if sys.platform == 'darwin' else None,
     entitlements_file='entitlements.plist' if sys.platform == 'darwin' else None
+)
+
+collect_all = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='YoutubetoPremiere'
 )
