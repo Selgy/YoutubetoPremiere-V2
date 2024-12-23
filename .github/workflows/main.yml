@@ -22,6 +22,9 @@ jobs:
             node-path: '/Users/runner/hostedtoolcache/node/18.*/x64'
     
     runs-on: ${{ matrix.os }}
+    env:
+      CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
     
     steps:
       - name: Checkout code
@@ -70,20 +73,35 @@ jobs:
         shell: bash
         run: yarn install --frozen-lockfile
 
-      - name: Import Certificate
+      - name: Debug Certificate Data
         if: matrix.os == 'macos-latest'
-        env:
-          CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
-          CERTIFICATE_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        shell: bash
         run: |
-          echo -n "$CERTIFICATE_BASE64" > certificate.b64
-          base64 -i certificate.b64 -o certificate.p12 -D
-          rm certificate.b64
+          if [ -z "$CERTIFICATE_BASE64" ]; then
+            echo "Certificate data is empty"
+            exit 1
+          fi
+          echo "Certificate data length: ${#CERTIFICATE_BASE64}"
+
+      - name: Create Certificate
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          # Write base64 to file
+          echo "$CERTIFICATE_BASE64" > certificate.base64
+          # Decode base64 to p12
+          base64 --decode certificate.base64 > certificate.p12
+          # Clean up
+          rm certificate.base64
+          # Check if certificate was created
+          if [ ! -f certificate.p12 ]; then
+            echo "Failed to create certificate"
+            exit 1
+          fi
           
       - name: Setup Keychain (macOS)
         if: matrix.os == 'macos-latest'
-        env:
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        shell: bash
         run: |
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security list-keychains -d user -s build.keychain
