@@ -22,8 +22,17 @@ def clean_directories():
                 shutil.rmtree(dir_path)
             except Exception as e:
                 print(f"Warning: Could not remove {dir_path}: {e}")
+
+    # Create necessary directories
+    dirs_to_create = [
+        'build',
+        os.path.join('build', 'YoutubetoPremiere'),
+        os.path.join('build', 'YoutubetoPremiere', 'localpycs'),
+        'dist'
+    ]
+    for dir_path in dirs_to_create:
         try:
-            os.makedirs(dir_path, exist_ok=True)
+            os.makedirs(dir_path, mode=0o755, exist_ok=True)
         except Exception as e:
             print(f"Warning: Could not create {dir_path}: {e}")
 

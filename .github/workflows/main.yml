@@ -119,10 +119,17 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           source venv/bin/activate
-          python -m PyInstaller YoutubetoPremiere.spec --workpath build --distpath build
-          codesign --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime --timestamp --force --verbose=4 ./build/YoutubetoPremiere
+          # Create build directories with proper permissions
+          mkdir -p build/YoutubetoPremiere
+          chmod -R 755 build
+          # Run PyInstaller with clean build
+          python -m PyInstaller YoutubetoPremiere.spec --clean --workpath build --distpath dist
+          # Sign the executable
+          codesign --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime --timestamp --force --verbose=4 ./dist/YoutubetoPremiere/YoutubetoPremiere
+          # Create output directories
           mkdir -p dist/cep/exec
-          cp -r build/YoutubetoPremiere dist/cep/exec/YoutubetoPremiere
+          # Copy executable and sounds
+          cp -r dist/YoutubetoPremiere dist/cep/exec/YoutubetoPremiere
           mkdir -p dist/cep/exec/sounds
           cp -r app/sounds/* dist/cep/exec/sounds/
 
