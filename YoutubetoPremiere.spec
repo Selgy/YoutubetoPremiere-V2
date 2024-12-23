@@ -3,6 +3,7 @@ from PyInstaller.building.build_main import Analysis, PYZ, EXE, TOC
 from PyInstaller.utils.hooks import collect_submodules
 import os
 import sys
+import platform
 
 block_cipher = None
 
@@ -13,6 +14,15 @@ def get_python_path():
 def exclude_anaconda(path_str):
     lower_path = str(path_str).lower()
     return not any(x in lower_path for x in ['anaconda', 'conda', 'envs', 'conda-meta'])
+
+# Determine target architecture
+def get_target_arch():
+    if sys.platform != 'darwin':
+        return None
+    machine = platform.machine()
+    if machine == 'arm64':
+        return 'arm64'
+    return 'x86_64'
 
 a = Analysis(
     [os.path.join('app', 'YoutubetoPremiere.py')],
@@ -73,7 +83,7 @@ exe = EXE(
     console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
-    target_arch='universal2' if sys.platform == 'darwin' else None,
+    target_arch=get_target_arch(),
     codesign_identity='Developer ID Application: mickael ducatez (9H8DB46V75)' if sys.platform == 'darwin' else None,
     entitlements_file='entitlements.plist' if sys.platform == 'darwin' else None
 )
