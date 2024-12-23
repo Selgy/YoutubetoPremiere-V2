@@ -87,17 +87,15 @@ jobs:
         if: matrix.os == 'macos-latest'
         shell: bash
         run: |
-          # Write base64 to file
-          echo "$CERTIFICATE_BASE64" > certificate.base64
-          # Decode base64 to p12
-          base64 --decode certificate.base64 > certificate.p12
-          # Clean up
-          rm certificate.base64
+          # Create certificate from base64
+          echo "$CERTIFICATE_BASE64" | base64 -d > certificate.p12
           # Check if certificate was created
           if [ ! -f certificate.p12 ]; then
             echo "Failed to create certificate"
             exit 1
           fi
+          # Check certificate file size
+          ls -l certificate.p12
           
       - name: Setup Keychain (macOS)
         if: matrix.os == 'macos-latest'
