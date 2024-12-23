@@ -147,12 +147,26 @@ jobs:
         if: matrix.os == 'macos-latest'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          # Create a temporary keychain
+          echo "Creating zip for notarization..."
           ditto -c -k --keepParent ./dist/cep/exec/YoutubetoPremiere ./YoutubetoPremiere.zip
-          xcrun notarytool submit ./YoutubetoPremiere.zip --wait --apple-id "$APPLE_ID" --password "$APPLE_ID_PASSWORD" --team-id "$TEAM_ID"
+          
+          echo "Submitting for notarization..."
+          xcrun notarytool submit ./YoutubetoPremiere.zip \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_ID_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait \
+            --progress
+          
+          echo "Stapling notarization ticket..."
           xcrun stapler staple ./dist/cep/exec/YoutubetoPremiere
+          
+          echo "Verifying stapled executable..."
+          xcrun stapler validate ./dist/cep/exec/YoutubetoPremiere
 
       - name: Create Artifact
         run: |
