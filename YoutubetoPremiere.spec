@@ -4,8 +4,14 @@ from PyInstaller.utils.hooks import collect_submodules
 import os
 import sys
 import platform
+import shutil
 
 block_cipher = None
+
+# Clean build directory
+build_dir = os.path.join('build', 'YoutubetoPremiere')
+if os.path.exists(build_dir):
+    shutil.rmtree(build_dir)
 
 def get_python_path():
     return os.path.dirname(os.path.dirname(os.__file__))
