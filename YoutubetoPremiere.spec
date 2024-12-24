@@ -18,11 +18,15 @@ def exclude_anaconda(path_str):
 is_macos = sys.platform == 'darwin'
 is_windows = sys.platform == 'win32'
 
+# Ensure paths use correct separators for the platform
+app_path = os.path.join('app')
+main_script = os.path.join(app_path, 'YoutubetoPremiere.py')
+
 a = Analysis(
-    [os.path.join('app', 'YoutubetoPremiere.py')],
+    [main_script],
     pathex=[get_python_path()],
     binaries=[],
-    datas=[(os.path.join('app'), 'app')],
+    datas=[(app_path, 'app')],
     hiddenimports=[
         'engineio.async_drivers.threading',
         'engineio.async_drivers.eventlet',
@@ -69,6 +73,11 @@ else:
     target_arch = None
     codesign_identity = None
     entitlements_file = None
+
+# Create dist directory if it doesn't exist
+dist_dir = 'dist'
+if not os.path.exists(dist_dir):
+    os.makedirs(dist_dir)
 
 exe = EXE(
     pyz,
