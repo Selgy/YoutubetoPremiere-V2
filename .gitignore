@@ -3,5 +3,6 @@ dist
 .DS_Store
 node_modules
 app/ffmpeg.exe
-build
+build/
 .venv
+.vscode

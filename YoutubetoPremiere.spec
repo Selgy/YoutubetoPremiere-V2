@@ -15,10 +15,10 @@ def exclude_anaconda(path_str):
     return not any(x in lower_path for x in ['anaconda', 'conda', 'envs', 'conda-meta'])
 
 a = Analysis(
-    ['app\\YoutubetoPremiere.py'],
+    [os.path.join('app', 'YoutubetoPremiere.py')],
     pathex=[get_python_path()],  # Add Python path explicitly
     binaries=[],  # Remove the nested Analysis call
-    datas=[('app', 'app')],
+    datas=[(os.path.join('app'), 'app')],
     hiddenimports=[
         'engineio.async_drivers.threading',
         'engineio.async_drivers.eventlet',
