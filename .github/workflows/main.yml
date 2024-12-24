@@ -141,26 +141,39 @@ jobs:
         if: matrix.os == 'macos-latest'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          # Create a temporary keychain
+          if [ -z "$APPLE_ID" ] || [ -z "$APPLE_APP_SPECIFIC_PASSWORD" ] || [ -z "$APPLE_TEAM_ID" ]; then
+            echo "Error: Required Apple credentials are missing"
+            exit 1
+          fi
+
           echo "Creating zip for notarization..."
           ditto -c -k --keepParent ./dist/cep/exec/YoutubetoPremiere ./YoutubetoPremiere.zip
           
           echo "Submitting for notarization..."
           xcrun notarytool submit ./YoutubetoPremiere.zip \
             --apple-id "$APPLE_ID" \
-            --password "$APPLE_ID_PASSWORD" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
             --wait \
-            --progress
+            --progress || {
+              echo "Notarization failed"
+              exit 1
+            }
           
           echo "Stapling notarization ticket..."
-          xcrun stapler staple ./dist/cep/exec/YoutubetoPremiere
+          xcrun stapler staple ./dist/cep/exec/YoutubetoPremiere || {
+            echo "Stapling failed"
+            exit 1
+          }
           
           echo "Verifying stapled executable..."
-          xcrun stapler validate ./dist/cep/exec/YoutubetoPremiere
+          xcrun stapler validate ./dist/cep/exec/YoutubetoPremiere || {
+            echo "Validation failed"
+            exit 1
+          }
 
       - name: Create Artifact
         run: |
