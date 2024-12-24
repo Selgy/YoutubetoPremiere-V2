@@ -119,12 +119,36 @@ jobs:
           # Create build directories with proper permissions
           mkdir -p build/work dist/cep/exec/sounds
           chmod -R 755 build dist
-          # Run PyInstaller with clean build
-          python -m PyInstaller YoutubetoPremiere.spec --clean --workpath build/work --distpath dist
-          # Sign the executable
-          codesign --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime --timestamp --force --verbose=4 ./dist/YoutubetoPremiere
-          # Copy executable and sounds
-          cp -r ./dist/YoutubetoPremiere ./dist/cep/exec/
+          # Run PyInstaller with clean build to create app bundle
+          python -m PyInstaller YoutubetoPremiere.spec --clean --workpath build/work --distpath dist --windowed
+          # Create app bundle structure
+          mkdir -p "dist/YoutubetoPremiere.app/Contents/MacOS"
+          mv dist/YoutubetoPremiere "dist/YoutubetoPremiere.app/Contents/MacOS/"
+          # Create Info.plist
+          cat > "dist/YoutubetoPremiere.app/Contents/Info.plist" << EOL
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>YoutubetoPremiere</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.mickaelducatez.youtubetopremiereV2</string>
+              <key>CFBundleName</key>
+              <string>YoutubetoPremiere</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0.0</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>10.13</string>
+          </dict>
+          </plist>
+          EOL
+          # Sign the app bundle
+          codesign --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime --timestamp --force --verbose=4 "dist/YoutubetoPremiere.app"
+          # Copy app bundle and sounds
+          cp -r "dist/YoutubetoPremiere.app" "./dist/cep/exec/"
           cp -r app/sounds/* ./dist/cep/exec/sounds/
 
       - name: Build Windows Executable
@@ -150,7 +174,7 @@ jobs:
           fi
 
           echo "Creating zip for notarization..."
-          ditto -c -k --keepParent ./dist/cep/exec/YoutubetoPremiere ./YoutubetoPremiere.zip
+          ditto -c -k --keepParent "./dist/YoutubetoPremiere.app" "./YoutubetoPremiere.zip"
           
           echo "Submitting for notarization..."
           xcrun notarytool submit ./YoutubetoPremiere.zip \
@@ -164,16 +188,20 @@ jobs:
             }
           
           echo "Stapling notarization ticket..."
-          xcrun stapler staple ./dist/cep/exec/YoutubetoPremiere || {
+          xcrun stapler staple "./dist/YoutubetoPremiere.app" || {
             echo "Stapling failed"
             exit 1
           }
           
-          echo "Verifying stapled executable..."
-          xcrun stapler validate ./dist/cep/exec/YoutubetoPremiere || {
+          echo "Verifying stapled app bundle..."
+          xcrun stapler validate "./dist/YoutubetoPremiere.app" || {
             echo "Validation failed"
             exit 1
           }
+          
+          # Update the executable in cep/exec with the notarized version
+          rm -rf "./dist/cep/exec/YoutubetoPremiere.app"
+          cp -r "./dist/YoutubetoPremiere.app" "./dist/cep/exec/"
 
       - name: Create Artifact
         run: |
