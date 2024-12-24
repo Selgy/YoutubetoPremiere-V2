@@ -241,15 +241,56 @@ jobs:
         with:
           path: artifacts
 
-      - name: Extract and merge artifacts
+      - name: Extract artifacts
         shell: pwsh
         run: |
+          # Create temp directory for extraction
+          New-Item -ItemType Directory -Force -Path temp
+          
+          # Extract each artifact
           foreach ($file in Get-ChildItem -Path artifacts/*/*.tar.gz) {
-            tar -xzf $file
+            $platform = $file.Directory.Name
+            $extractPath = "temp/$platform"
+            New-Item -ItemType Directory -Force -Path $extractPath
+            
+            # Extract the tar.gz file
+            tar -xzf $file.FullName -C $extractPath
           }
+          
+          # Create final cep structure
           New-Item -ItemType Directory -Force -Path dist/cep/exec
-          Copy-Item -Recurse -Force dist/cep/exec/* dist/cep/exec/
-          yarn zxp
+          
+          # Copy files from each platform's extracted content
+          foreach ($platform in Get-ChildItem -Path temp) {
+            Copy-Item -Recurse -Force "$($platform.FullName)/dist/cep/exec/*" dist/cep/exec/
+          }
+
+      - name: Download ZXPSignCmd
+        shell: pwsh
+        run: |
+          # Create tools directory
+          New-Item -ItemType Directory -Force -Path tools
+          
+          # Download ZXPSignCmd
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Adobe-CEP/CEP-Resources/master/ZXPSignCMD/4.1.1/win64/ZXPSignCmd.exe" -OutFile "tools/ZXPSignCmd.exe"
+
+      - name: Create Certificate
+        shell: pwsh
+        run: |
+          # Create certificate directory
+          New-Item -ItemType Directory -Force -Path cert
+          
+          # Generate self-signed certificate
+          & tools/ZXPSignCmd.exe -selfSignedCert "FR" "IDF" "Mickael Ducatez" "YoutubetoPremiere" "1234" cert/certificate.p12
+
+      - name: Package ZXP
+        shell: pwsh
+        run: |
+          # Create dist/zxp directory
+          New-Item -ItemType Directory -Force -Path dist/zxp
+          
+          # Package the extension
+          & tools/ZXPSignCmd.exe -sign dist/cep dist/zxp/com.YoutubetoPremiereV2.cep.zxp cert/certificate.p12 1234
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
