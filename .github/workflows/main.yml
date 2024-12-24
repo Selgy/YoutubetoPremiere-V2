@@ -204,8 +204,17 @@ jobs:
           cp -r "./dist/YoutubetoPremiere.app" "./dist/cep/exec/"
 
       - name: Create Artifact
+        if: matrix.os == 'macos-latest'
         run: |
           tar -czf dist-${{ matrix.os }}.tar.gz dist/
+
+      - name: Create Artifact (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/* -DestinationPath dist-${{ matrix.os }}.zip
+          # Rename to .tar.gz to maintain compatibility with the rest of the workflow
+          Move-Item -Force dist-${{ matrix.os }}.zip dist-${{ matrix.os }}.tar.gz
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v3
