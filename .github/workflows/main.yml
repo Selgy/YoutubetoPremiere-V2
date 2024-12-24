@@ -119,8 +119,8 @@ jobs:
           # Create build directories with proper permissions
           mkdir -p build/work dist/cep/exec/sounds
           chmod -R 755 build dist
-          # Run PyInstaller with clean build to create app bundle
-          python -m PyInstaller YoutubetoPremiere.spec --clean --workpath build/work --distpath dist --windowed
+          # Run PyInstaller with clean build
+          python -m PyInstaller YoutubetoPremiere.spec --clean --workpath build/work --distpath dist
           # Create app bundle structure
           mkdir -p "dist/YoutubetoPremiere.app/Contents/MacOS"
           mv dist/YoutubetoPremiere "dist/YoutubetoPremiere.app/Contents/MacOS/"

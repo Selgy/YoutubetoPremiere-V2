@@ -71,12 +71,24 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 # Platform specific options
 if is_macos:
     target_arch = None  # Let PyInstaller detect the architecture
-    codesign_identity = None  # Remove codesign for now to test build
+    codesign_identity = "Developer ID Application: mickael ducatez (9H8DB46V75)"
     entitlements_file = None
+    bundle_identifier = "com.mickaelducatez.youtubetopremiereV2"
+    info_plist = {
+        'CFBundleIdentifier': bundle_identifier,
+        'CFBundleName': 'YoutubetoPremiere',
+        'CFBundleDisplayName': 'YoutubetoPremiere',
+        'CFBundlePackageType': 'APPL',
+        'CFBundleShortVersionString': '1.0.0',
+        'LSMinimumSystemVersion': '10.13',
+        'NSHighResolutionCapable': True,
+    }
 else:
     target_arch = None
     codesign_identity = None
     entitlements_file = None
+    info_plist = None
+    bundle_identifier = None
 
 exe = EXE(
     pyz,
@@ -92,10 +104,12 @@ exe = EXE(
     upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,
+    console=not is_macos,  # Use console for Windows, GUI for macOS
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=target_arch,
     codesign_identity=codesign_identity,
-    entitlements_file=entitlements_file
+    entitlements_file=entitlements_file,
+    info_plist=info_plist,
+    bundle_identifier=bundle_identifier
 )
