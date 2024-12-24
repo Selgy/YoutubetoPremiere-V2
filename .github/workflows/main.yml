@@ -120,10 +120,10 @@ jobs:
         run: |
           source venv/bin/activate
           # Create build directories with proper permissions
-          mkdir -p build/YoutubetoPremiere
+          mkdir -p build/work
           chmod -R 755 build
           # Run PyInstaller with clean build
-          python -m PyInstaller YoutubetoPremiere.spec --clean --workpath build --distpath dist
+          python -m PyInstaller YoutubetoPremiere.spec --clean --workpath build/work --distpath dist
           # Sign the executable
           codesign --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime --timestamp --force --verbose=4 ./dist/YoutubetoPremiere/YoutubetoPremiere
           # Create output directories
@@ -137,9 +137,9 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          python -m PyInstaller YoutubetoPremiere.spec --workpath build --distpath build
+          python -m PyInstaller YoutubetoPremiere.spec --clean --workpath build/work --distpath dist
           New-Item -ItemType Directory -Force -Path dist/cep/exec
-          Copy-Item build/YoutubetoPremiere.exe dist/cep/exec/YoutubetoPremiere.exe
+          Copy-Item dist/YoutubetoPremiere/YoutubetoPremiere.exe dist/cep/exec/YoutubetoPremiere.exe
           New-Item -ItemType Directory -Force -Path dist/cep/exec/sounds
           Copy-Item -Recurse -Force app/sounds/* dist/cep/exec/sounds/
 
