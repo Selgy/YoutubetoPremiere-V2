@@ -260,10 +260,32 @@ jobs:
           # Create final cep structure
           New-Item -ItemType Directory -Force -Path dist/cep/exec
           
+          # Debug: List contents of temp directory
+          Write-Host "Contents of temp directory:"
+          Get-ChildItem -Recurse temp | ForEach-Object { Write-Host $_.FullName }
+          
           # Copy files from each platform's extracted content
           foreach ($platform in Get-ChildItem -Path temp) {
-            Copy-Item -Recurse -Force "$($platform.FullName)/dist/cep/exec/*" dist/cep/exec/
+            $execPath = Join-Path $platform.FullName "dist" "cep" "exec"
+            if (Test-Path $execPath) {
+              Write-Host "Copying from: $execPath"
+              Get-ChildItem -Path $execPath | ForEach-Object {
+                $destPath = Join-Path "dist" "cep" "exec" $_.Name
+                Write-Host "Copying $($_.FullName) to $destPath"
+                if (Test-Path $_.FullName -PathType Container) {
+                  Copy-Item -Recurse -Force $_.FullName $destPath
+                } else {
+                  Copy-Item -Force $_.FullName $destPath
+                }
+              }
+            } else {
+              Write-Host "Warning: Path not found - $execPath"
+            }
           }
+          
+          # Debug: List contents of final directory
+          Write-Host "Contents of dist/cep/exec:"
+          Get-ChildItem -Recurse dist/cep/exec | ForEach-Object { Write-Host $_.FullName }
 
       - name: Download ZXPSignCmd
         shell: pwsh
