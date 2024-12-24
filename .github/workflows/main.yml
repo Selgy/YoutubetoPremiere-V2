@@ -87,14 +87,11 @@ jobs:
         if: matrix.os == 'macos-latest'
         shell: bash
         run: |
-          # Create certificate from base64
           echo "$CERTIFICATE_BASE64" | base64 -d > certificate.p12
-          # Check if certificate was created
           if [ ! -f certificate.p12 ]; then
             echo "Failed to create certificate"
             exit 1
           fi
-          # Check certificate file size
           ls -l certificate.p12
           
       - name: Setup Keychain (macOS)
@@ -120,18 +117,15 @@ jobs:
         run: |
           source venv/bin/activate
           # Create build directories with proper permissions
-          mkdir -p build/work
-          chmod -R 755 build
+          mkdir -p build/work dist/cep/exec/sounds
+          chmod -R 755 build dist
           # Run PyInstaller with clean build
           python -m PyInstaller YoutubetoPremiere.spec --clean --workpath build/work --distpath dist
           # Sign the executable
-          codesign --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime --timestamp --force --verbose=4 ./dist/YoutubetoPremiere/YoutubetoPremiere
-          # Create output directories
-          mkdir -p dist/cep/exec
+          codesign --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime --timestamp --force --verbose=4 ./dist/YoutubetoPremiere
           # Copy executable and sounds
-          cp -r dist/YoutubetoPremiere dist/cep/exec/YoutubetoPremiere
-          mkdir -p dist/cep/exec/sounds
-          cp -r app/sounds/* dist/cep/exec/sounds/
+          cp -r ./dist/YoutubetoPremiere ./dist/cep/exec/
+          cp -r app/sounds/* ./dist/cep/exec/sounds/
 
       - name: Build Windows Executable
         if: matrix.os == 'windows-latest'
