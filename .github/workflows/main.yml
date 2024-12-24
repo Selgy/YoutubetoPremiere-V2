@@ -257,9 +257,8 @@ jobs:
             tar -xzf $file.FullName -C $extractPath
           }
           
-          # Create final cep structure with all required folders
+          # Create final cep structure with required folders
           $folders = @(
-            "dist/cep/assets",
             "dist/cep/CSXS",
             "dist/cep/exec",
             "dist/cep/js",
@@ -273,7 +272,6 @@ jobs:
           }
           
           # Copy project files to cep structure
-          Copy-Item -Recurse -Force "assets/*" "dist/cep/assets/"
           Copy-Item -Recurse -Force "CSXS/*" "dist/cep/CSXS/"
           Copy-Item -Recurse -Force "js/*" "dist/cep/js/"
           Copy-Item -Recurse -Force "jsx/*" "dist/cep/jsx/"
