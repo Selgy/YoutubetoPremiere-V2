@@ -257,35 +257,58 @@ jobs:
             tar -xzf $file.FullName -C $extractPath
           }
           
-          # Create final cep structure
-          New-Item -ItemType Directory -Force -Path dist/cep/exec
+          # Create final cep structure with all required folders
+          $folders = @(
+            "dist/cep/assets",
+            "dist/cep/CSXS",
+            "dist/cep/exec",
+            "dist/cep/js",
+            "dist/cep/jsx",
+            "dist/cep/main",
+            "dist/cep/node_modules",
+            "dist/cep/settings"
+          )
+          foreach ($folder in $folders) {
+            New-Item -ItemType Directory -Force -Path $folder
+          }
           
-          # Debug: List contents of temp directory
-          Write-Host "Contents of temp directory:"
-          Get-ChildItem -Recurse temp | ForEach-Object { Write-Host $_.FullName }
+          # Copy project files to cep structure
+          Copy-Item -Recurse -Force "assets/*" "dist/cep/assets/"
+          Copy-Item -Recurse -Force "CSXS/*" "dist/cep/CSXS/"
+          Copy-Item -Recurse -Force "js/*" "dist/cep/js/"
+          Copy-Item -Recurse -Force "jsx/*" "dist/cep/jsx/"
+          Copy-Item -Recurse -Force "main/*" "dist/cep/main/"
+          Copy-Item -Recurse -Force "node_modules/*" "dist/cep/node_modules/"
+          Copy-Item -Recurse -Force "settings/*" "dist/cep/settings/"
           
-          # Copy files from each platform's extracted content
+          # Copy executables from each platform
           foreach ($platform in Get-ChildItem -Path temp) {
             $execPath = Join-Path $platform.FullName "dist" "cep" "exec"
             if (Test-Path $execPath) {
-              Write-Host "Copying from: $execPath"
-              Get-ChildItem -Path $execPath | ForEach-Object {
-                $destPath = Join-Path "dist" "cep" "exec" $_.Name
-                Write-Host "Copying $($_.FullName) to $destPath"
-                if (Test-Path $_.FullName -PathType Container) {
-                  Copy-Item -Recurse -Force $_.FullName $destPath
-                } else {
-                  Copy-Item -Force $_.FullName $destPath
+              Write-Host "Processing platform: $($platform.Name)"
+              if ($platform.Name -eq "dist-macos-latest") {
+                # For macOS, copy the executable from inside the .app bundle
+                $macosExe = Join-Path $execPath "YoutubetoPremiere.app" "Contents" "MacOS" "YoutubetoPremiere"
+                if (Test-Path $macosExe) {
+                  Copy-Item -Force $macosExe "dist/cep/exec/YoutubetoPremiere"
+                }
+              } elseif ($platform.Name -eq "dist-windows-latest") {
+                # For Windows, copy the .exe file
+                $winExe = Join-Path $execPath "YoutubetoPremiere.exe"
+                if (Test-Path $winExe) {
+                  Copy-Item -Force $winExe "dist/cep/exec/"
                 }
               }
-            } else {
-              Write-Host "Warning: Path not found - $execPath"
             }
           }
           
+          # Copy sounds to exec folder
+          New-Item -ItemType Directory -Force -Path "dist/cep/exec/sounds"
+          Copy-Item -Recurse -Force "app/sounds/*" "dist/cep/exec/sounds/"
+          
           # Debug: List contents of final directory
-          Write-Host "Contents of dist/cep/exec:"
-          Get-ChildItem -Recurse dist/cep/exec | ForEach-Object { Write-Host $_.FullName }
+          Write-Host "Contents of dist/cep:"
+          Get-ChildItem -Recurse dist/cep | ForEach-Object { Write-Host $_.FullName }
 
       - name: Download ZXPSignCmd
         shell: pwsh
