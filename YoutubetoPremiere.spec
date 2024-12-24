@@ -14,10 +14,14 @@ def exclude_anaconda(path_str):
     lower_path = str(path_str).lower()
     return not any(x in lower_path for x in ['anaconda', 'conda', 'envs', 'conda-meta'])
 
+# Platform-specific configurations
+is_macos = sys.platform == 'darwin'
+is_windows = sys.platform == 'win32'
+
 a = Analysis(
     [os.path.join('app', 'YoutubetoPremiere.py')],
-    pathex=[get_python_path()],  # Add Python path explicitly
-    binaries=[],  # Remove the nested Analysis call
+    pathex=[get_python_path()],
+    binaries=[],
     datas=[(os.path.join('app'), 'app')],
     hiddenimports=[
         'engineio.async_drivers.threading',
@@ -56,6 +60,16 @@ a.datas = TOC([x for x in a.datas if exclude_anaconda(x[1])])
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+# Platform specific options
+if is_macos:
+    target_arch = None  # Let PyInstaller detect the architecture
+    codesign_identity = 'Developer ID Application: mickael ducatez (9H8DB46V75)'
+    entitlements_file = 'entitlements.plist'
+else:
+    target_arch = None
+    codesign_identity = None
+    entitlements_file = None
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -73,7 +87,7 @@ exe = EXE(
     console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
-    target_arch='universal2' if sys.platform == 'darwin' else None,
-    codesign_identity='Developer ID Application: mickael ducatez (9H8DB46V75)' if sys.platform == 'darwin' else None,
-    entitlements_file='entitlements.plist' if sys.platform == 'darwin' else None
+    target_arch=target_arch,
+    codesign_identity=codesign_identity,
+    entitlements_file=entitlements_file
 )
