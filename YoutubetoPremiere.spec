@@ -1,8 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from PyInstaller.building.build_main import Analysis, PYZ, EXE, TOC
 from PyInstaller.utils.hooks import collect_submodules
-import os
 import sys
+
+# Create necessary directories
+dist_dir = os.path.join('dist')
+work_dir = os.path.join('build')
+if not os.path.exists(dist_dir):
+    os.makedirs(dist_dir)
+if not os.path.exists(work_dir):
+    os.makedirs(work_dir)
 
 block_cipher = None
 
@@ -31,9 +39,6 @@ a = Analysis(
         'engineio.async_drivers.threading',
         'engineio.async_drivers.eventlet',
         'engineio.async_drivers.gevent',
-        'socketio.async_drivers.threading',
-        'socketio.async_drivers.eventlet',
-        'socketio.async_drivers.gevent',
         'eventlet.hubs.epolls',
         'eventlet.hubs.kqueue',
         'eventlet.hubs.selects',
@@ -43,7 +48,6 @@ a = Analysis(
         'dns',
         'dns.dnssec',
         'dns.e164',
-        'dns.hash',
         'dns.namedict',
         'dns.tsigkeyring',
         'dns.update',
@@ -67,17 +71,12 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 # Platform specific options
 if is_macos:
     target_arch = None  # Let PyInstaller detect the architecture
-    codesign_identity = 'Developer ID Application: mickael ducatez (9H8DB46V75)'
-    entitlements_file = 'entitlements.plist'
+    codesign_identity = None  # Remove codesign for now to test build
+    entitlements_file = None
 else:
     target_arch = None
     codesign_identity = None
     entitlements_file = None
-
-# Create dist directory if it doesn't exist
-dist_dir = 'dist'
-if not os.path.exists(dist_dir):
-    os.makedirs(dist_dir)
 
 exe = EXE(
     pyz,
