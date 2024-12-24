@@ -241,9 +241,12 @@ jobs:
         with:
           path: artifacts
 
-      - name: Extract artifacts
+      - name: Build CEP Extension
         shell: pwsh
         run: |
+          # Run the CEP build to generate the folder structure
+          yarn build
+          
           # Create temp directory for extraction
           New-Item -ItemType Directory -Force -Path temp
           
@@ -257,29 +260,7 @@ jobs:
             tar -xzf $file.FullName -C $extractPath
           }
           
-          # Create final cep structure with required folders
-          $folders = @(
-            "dist/cep/CSXS",
-            "dist/cep/exec",
-            "dist/cep/js",
-            "dist/cep/jsx",
-            "dist/cep/main",
-            "dist/cep/node_modules",
-            "dist/cep/settings"
-          )
-          foreach ($folder in $folders) {
-            New-Item -ItemType Directory -Force -Path $folder
-          }
-          
-          # Copy project files to cep structure
-          Copy-Item -Recurse -Force "CSXS/*" "dist/cep/CSXS/"
-          Copy-Item -Recurse -Force "js/*" "dist/cep/js/"
-          Copy-Item -Recurse -Force "jsx/*" "dist/cep/jsx/"
-          Copy-Item -Recurse -Force "main/*" "dist/cep/main/"
-          Copy-Item -Recurse -Force "node_modules/*" "dist/cep/node_modules/"
-          Copy-Item -Recurse -Force "settings/*" "dist/cep/settings/"
-          
-          # Copy executables from each platform
+          # Copy executables from each platform to the already generated dist/cep/exec
           foreach ($platform in Get-ChildItem -Path temp) {
             $execPath = Join-Path $platform.FullName "dist" "cep" "exec"
             if (Test-Path $execPath) {
