@@ -157,7 +157,7 @@ jobs:
         run: |
           python -m PyInstaller YoutubetoPremiere.spec --clean --workpath build/work --distpath dist
           New-Item -ItemType Directory -Force -Path dist/cep/exec
-          Copy-Item dist/YoutubetoPremiere/YoutubetoPremiere.exe dist/cep/exec/YoutubetoPremiere.exe
+          Copy-Item dist/YoutubetoPremiere.exe dist/cep/exec/YoutubetoPremiere.exe
           New-Item -ItemType Directory -Force -Path dist/cep/exec/sounds
           Copy-Item -Recurse -Force app/sounds/* dist/cep/exec/sounds/
 
