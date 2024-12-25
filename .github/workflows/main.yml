@@ -139,39 +139,15 @@ jobs:
           }
 
       - name: Build and Package CEP Extension
-        shell: pwsh
         run: |
-          # First build the CEP extension
+          mkdir -p dist/cep/exec
+          # Extract Windows executable
+          tar -xzf artifacts/windows-latest/*.tar.gz -C dist/cep/exec/
+          # Extract macOS executable
+          tar -xzf artifacts/macos-latest/*.tar.gz -C dist/cep/exec/
+          # Build and package
           yarn build
-          
-          # Create exec directory if it doesn't exist
-          New-Item -ItemType Directory -Force -Path "dist/cep/exec" | Out-Null
-          
-          # Copy executables to the exec folder
-          Write-Host "Copying executables..."
-          Copy-Item "artifacts/dist-windows-latest/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -Force
-          Copy-Item "artifacts/dist-macos-latest/YoutubetoPremiere" -Destination "dist/cep/exec/" -Force
-          
-          # Create sounds directory and copy sounds
-          Write-Host "Copying sounds..."
-          New-Item -ItemType Directory -Force -Path "dist/cep/exec/sounds" | Out-Null
-          Copy-Item "app/sounds/*" -Destination "dist/cep/exec/sounds/" -Force -Recurse
-          
-          # Verify files before packaging
-          Write-Host "Contents of dist/cep/exec directory before packaging:"
-          Get-ChildItem -Recurse "dist/cep/exec" | ForEach-Object { Write-Host $_.FullName }
-          
-          # Create the extension package
-          Write-Host "Creating ZXP package..."
           yarn zxp
-          
-          # Verify the contents of the ZXP
-          Write-Host "Contents of dist/zxp directory:"
-          Get-ChildItem -Recurse "dist/zxp" | ForEach-Object { Write-Host $_.FullName }
-          
-          # Verify the final dist directory structure
-          Write-Host "Final contents of dist directory:"
-          Get-ChildItem -Recurse dist | ForEach-Object { Write-Host $_.FullName }
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
