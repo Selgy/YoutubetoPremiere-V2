@@ -158,5 +158,5 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           files: |
-            ./dist/*.zxp
+            ./dist/zxp/*.zxp
           generate_release_notes: true
