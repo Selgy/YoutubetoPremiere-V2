@@ -20,21 +20,27 @@ jobs:
       - name: Download FFmpeg for Windows
         if: matrix.os == 'windows-latest'
         run: |
-          $url = "https://github.com/GyanD/codexffmpeg/releases/download/2023-12-20-git-49cced933f/ffmpeg-2023-12-20-git-49cced933f-essentials_build.zip"
-          Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
-          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_temp
+          $url = "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-6.1-full_build.7z"
+          Invoke-WebRequest -Uri $url -OutFile ffmpeg.7z
+          # Install 7zip using chocolatey
+          choco install 7zip -y
+          # Extract using 7zip
+          7z x ffmpeg.7z
           New-Item -ItemType Directory -Force -Path src/exec
-          Copy-Item -Path "./ffmpeg_temp/ffmpeg-2023-12-20-git-49cced933f-essentials_build/bin/ffmpeg.exe" -Destination "src/exec/ffmpeg.exe"
+          Copy-Item -Path "./ffmpeg-6.1-full_build/bin/ffmpeg.exe" -Destination "src/exec/ffmpeg.exe"
+          Write-Host "FFmpeg copied to src/exec/ffmpeg.exe"
         shell: pwsh
 
       - name: Download FFmpeg for macOS
         if: matrix.os == 'macos-latest'
         run: |
-          curl -L https://evermeet.cx/ffmpeg/getrelease/zip -o ffmpeg.zip
+          # Using a specific version from evermeet
+          curl -L https://evermeet.cx/ffmpeg/ffmpeg-6.1.zip -o ffmpeg.zip
           unzip ffmpeg.zip
           mkdir -p src/exec
           mv ffmpeg src/exec/
           chmod +x src/exec/ffmpeg
+          echo "FFmpeg copied to src/exec/ffmpeg"
 
       - name: Upload FFmpeg artifact
         uses: actions/upload-artifact@v3
