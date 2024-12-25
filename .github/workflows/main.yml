@@ -148,18 +148,29 @@ jobs:
           New-Item -ItemType Directory -Force -Path "dist/cep/exec" | Out-Null
           
           # Copy executables to the exec folder
+          Write-Host "Copying executables..."
           Copy-Item "artifacts/dist-windows-latest/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -Force
           Copy-Item "artifacts/dist-macos-latest/YoutubetoPremiere" -Destination "dist/cep/exec/" -Force
           
           # Create sounds directory and copy sounds
+          Write-Host "Copying sounds..."
           New-Item -ItemType Directory -Force -Path "dist/cep/exec/sounds" | Out-Null
           Copy-Item "app/sounds/*" -Destination "dist/cep/exec/sounds/" -Force -Recurse
           
+          # Verify files before packaging
+          Write-Host "Contents of dist/cep/exec directory before packaging:"
+          Get-ChildItem -Recurse "dist/cep/exec" | ForEach-Object { Write-Host $_.FullName }
+          
           # Create the extension package
+          Write-Host "Creating ZXP package..."
           yarn zxp
           
-          # Debug output
-          Write-Host "Contents of dist directory:"
+          # Verify the contents of the ZXP
+          Write-Host "Contents of dist/zxp directory:"
+          Get-ChildItem -Recurse "dist/zxp" | ForEach-Object { Write-Host $_.FullName }
+          
+          # Verify the final dist directory structure
+          Write-Host "Final contents of dist directory:"
           Get-ChildItem -Recurse dist | ForEach-Object { Write-Host $_.FullName }
 
       - name: Create Release
