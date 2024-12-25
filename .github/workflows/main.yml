@@ -92,22 +92,22 @@ jobs:
           python-version: '3.9'
           cache: 'pip'
 
-      - name: Create and activate virtual environment
+      - name: Setup environment
+        shell: pwsh
         run: |
+          # Create and activate virtual environment
           python -m venv .venv
           .\.venv\Scripts\activate
           python -m pip install -r requirements.txt
-
-      - name: Install dependencies
-        run: yarn install
+          
+          # Install Node dependencies
+          yarn install
 
       - name: Build CEP Extension
         shell: pwsh
         run: |
           # Ensure Python environment is activated
           .\.venv\Scripts\activate
-          
-          # Run the build script
           yarn build
 
       - name: Download artifacts
