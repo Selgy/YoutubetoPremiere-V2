@@ -114,11 +114,11 @@ jobs:
         with:
           path: artifacts
 
-      - name: Move executables
+      - name: Move executables and build CEP Extension
         shell: pwsh
         run: |
           # Create exec directory if it doesn't exist
-          New-Item -ItemType Directory -Force -Path dist/cep/exec
+          New-Item -ItemType Directory -Force -Path "dist/cep/exec" | Out-Null
           
           # Move Windows executable
           $winExe = Get-ChildItem -Path artifacts/dist-windows-latest -Recurse -Filter "YoutubetoPremiere.exe" | Select-Object -First 1
@@ -137,14 +137,7 @@ jobs:
           } else {
             Write-Host "macOS executable not found in: $(Get-ChildItem -Path artifacts/dist-macos-latest -Recurse | ForEach-Object { $_.FullName })"
           }
-
-      - name: Build and Package CEP Extension
-        run: |
-          mkdir -p dist/cep/exec
-          # Extract Windows executable
-          tar -xzf artifacts/windows-latest/*.tar.gz -C dist/cep/exec/
-          # Extract macOS executable
-          tar -xzf artifacts/macos-latest/*.tar.gz -C dist/cep/exec/
+          
           # Build and package
           yarn build
           yarn zxp
