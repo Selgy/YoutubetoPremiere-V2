@@ -72,8 +72,13 @@ async function executeExtendScript(script) {
 // Function to watch for script files and execute them
 async function setupScriptWatcher() {
     const { path, fs } = await initializeNodeModules();
-    const watchDir = path.join(process.env.TEMP || process.env.TMP, 'YoutubetoPremiere');
-    
+    const os = require('os'); // Add this at the top of the file if not already included
+    const tempDir = process.env.TEMP || process.env.TMP || os.tmpdir();
+    if (!tempDir) {
+        throw new Error("Unable to determine temporary directory.");
+    }
+    const watchDir = path.join(tempDir, 'YoutubetoPremiere');
+        
     // Create directory if it doesn't exist
 
     if (!fs.existsSync(watchDir)) {
