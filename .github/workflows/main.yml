@@ -24,6 +24,24 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           
+      - name: Setup Keychain
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          # Create keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -l build.keychain
+          
+          # Import certificate
+          echo "$CERTIFICATE_BASE64" | base64 --decode > certificate.p12
+          security import certificate.p12 -k build.keychain -P "$KEYCHAIN_PASSWORD" -T /usr/bin/codesign
+          
+          # Update keychain settings
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          
       - name: Build executable
         run: python -m PyInstaller YoutubetoPremiere.spec --workpath build/work --distpath build
         
