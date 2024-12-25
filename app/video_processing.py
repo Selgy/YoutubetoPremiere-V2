@@ -48,8 +48,20 @@ def validate_license(license_key):
 
     return False
 
+def check_ffmpeg(settings, socketio):
+    """Check if FFmpeg is available and configured correctly."""
+    if not settings.get('ffmpeg_path'):
+        error_msg = "There was a problem with the video processor. Please try restarting the application."
+        socketio.emit('download-failed', {'message': error_msg})
+        return False
+    return True
+
 def handle_video_url(request, settings, socketio, current_download):
-    # Check license validity first
+    # Check FFmpeg availability first
+    if not check_ffmpeg(settings, socketio):
+        return jsonify(error="FFmpeg not available"), 400
+
+    # Check license validity
     license_key = get_license_key()
     if not validate_license(license_key):
         error_message = "No valid license found. Please enter a valid license key."
@@ -106,6 +118,9 @@ def handle_video_url(request, settings, socketio, current_download):
 
 
 def download_and_process_clip(video_url, resolution, download_path, clip_start, clip_end, download_mp3, ffmpeg_path, socketio, settings, current_download):
+    if not check_ffmpeg(settings, socketio):
+        return
+
     clip_duration = clip_end - clip_start
     logging.info(f"Received clip parameters: clip_start={clip_start}, clip_end={clip_end}, clip_duration={clip_duration}")
 
@@ -212,6 +227,9 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
 
 
 def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_path, socketio, settings, current_download):
+    if not check_ffmpeg(settings, socketio):
+        return
+
     logging.info(f"Starting video download for URL: {video_url}")
     
     try:

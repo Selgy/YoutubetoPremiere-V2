@@ -50,7 +50,7 @@ def load_settings():
 
     settings['SETTINGS_FILE'] = settings_path
     
-    # Find or download ffmpeg
+    # Set up FFmpeg
     try:
         settings['ffmpeg_path'] = find_ffmpeg()
         # Add ffmpeg directory to PATH
@@ -59,8 +59,10 @@ def load_settings():
         logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
         logging.info(f"Using ffmpeg from: {settings['ffmpeg_path']}")
     except Exception as e:
-        logging.error(f"Error setting up ffmpeg: {e}")
+        error_msg = f"Error setting up ffmpeg: {e}"
+        logging.error(error_msg)
         settings['ffmpeg_path'] = None
+        settings['ffmpeg_error'] = error_msg
 
     logging.info(f'Loaded settings: {settings}')
     return settings
@@ -366,116 +368,31 @@ def is_premiere_running():
             return True
     return False
 
-def download_ffmpeg(script_dir):
-    """Download ffmpeg binary based on platform."""
-    # FFmpeg download URLs for different platforms
-    if platform.system() == 'Windows':
-        ffmpeg_url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-        local_zip = os.path.join(script_dir, 'ffmpeg.zip')
-        final_path = os.path.join(script_dir, 'ffmpeg.exe')
-    elif platform.system() == 'Darwin':
-        ffmpeg_url = "https://evermeet.cx/ffmpeg/getrelease/zip"
-        local_zip = os.path.join(script_dir, 'ffmpeg.zip')
-        final_path = os.path.join(script_dir, 'ffmpeg')
-    elif platform.system() == 'Linux':
-        ffmpeg_url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
-        local_zip = os.path.join(script_dir, 'ffmpeg.tar.xz')
-        final_path = os.path.join(script_dir, 'ffmpeg')
-    else:
-        raise Exception("Unsupported operating system")
-
-    logging.info(f"Downloading FFmpeg from {ffmpeg_url}")
-    
-    # Download with progress bar
-    response = requests.get(ffmpeg_url, stream=True)
-    total_size = int(response.headers.get('content-length', 0))
-    
-    with open(local_zip, 'wb') as file, tqdm(
-        desc="Downloading FFmpeg",
-        total=total_size,
-        unit='iB',
-        unit_scale=True,
-        unit_divisor=1024,
-    ) as pbar:
-        for data in response.iter_content(chunk_size=1024):
-            size = file.write(data)
-            pbar.update(size)
-
-    # Extract FFmpeg
-    logging.info("Extracting FFmpeg")
-    try:
-        if platform.system() == 'Windows':
-            with zipfile.ZipFile(local_zip, 'r') as zip_ref:
-                ffmpeg_exe = next(name for name in zip_ref.namelist() if 'ffmpeg.exe' in name.lower())
-                with zip_ref.open(ffmpeg_exe) as source, open(final_path, 'wb') as target:
-                    shutil.copyfileobj(source, target)
-        else:
-            if local_zip.endswith('.tar.xz'):
-                with tarfile.open(local_zip) as tar:
-                    ffmpeg_bin = next(name for name in tar.getnames() if name.endswith('ffmpeg'))
-                    member = tar.getmember(ffmpeg_bin)
-                    member.name = os.path.basename(final_path)
-                    tar.extract(member, script_dir)
-            else:
-                with zipfile.ZipFile(local_zip, 'r') as zip_ref:
-                    ffmpeg_bin = next(name for name in zip_ref.namelist() if name.endswith('ffmpeg'))
-                    with zip_ref.open(ffmpeg_bin) as source, open(final_path, 'wb') as target:
-                        shutil.copyfileobj(source, target)
-
-        if platform.system() != 'Windows':
-            os.chmod(final_path, 0o755)
-
-    except Exception as e:
-        logging.error(f"Error extracting FFmpeg: {e}")
-        if os.path.exists(local_zip):
-            os.remove(local_zip)
-        raise
-
-    # Clean up
-    if os.path.exists(local_zip):
-        os.remove(local_zip)
-    logging.info("FFmpeg downloaded and extracted successfully")
-    
-    return final_path
-
 def find_ffmpeg():
-    # First try to find ffmpeg in system PATH
-    try:
-        if platform.system() == 'Windows':
-            result = subprocess.run(['where', 'ffmpeg'], capture_output=True, text=True)
-            if result.returncode == 0:
-                return result.stdout.strip().split('\n')[0]
-        else:
-            result = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True)
-            if result.returncode == 0:
-                return result.stdout.strip()
-    except Exception as e:
-        logging.warning(f"Could not find system ffmpeg: {e}")
-
-    # If ffmpeg not found, check if it exists next to the executable
-    script_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
-    
+    """Find FFmpeg executable in the extension's exec directory."""
     if platform.system() == 'Windows':
-        ffmpeg_path = os.path.join(script_dir, 'ffmpeg.exe')
+        ffmpeg_name = 'ffmpeg.exe'
     else:
-        ffmpeg_path = os.path.join(script_dir, 'ffmpeg')
+        ffmpeg_name = 'ffmpeg'
 
-    # If not found locally, download it
-    if not os.path.exists(ffmpeg_path):
-        logging.info("FFmpeg not found locally. Downloading...")
-        try:
-            ffmpeg_path = download_ffmpeg(script_dir)
-        except Exception as e:
-            logging.error(f"Failed to download FFmpeg: {e}")
-            raise Exception(f"Failed to download FFmpeg: {e}")
-
-    # Set executable permissions on Unix-like systems
-    if platform.system() != 'Windows':
-        os.chmod(ffmpeg_path, 0o755)
-
-    # Add ffmpeg directory to PATH
-    ffmpeg_dir = os.path.dirname(ffmpeg_path)
-    if platform.system() == 'Windows':
-        os.environ['PATH'] = ffmpeg_dir + os.pathsep + os.environ['PATH']
+    # Get the extension root directory
+    script_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+    exec_dir = os.path.join(script_dir, 'exec')
+    bundled_ffmpeg = os.path.join(exec_dir, ffmpeg_name)
     
-    return ffmpeg_path
+    def is_valid_ffmpeg(path):
+        try:
+            result = subprocess.run([path, '-version'], capture_output=True, text=True)
+            return result.returncode == 0 and 'ffmpeg version' in result.stdout.lower()
+        except Exception:
+            return False
+
+    # Check if FFmpeg exists and is valid
+    if os.path.isfile(bundled_ffmpeg) and is_valid_ffmpeg(bundled_ffmpeg):
+        logging.info(f"Using FFmpeg from exec directory: {bundled_ffmpeg}")
+        return bundled_ffmpeg
+
+    raise FileNotFoundError(
+        "FFmpeg not found in the extension's exec directory. "
+        "Please ensure the extension is properly installed with FFmpeg included."
+    )

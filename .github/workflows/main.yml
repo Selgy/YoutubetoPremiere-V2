@@ -9,7 +9,41 @@ permissions:
   contents: write
 
 jobs:
+  build-ffmpeg:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Download FFmpeg for Windows
+        if: matrix.os == 'windows-latest'
+        run: |
+          $url = "https://github.com/GyanD/codexffmpeg/releases/download/2023-12-20-git-49cced933f/ffmpeg-2023-12-20-git-49cced933f-essentials_build.zip"
+          Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_temp
+          New-Item -ItemType Directory -Force -Path src/exec
+          Copy-Item -Path "./ffmpeg_temp/ffmpeg-2023-12-20-git-49cced933f-essentials_build/bin/ffmpeg.exe" -Destination "src/exec/ffmpeg.exe"
+        shell: pwsh
+
+      - name: Download FFmpeg for macOS
+        if: matrix.os == 'macos-latest'
+        run: |
+          curl -L https://evermeet.cx/ffmpeg/getrelease/zip -o ffmpeg.zip
+          unzip ffmpeg.zip
+          mkdir -p src/exec
+          mv ffmpeg src/exec/
+          chmod +x src/exec/ffmpeg
+
+      - name: Upload FFmpeg artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ffmpeg-${{ matrix.os }}
+          path: src/exec/
+
   build-mac:
+    needs: build-ffmpeg
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v3
@@ -56,6 +90,7 @@ jobs:
           path: build/
           
   build-windows:
+    needs: build-ffmpeg
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v3
@@ -136,15 +171,21 @@ jobs:
             Copy-Item -Force $macExe.FullName "src/exec/"
             Write-Host "Copied macOS executable: $($macExe.FullName)"
           } else {
-            Write-Host "macOS executable not found in: $(Get-ChildItem -Path artifacts/dist-macos-latest -Recurse | ForEach-Object { $_.FullName })"
+            Write-Host "macOS executable not found!"
           }
 
-          # Copy sounds folder from source
-          if (Test-Path "src/sounds") {
-            Copy-Item -Force -Recurse "src/sounds" "src/exec/"
-            Write-Host "Copied sounds folder from source"
+          # Move FFmpeg executables
+          Copy-Item -Force "artifacts/ffmpeg-windows-latest/ffmpeg.exe" "src/exec/"
+          Copy-Item -Force "artifacts/ffmpeg-macos-latest/ffmpeg" "src/exec/"
+          Write-Host "Copied FFmpeg executables"
+
+          # Copy sounds folder from app directory
+          if (Test-Path "app/sounds") {
+            Copy-Item -Force -Recurse "app/sounds" "src/exec/"
+            Write-Host "Copied sounds folder from app directory"
           } else {
-            Write-Host "Sounds folder not found in source!"
+            Write-Host "Sounds folder not found in app directory!"
+            Get-ChildItem -Path "app" -Recurse | ForEach-Object { Write-Host $_.FullName }
           }
           
           # Build and package
