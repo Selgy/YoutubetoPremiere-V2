@@ -20,35 +20,59 @@ os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
 logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*", "allow_headers": "*", "expose_headers": "*"}})
+CORS(app, resources={r"/*": {"origins": "*", "allow_headers": "*", "expose_headers": "*", "methods": ["GET", "POST", "OPTIONS"]}})
+
+# Configure Flask for better handling of polling requests
+app.config['SECRET_KEY'] = 'secret!'
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max-limit
+app.config['PROPAGATE_EXCEPTIONS'] = True
+
 socketio = SocketIO(app, 
                    cors_allowed_origins="*",
                    async_mode='threading',
                    logger=True,
                    engineio_logger=True,
-                   ping_timeout=60,
-                   ping_interval=25,
+                   ping_timeout=20,
+                   ping_interval=10,
                    max_http_buffer_size=1e8,
-                   allow_upgrades=False,  # Disable transport upgrades
-                   transports=['polling'])  # Only use polling
+                   allow_upgrades=False,
+                   transports=['polling'],
+                   always_connect=True,
+                   manage_session=True)
 
-# Add this after socketio initialization
+# Add error handlers for common issues
+@app.errorhandler(Exception)
+def handle_error(e):
+    logging.error(f'Server error: {str(e)}')
+    return jsonify(error=str(e)), 500
+
+@socketio.on_error()
+def error_handler(e):
+    logging.error(f'SocketIO error: {str(e)}')
+
 @socketio.on('connect')
 def handle_connect():
     logging.info(f'Client connected from {request.remote_addr}')
-    socketio.emit('connection_established', {'status': 'connected'})
-
-@socketio.on('connect_error')
-def handle_connect_error(error):
-    logging.error(f'Connection error: {error}')
-
-@socketio.on('error')
-def handle_error(error):
-    logging.error(f'Socket error: {error}')
+    try:
+        socketio.emit('connection_established', {'status': 'connected'})
+    except Exception as e:
+        logging.error(f'Error in handle_connect: {str(e)}')
 
 @socketio.on('disconnect')
 def handle_disconnect():
     logging.info('Client disconnected')
+    try:
+        # Clean up any resources if needed
+        pass
+    except Exception as e:
+        logging.error(f'Error in handle_disconnect: {str(e)}')
+
+@socketio.on('connection_check')
+def handle_connection_check():
+    try:
+        socketio.emit('connection_status', {'status': 'ok'})
+    except Exception as e:
+        logging.error(f'Error in handle_connection_check: {str(e)}')
 
 @socketio.on('import_video')
 def handle_import_video(data):

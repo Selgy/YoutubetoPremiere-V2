@@ -117,20 +117,20 @@ export function setupVideoImportHandler() {
             const socket = io('http://localhost:3001', {
                 transports: ['polling'],
                 reconnection: true,
-                reconnectionAttempts: Infinity,
-                reconnectionDelay: 2000,
-                reconnectionDelayMax: 10000,
-                timeout: 60000,
+                reconnectionAttempts: 10,
+                reconnectionDelay: 3000,
+                reconnectionDelayMax: 15000,
+                timeout: 20000,
                 autoConnect: true,
-                forceNew: true,
+                forceNew: false,
                 upgrade: false,
                 rejectUnauthorized: false,
                 path: '/socket.io/',
                 withCredentials: false,
-                extraHeaders: {},
                 transportOptions: {
                     polling: {
-                        extraHeaders: {}
+                        extraHeaders: {},
+                        timeout: 10000
                     }
                 }
             });
@@ -138,28 +138,44 @@ export function setupVideoImportHandler() {
             // Enhanced connection handling
             socket.io.on("reconnect_attempt", (attempt) => {
                 console.log(`Attempting to reconnect... (Attempt ${attempt})`);
+                // Reset socket options on reconnect attempt
+                socket.io.opts.transports = ['polling'];
+                socket.io.opts.upgrade = false;
             });
 
             socket.io.on("reconnect", (attempt) => {
                 console.log(`Successfully reconnected after ${attempt} attempts`);
-                // Re-initialize any necessary state here
                 socket.emit('connection_check');
             });
 
             socket.io.on("reconnect_error", (error) => {
                 console.error('Reconnection error:', error);
+                // Force a clean reconnection after error
+                socket.disconnect();
+                setTimeout(() => socket.connect(), 1000);
             });
 
             socket.io.on("reconnect_failed", () => {
                 console.error('Failed to reconnect after all attempts');
+                // Attempt to create a new connection
+                socket.disconnect();
+                setTimeout(() => socket.connect(), 5000);
             });
 
             socket.on('error', (error) => {
                 console.error('Socket error:', error);
+                // Handle socket errors gracefully
+                if (socket.connected) {
+                    socket.disconnect();
+                }
+                setTimeout(() => socket.connect(), 2000);
             });
 
             socket.on('connect_error', (error) => {
                 console.error('Connection error:', error);
+                // Reset connection on error
+                socket.disconnect();
+                setTimeout(() => socket.connect(), 2000);
             });
 
             connectWithRetry(socket);
