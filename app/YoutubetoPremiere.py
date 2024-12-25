@@ -20,20 +20,31 @@ os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
 logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+CORS(app, resources={r"/*": {"origins": "*", "allow_headers": "*", "expose_headers": "*"}})
 socketio = SocketIO(app, 
                    cors_allowed_origins="*",
                    async_mode='threading',
                    logger=True,
                    engineio_logger=True,
                    ping_timeout=60,
-                   ping_interval=25)
+                   ping_interval=25,
+                   max_http_buffer_size=1e8,
+                   allow_upgrades=False,  # Disable transport upgrades
+                   transports=['polling'])  # Only use polling
 
 # Add this after socketio initialization
 @socketio.on('connect')
 def handle_connect():
-    logging.info('Client connected')
+    logging.info(f'Client connected from {request.remote_addr}')
     socketio.emit('connection_established', {'status': 'connected'})
+
+@socketio.on('connect_error')
+def handle_connect_error(error):
+    logging.error(f'Connection error: {error}')
+
+@socketio.on('error')
+def handle_error(error):
+    logging.error(f'Socket error: {error}')
 
 @socketio.on('disconnect')
 def handle_disconnect():

@@ -115,15 +115,24 @@ export function setupVideoImportHandler() {
             
             // Continue with socket setup
             const socket = io('http://localhost:3001', {
-                transports: ['polling', 'websocket'],
+                transports: ['polling'],
                 reconnection: true,
                 reconnectionAttempts: Infinity,
-                reconnectionDelay: 1000,
-                reconnectionDelayMax: 5000,
-                timeout: 20000,
+                reconnectionDelay: 2000,
+                reconnectionDelayMax: 10000,
+                timeout: 60000,
                 autoConnect: true,
                 forceNew: true,
-                upgrade: false
+                upgrade: false,
+                rejectUnauthorized: false,
+                path: '/socket.io/',
+                withCredentials: false,
+                extraHeaders: {},
+                transportOptions: {
+                    polling: {
+                        extraHeaders: {}
+                    }
+                }
             });
             
             // Enhanced connection handling
@@ -133,6 +142,8 @@ export function setupVideoImportHandler() {
 
             socket.io.on("reconnect", (attempt) => {
                 console.log(`Successfully reconnected after ${attempt} attempts`);
+                // Re-initialize any necessary state here
+                socket.emit('connection_check');
             });
 
             socket.io.on("reconnect_error", (error) => {
@@ -141,6 +152,14 @@ export function setupVideoImportHandler() {
 
             socket.io.on("reconnect_failed", () => {
                 console.error('Failed to reconnect after all attempts');
+            });
+
+            socket.on('error', (error) => {
+                console.error('Socket error:', error);
+            });
+
+            socket.on('connect_error', (error) => {
+                console.error('Connection error:', error);
             });
 
             connectWithRetry(socket);
