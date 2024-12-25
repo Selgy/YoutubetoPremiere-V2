@@ -235,11 +235,38 @@ jobs:
           node-version: '18'
           cache: 'yarn'
 
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      - name: Create and activate virtual environment
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\activate
+          python -m pip install -r requirements.txt
+
       - name: Install dependencies
         run: yarn install
 
       - name: Build CEP Extension
-        run: yarn build
+        run: |
+          # First build the TypeScript/Vite part
+          node scripts/ensure-dirs.js
+          yarn clean
+          tsc -p "tsconfig-build.json"
+          vite build --force --watch false
+          
+          # Then build the Python executable
+          .\.venv\Scripts\activate
+          .\.venv\Scripts\python -m PyInstaller YoutubetoPremiere.spec --workpath build --distpath build
+          
+          # Create necessary directories and copy files
+          mkdir dist\cep\exec\app
+          copy /Y "build\YoutubetoPremiere.exe" "dist\cep\exec\"
+          mkdir dist\cep\exec\sounds
+          xcopy /E /I /Y "app\sounds" "dist\cep\exec\sounds"
 
       - name: Download artifacts
         uses: actions/download-artifact@v3
@@ -282,10 +309,6 @@ jobs:
               }
             }
           }
-          
-          # Copy sounds to exec folder
-          New-Item -ItemType Directory -Force -Path "dist/cep/exec/sounds"
-          Copy-Item -Recurse -Force "app/sounds/*" "dist/cep/exec/sounds/"
           
           # Debug: List contents of final directory
           Write-Host "Contents of dist/cep:"
