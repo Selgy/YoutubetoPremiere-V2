@@ -20,19 +20,20 @@ os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
 logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
 
 app = Flask(__name__)
-CORS(app)
-try:
-    socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
-except ValueError:
-    try:
-        socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
-    except ValueError:
-        socketio = SocketIO(app, cors_allowed_origins="*", async_mode=None)
+CORS(app, resources={r"/*": {"origins": "*"}})
+socketio = SocketIO(app, 
+                   cors_allowed_origins="*",
+                   async_mode='threading',
+                   logger=True,
+                   engineio_logger=True,
+                   ping_timeout=60,
+                   ping_interval=25)
 
 # Add this after socketio initialization
 @socketio.on('connect')
 def handle_connect():
     logging.info('Client connected')
+    socketio.emit('connection_established', {'status': 'connected'})
 
 @socketio.on('disconnect')
 def handle_disconnect():

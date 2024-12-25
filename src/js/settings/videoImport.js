@@ -115,13 +115,15 @@ export function setupVideoImportHandler() {
             
             // Continue with socket setup
             const socket = io('http://localhost:3001', {
-                transports: ['websocket', 'polling'],
+                transports: ['polling', 'websocket'],
                 reconnection: true,
-                reconnectionAttempts: Infinity,  // Keep trying to reconnect indefinitely
-                reconnectionDelay: 1000,         // Start with 1 second delay
-                reconnectionDelayMax: 5000,      // Maximum delay between reconnection attempts
-                timeout: 20000,                  // Timeout for connection attempts
-                autoConnect: true                // Automatically connect on instantiation
+                reconnectionAttempts: Infinity,
+                reconnectionDelay: 1000,
+                reconnectionDelayMax: 5000,
+                timeout: 20000,
+                autoConnect: true,
+                forceNew: true,
+                upgrade: false
             });
             
             // Enhanced connection handling
