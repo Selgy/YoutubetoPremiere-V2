@@ -72,6 +72,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+          python -m pip install pygame
           
       - name: Build executable
         run: python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath build
@@ -102,23 +103,11 @@ jobs:
           python-version: '3.9'
           cache: 'pip'
 
-      - name: Setup environment
-        shell: pwsh
+      - name: Install dependencies
         run: |
-          # Create and activate virtual environment
-          python -m venv .venv
-          .\.venv\Scripts\activate
-          python -m pip install -r requirements.txt
-          
-          # Install Node dependencies
           yarn install
-
-      - name: Build CEP Extension
-        shell: pwsh
-        run: |
-          # Ensure Python environment is activated
-          .\.venv\Scripts\activate
-          yarn build
+          python -m pip install -r requirements.txt
+          python -m pip install pygame
 
       - name: Download artifacts
         uses: actions/download-artifact@v3
@@ -148,28 +137,14 @@ jobs:
           } else {
             Write-Host "macOS executable not found in: $(Get-ChildItem -Path artifacts/dist-macos-latest -Recurse | ForEach-Object { $_.FullName })"
           }
+
+      - name: Build and Package CEP Extension
+        run: |
+          # Build the CEP extension which will create the manifest and structure
+          yarn build
           
-          # Debug: List contents
-          Write-Host "`nContents of dist/cep/exec:"
-          Get-ChildItem -Recurse dist/cep/exec | ForEach-Object { Write-Host $_.FullName }
-
-      - name: Download ZXPSignCmd
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path tools
-          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Adobe-CEP/CEP-Resources/master/ZXPSignCMD/4.1.1/win64/ZXPSignCmd.exe" -OutFile "tools/ZXPSignCmd.exe"
-
-      - name: Create Certificate
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path cert
-          & tools/ZXPSignCmd.exe -selfSignedCert "FR" "IDF" "Mickael Ducatez" "YoutubetoPremiere" "1234" cert/certificate.p12
-
-      - name: Package ZXP
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist/zxp
-          & tools/ZXPSignCmd.exe -sign dist/cep dist/zxp/com.YoutubetoPremiereV2.cep.zxp cert/certificate.p12 1234
+          # Package into ZXP using the cep.config.ts settings
+          yarn package
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -178,5 +153,5 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           files: |
-            ./dist/zxp/com.YoutubetoPremiereV2.cep.zxp
+            ./dist/*.zxp
           generate_release_notes: true
