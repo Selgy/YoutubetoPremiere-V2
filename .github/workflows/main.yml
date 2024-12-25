@@ -41,7 +41,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
           
       - name: Build executable
-        run: python -m PyInstaller YoutubetoPremiere.spec --workpath build/work --distpath build
+        run: python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath build
         
       - name: Upload artifact
         uses: actions/upload-artifact@v3
@@ -66,7 +66,7 @@ jobs:
           python -m pip install -r requirements.txt
           
       - name: Build executable
-        run: python -m PyInstaller YoutubetoPremiere.spec --workpath build/work --distpath build
+        run: python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath build
         
       - name: Upload artifact
         uses: actions/upload-artifact@v3
