@@ -117,13 +117,14 @@ jobs:
       - name: Move executables and build CEP Extension
         shell: pwsh
         run: |
-          # Create exec directory if it doesn't exist
+          # Create src/exec directory
+          New-Item -ItemType Directory -Force -Path "src/exec" | Out-Null
           New-Item -ItemType Directory -Force -Path "dist/cep/exec" | Out-Null
           
           # Move Windows executable
           $winExe = Get-ChildItem -Path artifacts/dist-windows-latest -Recurse -Filter "YoutubetoPremiere.exe" | Select-Object -First 1
           if ($winExe) {
-            Copy-Item -Force $winExe.FullName "dist/cep/exec/"
+            Copy-Item -Force $winExe.FullName "src/exec/"
             Write-Host "Copied Windows executable: $($winExe.FullName)"
           } else {
             Write-Host "Windows executable not found!"
@@ -132,7 +133,7 @@ jobs:
           # Move macOS executable
           $macExe = Get-ChildItem -Path artifacts/dist-macos-latest -Recurse -Filter "YoutubetoPremiere" | Select-Object -First 1
           if ($macExe) {
-            Copy-Item -Force $macExe.FullName "dist/cep/exec/"
+            Copy-Item -Force $macExe.FullName "src/exec/"
             Write-Host "Copied macOS executable: $($macExe.FullName)"
           } else {
             Write-Host "macOS executable not found in: $(Get-ChildItem -Path artifacts/dist-macos-latest -Recurse | ForEach-Object { $_.FullName })"
