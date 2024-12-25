@@ -139,13 +139,12 @@ jobs:
             Write-Host "macOS executable not found in: $(Get-ChildItem -Path artifacts/dist-macos-latest -Recurse | ForEach-Object { $_.FullName })"
           }
 
-          # Copy sounds folder
-          $soundsFolder = Get-ChildItem -Path artifacts/dist-windows-latest -Recurse -Filter "sounds" | Where-Object { $_.PSIsContainer } | Select-Object -First 1
-          if ($soundsFolder) {
-            Copy-Item -Force -Recurse $soundsFolder.FullName "src/exec/"
-            Write-Host "Copied sounds folder: $($soundsFolder.FullName)"
+          # Copy sounds folder from source
+          if (Test-Path "src/sounds") {
+            Copy-Item -Force -Recurse "src/sounds" "src/exec/"
+            Write-Host "Copied sounds folder from source"
           } else {
-            Write-Host "Sounds folder not found!"
+            Write-Host "Sounds folder not found in source!"
           }
           
           # Build and package
