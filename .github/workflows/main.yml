@@ -141,8 +141,19 @@ jobs:
       - name: Build and Package CEP Extension
         shell: pwsh
         run: |
-          # Build the CEP extension
+          # First build the CEP extension
           yarn build
+          
+          # Create exec directory if it doesn't exist
+          New-Item -ItemType Directory -Force -Path "dist/cep/exec" | Out-Null
+          
+          # Copy executables to the exec folder
+          Copy-Item "artifacts/dist-windows-latest/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -Force
+          Copy-Item "artifacts/dist-macos-latest/YoutubetoPremiere" -Destination "dist/cep/exec/" -Force
+          
+          # Create sounds directory and copy sounds
+          New-Item -ItemType Directory -Force -Path "dist/cep/exec/sounds" | Out-Null
+          Copy-Item "app/sounds/*" -Destination "dist/cep/exec/sounds/" -Force -Recurse
           
           # Create the extension package
           yarn zxp
