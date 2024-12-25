@@ -1,230 +1,65 @@
-name: ZXP Release
+name: Build and Package
 
 on:
   push:
-    tags:
-      - "*.*.*"
-
-permissions:
-  contents: write
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
-  build:
-    strategy:
-      matrix:
-        os: [windows-latest, macos-latest]
-        include:
-          - os: windows-latest
-            python-path: 'C:\hostedtoolcache\windows\Python\3.9.*\x64'
-            node-path: 'C:\hostedtoolcache\windows\node\18.*\x64'
-          - os: macos-latest
-            python-path: '/Users/runner/hostedtoolcache/Python/3.9.*/x64'
-            node-path: '/Users/runner/hostedtoolcache/node/18.*/x64'
-    
-    runs-on: ${{ matrix.os }}
-    env:
-      CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
-      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-    
+  build-mac:
+    runs-on: macos-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
       
-      - name: Setup Node.js (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          echo "${{ matrix.node-path }}\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: Setup Node.js (macOS)
-        if: matrix.os == 'macos-latest'
-        shell: bash
-        run: |
-          echo "${{ matrix.node-path }}/bin" >> $GITHUB_PATH
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          cache: 'pip'
           
-      - name: Install macOS dependencies
-        if: matrix.os == 'macos-latest'
-        shell: bash
+      - name: Install Python dependencies
         run: |
-          brew install sdl2 pkg-config
-          
-      - name: Setup Python (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          echo "${{ matrix.python-path }}" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           python -m pip install --upgrade pip
-          python -m pip install wheel setuptools
-          pip install -r requirements.txt
-          pip install pyinstaller
-
-      - name: Setup Python (macOS)
-        if: matrix.os == 'macos-latest'
-        shell: bash
-        run: |
-          python3 -m venv venv
-          source venv/bin/activate
-          python -m pip install --upgrade pip
-          python -m pip install wheel setuptools
-          pip install -r requirements.txt
-          pip install pyinstaller
+          python -m pip install -r requirements.txt
           
-      - name: Install Node dependencies
-        shell: bash
-        run: yarn install --frozen-lockfile
-
-      - name: Debug Certificate Data
-        if: matrix.os == 'macos-latest'
-        shell: bash
-        run: |
-          if [ -z "$CERTIFICATE_BASE64" ]; then
-            echo "Certificate data is empty"
-            exit 1
-          fi
-          echo "Certificate data length: ${#CERTIFICATE_BASE64}"
-
-      - name: Create Certificate
-        if: matrix.os == 'macos-latest'
-        shell: bash
-        run: |
-          echo "$CERTIFICATE_BASE64" | base64 -d > certificate.p12
-          if [ ! -f certificate.p12 ]; then
-            echo "Failed to create certificate"
-            exit 1
-          fi
-          ls -l certificate.p12
-          
-      - name: Setup Keychain (macOS)
-        if: matrix.os == 'macos-latest'
-        shell: bash
-        run: |
-          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security list-keychains -d user -s build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security set-keychain-settings -t 3600 -l build.keychain
-          security import certificate.p12 -k build.keychain -P "$KEYCHAIN_PASSWORD" -T /usr/bin/codesign -A
-          security list-keychains -s build.keychain
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-
-      - name: Build macOS Executable
-        if: matrix.os == 'macos-latest'
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          source venv/bin/activate
-          # Create build directories with proper permissions
-          mkdir -p build/work dist/cep/exec/sounds
-          chmod -R 755 build dist
-          # Run PyInstaller with clean build
-          python -m PyInstaller YoutubetoPremiere.spec --clean --workpath build/work --distpath dist
-          # Create app bundle structure
-          mkdir -p "dist/YoutubetoPremiere.app/Contents/MacOS"
-          mv dist/YoutubetoPremiere "dist/YoutubetoPremiere.app/Contents/MacOS/"
-          # Create Info.plist
-          cat > "dist/YoutubetoPremiere.app/Contents/Info.plist" << EOL
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleExecutable</key>
-              <string>YoutubetoPremiere</string>
-              <key>CFBundleIdentifier</key>
-              <string>com.mickaelducatez.youtubetopremiereV2</string>
-              <key>CFBundleName</key>
-              <string>YoutubetoPremiere</string>
-              <key>CFBundlePackageType</key>
-              <string>APPL</string>
-              <key>CFBundleShortVersionString</key>
-              <string>1.0.0</string>
-              <key>LSMinimumSystemVersion</key>
-              <string>10.13</string>
-          </dict>
-          </plist>
-          EOL
-          # Sign the app bundle
-          codesign --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime --timestamp --force --verbose=4 "dist/YoutubetoPremiere.app"
-          # Copy app bundle and sounds
-          cp -r "dist/YoutubetoPremiere.app" "./dist/cep/exec/"
-          cp -r app/sounds/* ./dist/cep/exec/sounds/
-
-      - name: Build Windows Executable
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          python -m PyInstaller YoutubetoPremiere.spec --clean --workpath build/work --distpath dist
-          New-Item -ItemType Directory -Force -Path dist/cep/exec
-          Copy-Item dist/YoutubetoPremiere.exe dist/cep/exec/YoutubetoPremiere.exe
-          New-Item -ItemType Directory -Force -Path dist/cep/exec/sounds
-          Copy-Item -Recurse -Force app/sounds/* dist/cep/exec/sounds/
-
-      - name: Notarize macOS Executable
-        if: matrix.os == 'macos-latest'
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          if [ -z "$APPLE_ID" ] || [ -z "$APPLE_APP_SPECIFIC_PASSWORD" ] || [ -z "$APPLE_TEAM_ID" ]; then
-            echo "Error: Required Apple credentials are missing"
-            exit 1
-          fi
-
-          echo "Creating zip for notarization..."
-          ditto -c -k --keepParent "./dist/YoutubetoPremiere.app" "./YoutubetoPremiere.zip"
-          
-          echo "Submitting for notarization..."
-          xcrun notarytool submit ./YoutubetoPremiere.zip \
-            --apple-id "$APPLE_ID" \
-            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --wait \
-            --progress || {
-              echo "Notarization failed"
-              exit 1
-            }
-          
-          echo "Stapling notarization ticket..."
-          xcrun stapler staple "./dist/YoutubetoPremiere.app" || {
-            echo "Stapling failed"
-            exit 1
-          }
-          
-          echo "Verifying stapled app bundle..."
-          xcrun stapler validate "./dist/YoutubetoPremiere.app" || {
-            echo "Validation failed"
-            exit 1
-          }
-          
-          # Update the executable in cep/exec with the notarized version
-          rm -rf "./dist/cep/exec/YoutubetoPremiere.app"
-          cp -r "./dist/YoutubetoPremiere.app" "./dist/cep/exec/"
-
-      - name: Create Artifact
-        if: matrix.os == 'macos-latest'
-        run: |
-          tar -czf dist-${{ matrix.os }}.tar.gz dist/
-
-      - name: Create Artifact (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          Compress-Archive -Path dist/* -DestinationPath dist-${{ matrix.os }}.zip
-          # Rename to .tar.gz to maintain compatibility with the rest of the workflow
-          Move-Item -Force dist-${{ matrix.os }}.zip dist-${{ matrix.os }}.tar.gz
-
-      - name: Upload Artifact
+      - name: Build executable
+        run: python -m PyInstaller YoutubetoPremiere.spec --workpath build/work --distpath build
+        
+      - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          name: dist-${{ matrix.os }}
-          path: dist-${{ matrix.os }}.tar.gz
-          retention-days: 1
+          name: dist-macos-latest
+          path: build/
+          
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+          
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          
+      - name: Build executable
+        run: python -m PyInstaller YoutubetoPremiere.spec --workpath build/work --distpath build
+        
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: dist-windows-latest
+          path: build/
 
   package:
-    needs: build
+    needs: [build-mac, build-windows]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v3
@@ -235,110 +70,56 @@ jobs:
           node-version: '18'
           cache: 'yarn'
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-          cache: 'pip'
-
-      - name: Create and activate virtual environment
-        run: |
-          python -m venv .venv
-          .\.venv\Scripts\activate
-          python -m pip install -r requirements.txt
-
       - name: Install dependencies
         run: yarn install
 
       - name: Build CEP Extension
-        run: |
-          # First build the TypeScript/Vite part
-          node scripts/ensure-dirs.js
-          yarn clean
-          tsc -p "tsconfig-build.json"
-          vite build --force --watch false
-          
-          # Then build the Python executable
-          .\.venv\Scripts\activate
-          .\.venv\Scripts\python -m PyInstaller YoutubetoPremiere.spec --workpath build --distpath build
-          
-          # Create necessary directories and copy files
-          mkdir dist\cep\exec\app
-          copy /Y "build\YoutubetoPremiere.exe" "dist\cep\exec\"
-          mkdir dist\cep\exec\sounds
-          xcopy /E /I /Y "app\sounds" "dist\cep\exec\sounds"
+        run: yarn build
 
       - name: Download artifacts
         uses: actions/download-artifact@v3
         with:
           path: artifacts
 
-      - name: Package Extension
+      - name: Move executables
         shell: pwsh
         run: |
-          # Create temp directory for extraction
-          New-Item -ItemType Directory -Force -Path temp
+          # Create exec directory if it doesn't exist
+          New-Item -ItemType Directory -Force -Path dist/cep/exec
           
-          # Extract each artifact
-          foreach ($file in Get-ChildItem -Path artifacts/*/*.tar.gz) {
-            $platform = $file.Directory.Name
-            $extractPath = "temp/$platform"
-            New-Item -ItemType Directory -Force -Path $extractPath
-            
-            # Extract the tar.gz file
-            tar -xzf $file.FullName -C $extractPath
+          # Move Windows executable
+          $winExe = Get-ChildItem -Path artifacts/dist-windows-latest -Recurse -Filter "YoutubetoPremiere.exe" | Select-Object -First 1
+          if ($winExe) {
+            Copy-Item -Force $winExe.FullName "dist/cep/exec/"
           }
           
-          # Copy executables from each platform to the already generated dist/cep/exec
-          foreach ($platform in Get-ChildItem -Path temp) {
-            $execPath = Join-Path $platform.FullName "dist" "cep" "exec"
-            if (Test-Path $execPath) {
-              Write-Host "Processing platform: $($platform.Name)"
-              if ($platform.Name -eq "dist-macos-latest") {
-                # For macOS, copy the executable from inside the .app bundle
-                $macosExe = Join-Path $execPath "YoutubetoPremiere.app" "Contents" "MacOS" "YoutubetoPremiere"
-                if (Test-Path $macosExe) {
-                  Copy-Item -Force $macosExe "dist/cep/exec/YoutubetoPremiere"
-                }
-              } elseif ($platform.Name -eq "dist-windows-latest") {
-                # For Windows, copy the .exe file
-                $winExe = Join-Path $execPath "YoutubetoPremiere.exe"
-                if (Test-Path $winExe) {
-                  Copy-Item -Force $winExe "dist/cep/exec/"
-                }
-              }
-            }
+          # Move macOS executable
+          $macExe = Get-ChildItem -Path artifacts/dist-macos-latest -Recurse -Filter "YoutubetoPremiere.app" | Select-Object -First 1
+          if ($macExe) {
+            $macBinary = Join-Path $macExe.FullName "Contents/MacOS/YoutubetoPremiere"
+            Copy-Item -Force $macBinary "dist/cep/exec/YoutubetoPremiere"
           }
           
-          # Debug: List contents of final directory
-          Write-Host "Contents of dist/cep:"
-          Get-ChildItem -Recurse dist/cep | ForEach-Object { Write-Host $_.FullName }
+          # Debug: List contents
+          Write-Host "Contents of dist/cep/exec:"
+          Get-ChildItem -Recurse dist/cep/exec | ForEach-Object { Write-Host $_.FullName }
 
       - name: Download ZXPSignCmd
         shell: pwsh
         run: |
-          # Create tools directory
           New-Item -ItemType Directory -Force -Path tools
-          
-          # Download ZXPSignCmd
           Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Adobe-CEP/CEP-Resources/master/ZXPSignCMD/4.1.1/win64/ZXPSignCmd.exe" -OutFile "tools/ZXPSignCmd.exe"
 
       - name: Create Certificate
         shell: pwsh
         run: |
-          # Create certificate directory
           New-Item -ItemType Directory -Force -Path cert
-          
-          # Generate self-signed certificate
           & tools/ZXPSignCmd.exe -selfSignedCert "FR" "IDF" "Mickael Ducatez" "YoutubetoPremiere" "1234" cert/certificate.p12
 
       - name: Package ZXP
         shell: pwsh
         run: |
-          # Create dist/zxp directory
           New-Item -ItemType Directory -Force -Path dist/zxp
-          
-          # Package the extension
           & tools/ZXPSignCmd.exe -sign dist/cep dist/zxp/com.YoutubetoPremiereV2.cep.zxp cert/certificate.p12 1234
 
       - name: Create Release
@@ -350,9 +131,3 @@ jobs:
           files: |
             ./dist/zxp/com.YoutubetoPremiereV2.cep.zxp
           generate_release_notes: true
-
-      - name: Build macOS executable
-        if: runner.os == 'macOS'
-        run: |
-          source venv/bin/activate
-          pyinstaller YoutubetoPremiere.spec -y
