@@ -139,12 +139,17 @@ jobs:
           }
 
       - name: Build and Package CEP Extension
+        shell: pwsh
         run: |
-          # Build the CEP extension which will create the manifest and structure
+          # Build the CEP extension
           yarn build
           
-          # Package into ZXP using the cep.config.ts settings
-          yarn package
+          # Create the extension package
+          yarn run vite-cep-plugin package
+          
+          # Debug output
+          Write-Host "Contents of dist directory:"
+          Get-ChildItem -Recurse dist | ForEach-Object { Write-Host $_.FullName }
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
