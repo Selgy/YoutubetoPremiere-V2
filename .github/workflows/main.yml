@@ -13,6 +13,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v3
+        with:
+          ref: ${{ github.ref }}
       
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -56,6 +58,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v3
+        with:
+          ref: ${{ github.ref }}
       
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -82,6 +86,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v3
+        with:
+          ref: ${{ github.ref }}
       
       - name: Setup Node.js
         uses: actions/setup-node@v3
@@ -128,17 +134,22 @@ jobs:
           $winExe = Get-ChildItem -Path artifacts/dist-windows-latest -Recurse -Filter "YoutubetoPremiere.exe" | Select-Object -First 1
           if ($winExe) {
             Copy-Item -Force $winExe.FullName "dist/cep/exec/"
+            Write-Host "Copied Windows executable: $($winExe.FullName)"
+          } else {
+            Write-Host "Windows executable not found!"
           }
           
           # Move macOS executable
-          $macExe = Get-ChildItem -Path artifacts/dist-macos-latest -Recurse -Filter "YoutubetoPremiere.app" | Select-Object -First 1
+          $macExe = Get-ChildItem -Path artifacts/dist-macos-latest -Recurse -Filter "YoutubetoPremiere" | Select-Object -First 1
           if ($macExe) {
-            $macBinary = Join-Path $macExe.FullName "Contents/MacOS/YoutubetoPremiere"
-            Copy-Item -Force $macBinary "dist/cep/exec/YoutubetoPremiere"
+            Copy-Item -Force $macExe.FullName "dist/cep/exec/"
+            Write-Host "Copied macOS executable: $($macExe.FullName)"
+          } else {
+            Write-Host "macOS executable not found in: $(Get-ChildItem -Path artifacts/dist-macos-latest -Recurse | ForEach-Object { $_.FullName })"
           }
           
           # Debug: List contents
-          Write-Host "Contents of dist/cep/exec:"
+          Write-Host "`nContents of dist/cep/exec:"
           Get-ChildItem -Recurse dist/cep/exec | ForEach-Object { Write-Host $_.FullName }
 
       - name: Download ZXPSignCmd
@@ -164,6 +175,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          tag_name: ${{ github.ref_name }}
           files: |
             ./dist/zxp/com.YoutubetoPremiereV2.cep.zxp
           generate_release_notes: true
