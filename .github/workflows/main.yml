@@ -145,7 +145,7 @@ jobs:
           yarn build
           
           # Create the extension package
-          yarn run vite-cep-plugin package
+          yarn zxp
           
           # Debug output
           Write-Host "Contents of dist directory:"
