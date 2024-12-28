@@ -424,7 +424,7 @@ jobs:
               # List parent directory contents to help debug
               $parentDir = Split-Path -Parent $Source
               if (Test-Path $parentDir) {
-                Write-Host "Contents of $parentDir:"
+                Write-Host "Contents of parent directory:"
                 Get-ChildItem -Path $parentDir -Recurse
               }
               return $false
@@ -434,26 +434,26 @@ jobs:
           $errors = @()
           
           # Copy Windows files
-          if (-not (Copy-FileWithCheck -Source "artifacts/build/YoutubetoPremiere/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -Description "Windows exe")) {
+          if (-not (Copy-FileWithCheck -Source "artifacts/executable-windows-latest/build/YoutubetoPremiere/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -Description "Windows exe")) {
             if (-not (Copy-FileWithCheck -Source "artifacts/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -Description "Windows exe (alternative path)")) {
               $errors += "Windows exe"
             }
           }
           
-          if (-not (Copy-FileWithCheck -Source "artifacts/src/exec/ffmpeg.exe" -Destination "dist/cep/exec/" -Description "Windows FFmpeg")) {
+          if (-not (Copy-FileWithCheck -Source "artifacts/ffmpeg-windows-latest/ffmpeg.exe" -Destination "dist/cep/exec/" -Description "Windows FFmpeg")) {
             if (-not (Copy-FileWithCheck -Source "artifacts/ffmpeg.exe" -Destination "dist/cep/exec/" -Description "Windows FFmpeg (alternative path)")) {
               $errors += "Windows FFmpeg"
             }
           }
           
           # Copy macOS files
-          if (-not (Copy-FileWithCheck -Source "artifacts/build/YoutubetoPremiere/YoutubetoPremiere" -Destination "dist/cep/exec/" -Description "macOS executable")) {
+          if (-not (Copy-FileWithCheck -Source "artifacts/executable-macos-latest/build/YoutubetoPremiere/YoutubetoPremiere" -Destination "dist/cep/exec/" -Description "macOS executable")) {
             if (-not (Copy-FileWithCheck -Source "artifacts/YoutubetoPremiere" -Destination "dist/cep/exec/" -Description "macOS executable (alternative path)")) {
               $errors += "macOS executable"
             }
           }
           
-          if (-not (Copy-FileWithCheck -Source "artifacts/src/exec/ffmpeg" -Destination "dist/cep/exec/" -Description "macOS FFmpeg")) {
+          if (-not (Copy-FileWithCheck -Source "artifacts/ffmpeg-macos-latest/ffmpeg" -Destination "dist/cep/exec/" -Description "macOS FFmpeg")) {
             if (-not (Copy-FileWithCheck -Source "artifacts/ffmpeg" -Destination "dist/cep/exec/" -Description "macOS FFmpeg (alternative path)")) {
               $errors += "macOS FFmpeg"
             }
