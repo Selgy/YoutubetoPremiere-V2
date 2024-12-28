@@ -333,40 +333,73 @@ jobs:
         run: |
           # Create exec directory if it doesn't exist
           New-Item -ItemType Directory -Force -Path dist/cep/exec
+          
+          # Function to copy file with better error handling
+          function Copy-FileWithCheck {
+            param (
+              [string]$Source,
+              [string]$Destination,
+              [string]$Description
+            )
+            
+            Write-Host "Looking for $Description at: $Source"
+            if (Test-Path $Source) {
+              Copy-Item -Path $Source -Destination $Destination -Force
+              Write-Host "$Description copied successfully"
+              return $true
+            } else {
+              Write-Host "Warning: $Description not found at $Source"
+              # List parent directory contents to help debug
+              $parentDir = Split-Path -Parent $Source
+              if (Test-Path $parentDir) {
+                Write-Host "Contents of $parentDir:"
+                Get-ChildItem -Path $parentDir -Recurse
+              }
+              return $false
+            }
+          }
 
+          $errors = @()
+          
           # Copy Windows files
-          if (Test-Path "artifacts/build/YoutubetoPremiere/YoutubetoPremiere.exe") {
-            Copy-Item -Path "artifacts/build/YoutubetoPremiere/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -Force
-            Write-Host "Windows exe copied successfully"
-          } else {
-            Write-Error "Windows exe not found"
+          if (-not (Copy-FileWithCheck -Source "artifacts/build/YoutubetoPremiere/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -Description "Windows exe")) {
+            if (-not (Copy-FileWithCheck -Source "artifacts/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -Description "Windows exe (alternative path)")) {
+              $errors += "Windows exe"
+            }
           }
           
-          if (Test-Path "artifacts/src/exec/ffmpeg.exe") {
-            Copy-Item -Path "artifacts/src/exec/ffmpeg.exe" -Destination "dist/cep/exec/" -Force
-            Write-Host "Windows FFmpeg copied successfully"
-          } else {
-            Write-Error "Windows FFmpeg not found"
+          if (-not (Copy-FileWithCheck -Source "artifacts/src/exec/ffmpeg.exe" -Destination "dist/cep/exec/" -Description "Windows FFmpeg")) {
+            if (-not (Copy-FileWithCheck -Source "artifacts/ffmpeg.exe" -Destination "dist/cep/exec/" -Description "Windows FFmpeg (alternative path)")) {
+              $errors += "Windows FFmpeg"
+            }
           }
           
           # Copy macOS files
-          if (Test-Path "artifacts/build/YoutubetoPremiere/YoutubetoPremiere") {
-            Copy-Item -Path "artifacts/build/YoutubetoPremiere/YoutubetoPremiere" -Destination "dist/cep/exec/" -Force
-            Write-Host "macOS executable copied successfully"
-          } else {
-            Write-Error "macOS executable not found"
+          if (-not (Copy-FileWithCheck -Source "artifacts/build/YoutubetoPremiere/YoutubetoPremiere" -Destination "dist/cep/exec/" -Description "macOS executable")) {
+            if (-not (Copy-FileWithCheck -Source "artifacts/YoutubetoPremiere" -Destination "dist/cep/exec/" -Description "macOS executable (alternative path)")) {
+              $errors += "macOS executable"
+            }
           }
           
-          if (Test-Path "artifacts/src/exec/ffmpeg") {
-            Copy-Item -Path "artifacts/src/exec/ffmpeg" -Destination "dist/cep/exec/" -Force
-            Write-Host "macOS FFmpeg copied successfully"
-          } else {
-            Write-Error "macOS FFmpeg not found"
+          if (-not (Copy-FileWithCheck -Source "artifacts/src/exec/ffmpeg" -Destination "dist/cep/exec/" -Description "macOS FFmpeg")) {
+            if (-not (Copy-FileWithCheck -Source "artifacts/ffmpeg" -Destination "dist/cep/exec/" -Description "macOS FFmpeg (alternative path)")) {
+              $errors += "macOS FFmpeg"
+            }
           }
 
           # List contents of dist/cep/exec to verify
-          Write-Host "Contents of dist/cep/exec:"
-          Get-ChildItem -Path dist/cep/exec
+          Write-Host "`nContents of dist/cep/exec:"
+          Get-ChildItem -Path dist/cep/exec -Force
+          
+          # List contents of artifacts to help debug
+          Write-Host "`nContents of artifacts directory:"
+          Get-ChildItem -Path artifacts -Recurse -Force
+          
+          # Report any missing files
+          if ($errors.Count -gt 0) {
+            Write-Error "Failed to copy the following files: $($errors -join ', ')"
+            exit 1
+          }
 
       - name: Build CEP
         shell: bash
