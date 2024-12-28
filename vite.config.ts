@@ -79,75 +79,40 @@ const buildPythonExecutable = () => ({
 // Copy files plugin
 const copyAppFiles = () => ({
   name: 'copy-app-files',
-  enforce: 'pre' as const,  // Specify the literal type
+  enforce: 'pre' as const,
   async buildStart() {
     if (process.env.ZXP_PACKAGE === "true") {
       try {
-        console.log('Building Python executable...');
-        const platform = process.platform;
-        const specFile = platform === 'win32' ? 'YoutubetoPremiere.spec' : 'YoutubetoPremiere.local.spec';
-        const buildDir = path.resolve(__dirname, 'build/YoutubetoPremiere');
-        
-        // Clean up previous build
-        await fs.remove(buildDir);
-        await fs.ensureDir(buildDir);
-        
-        // Run PyInstaller with absolute paths
-        const command = `python -m PyInstaller "${path.resolve(__dirname, specFile)}" -y --workpath "${path.resolve(__dirname, 'build/work')}" --distpath "${buildDir}"`;
-        console.log('Running command:', command);
-        await execAsync(command);
-        console.log('Python executable built successfully');
-
-        // Copy files to dist/cep/exec
-        const exeName = platform === 'win32' ? 'YoutubetoPremiere.exe' : 'YoutubetoPremiere';
-        const exeSrc = path.resolve(buildDir, exeName);
-        const cepExecDir = path.resolve(__dirname, 'dist/cep/exec');
-        
-        await fs.ensureDir(cepExecDir);
-        
-        // Copy executable
-        if (await fs.pathExists(exeSrc)) {
-          await fs.copy(exeSrc, path.resolve(cepExecDir, exeName), { overwrite: true });
-          console.log('Executable copied to dist/cep/exec');
+        // Skip Python build if SKIP_PYTHON_BUILD is set
+        if (!process.env.SKIP_PYTHON_BUILD) {
+          console.log('Building Python executable...');
+          const platform = process.platform;
+          const specFile = platform === 'win32' ? 'YoutubetoPremiere.spec' : 'YoutubetoPremiere.local.spec';
+          const buildDir = path.resolve(__dirname, 'build/YoutubetoPremiere');
+          
+          // Clean up previous build
+          await fs.remove(buildDir);
+          await fs.ensureDir(buildDir);
+          
+          // Run PyInstaller with absolute paths
+          const command = `python -m PyInstaller "${path.resolve(__dirname, specFile)}" -y --workpath "${path.resolve(__dirname, 'build/work')}" --distpath "${buildDir}"`;
+          console.log('Running command:', command);
+          await execAsync(command);
+          console.log('Python executable built successfully');
         } else {
-          throw new Error('Executable not found after build');
+          console.log('Skipping Python build as SKIP_PYTHON_BUILD is set');
         }
 
-        // Copy sounds folder
+        // Copy sounds folder if it exists
         const soundsSrc = path.resolve(__dirname, 'src/exec/sounds');
-        await fs.copy(soundsSrc, path.resolve(cepExecDir, 'sounds'), { overwrite: true });
-        console.log('Sounds folder copied to dist/cep/exec');
-
+        const soundsDest = path.resolve(__dirname, 'dist/cep/exec/sounds');
+        if (fs.existsSync(soundsSrc)) {
+          await fs.copy(soundsSrc, soundsDest);
+          console.log('Sounds folder copied to dist/cep/exec');
+        }
       } catch (error) {
         console.error('Failed in copyAppFiles:', error);
         throw error;
-      }
-    }
-  },
-  buildEnd: async () => {
-    if (process.env.ZXP_PACKAGE === 'true') {
-      // Skip Python build if SKIP_PYTHON_BUILD is set
-      if (!process.env.SKIP_PYTHON_BUILD) {
-        console.log('Building Python executable...');
-        try {
-          const specPath = path.resolve(__dirname, 'YoutubetoPremiere.spec');
-          const workPath = path.resolve(__dirname, 'build', 'work');
-          const distPath = path.resolve(__dirname, 'build', 'YoutubetoPremiere');
-          
-          await execAsync(`python -m PyInstaller "${specPath}" -y --workpath "${workPath}" --distpath "${distPath}"`);
-        } catch (error) {
-          console.error('[copy-app-files]', error);
-          throw error;
-        }
-      } else {
-        console.log('Skipping Python build as SKIP_PYTHON_BUILD is set');
-      }
-
-      // Copy sounds folder if it exists
-      const soundsSrc = path.resolve(__dirname, 'src', 'exec', 'sounds');
-      const soundsDest = path.resolve(__dirname, 'dist', 'cep', 'exec', 'sounds');
-      if (fs.existsSync(soundsSrc)) {
-        await fs.copy(soundsSrc, soundsDest);
       }
     }
   }
