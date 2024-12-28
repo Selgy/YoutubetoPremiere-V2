@@ -245,7 +245,17 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
         logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
 
-        def progress_hook(d):
+        # Configure yt-dlp options
+        ydl_opts = {
+            'format': 'bestaudio[ext=m4a]/best' if download_mp3 else f'bestvideo[ext=mp4][vcodec^=avc1][height<={resolution}]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'ffmpeg_location': ffmpeg_dir,
+            'merge_output_format': 'mp4',
+            'progress_hooks': [lambda d: progress_hook(d, socketio)],
+            'verbose': True,
+            'extractor_args': {'youtube': {'player_client': ['android', 'web']}}
+        }
+
+        def progress_hook(d, socketio):
             if d['status'] == 'downloading':
                 try:
                     percentage = d.get('_percent_str', '0%').strip()
@@ -255,91 +265,78 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 except Exception as e:
                     logging.error(f"Error in progress hook: {e}")
 
-        # Get video info first
-        with youtube_dl.YoutubeDL() as ydl:
-            video_info = ydl.extract_info(video_url, download=False)
-            if not isinstance(video_info, dict):
-                raise ValueError("Failed to get video info")
-                
-            sanitized_title = sanitize_title(video_info.get('title', 'video'))
-            extension = 'mp4' if not download_mp3 else 'wav'
-            output_filename = generate_new_filename(final_download_path, sanitized_title, extension)
-            sanitized_output_template = os.path.join(final_download_path, output_filename)
-
-            # Create command for yt-dlp with progress hook
-            command = [
-                sys.executable, '-m', 'yt_dlp',
-                '-f', 'bestaudio[ext=m4a]/best' if download_mp3 else f'bestvideo[ext=mp4][vcodec^=avc1][height<={resolution}]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-                '-o', sanitized_output_template,
-                '--ffmpeg-location', ffmpeg_dir,
-                '--merge-output-format', 'mp4',
-                '--progress-template', '%(progress._percent_str)s',
-                video_url
-            ]
-
+        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
             try:
-                process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                current_download['process'] = process
+                logging.info("Starting video info extraction...")
+                info_dict = ydl.extract_info(video_url, download=False)
+                if not info_dict:
+                    raise ValueError("Failed to get video info")
                 
-                # Read output in real-time to get progress
-                while True:
-                    output = process.stdout.readline()
-                    if output == '' and process.poll() is not None:
-                        break
-                    if output:
-                        # Try to extract percentage
-                        if '%' in output:
-                            percentage = output.strip()
-                            logging.info(f'Download Progress: {percentage}')
-                            socketio.emit('percentage', {'percentage': percentage})
+                logging.info("Video info extracted successfully")
                 
-                stdout, stderr = process.communicate()
+                # Safely get the title
+                video_title = ''
+                if isinstance(info_dict, dict):
+                    video_title = info_dict.get('title', '')
+                if not video_title:
+                    video_title = 'video'
                 
-                if process.returncode != 0 and process.returncode != -15:  # -15 is the signal for termination
-                    error_message = f"Error downloading video: {stderr}"
-                    logging.error(error_message)
-                    socketio.emit('download-failed', {'message': error_message})
-                    return
-                elif process.returncode == -15:  # Download was cancelled
-                    if os.path.exists(sanitized_output_template):
-                        os.remove(sanitized_output_template)
-                    return
-            except subprocess.CalledProcessError as e:
-                error_message = f"Error downloading video: {e.stderr}"
-                logging.error(error_message)
-                socketio.emit('download-failed', {'message': error_message})
-                return
-            finally:
-                current_download['process'] = None
-
-            if os.path.exists(sanitized_output_template):
-                logging.info(f"Video downloaded: {sanitized_output_template}")
+                # Create download directory if it doesn't exist
+                download_dir = os.path.join(final_download_path, 'YoutubeToPremiere_download')
+                os.makedirs(download_dir, exist_ok=True)
                 
-                # Add URL to metadata
-                metadata_command = [
-                    ffmpeg_path,
-                    '-i', sanitized_output_template,
-                    '-metadata', f'comment={video_url}',
-                    '-codec', 'copy',
-                    f'{sanitized_output_template}_with_metadata.mp4'
-                ]
-
-                try:
-                    subprocess.run(metadata_command, check=True)
-                    os.replace(f'{sanitized_output_template}_with_metadata.mp4', sanitized_output_template)
-                    logging.info(f"Metadata added: {sanitized_output_template}")
+                # Generate output filename
+                sanitized_title = sanitize_title(video_title)
+                extension = 'mp4' if not download_mp3 else 'wav'
+                output_filename = generate_new_filename(download_dir, sanitized_title, extension)
+                sanitized_output_template = os.path.join(download_dir, output_filename)
+                
+                logging.info(f"Starting download to: {sanitized_output_template}")
+                ydl.params['outtmpl'] = sanitized_output_template
+                
+                # Download the video
+                ydl.download([video_url])
+                
+                if os.path.exists(sanitized_output_template):
+                    logging.info(f"Video downloaded successfully: {sanitized_output_template}")
                     
-                    socketio.emit('import_video', {'path': sanitized_output_template})
-                    time.sleep(0.5)  # Give time for import to process
-                    socketio.emit('download-complete')
-                except subprocess.CalledProcessError as e:
-                    logging.error(f"Error adding metadata: {e}")
-                    socketio.emit('download-failed', {'message': 'Failed to add metadata.'})
-                    return
+                    # Add URL to metadata
+                    metadata_command = [
+                        ffmpeg_path,
+                        '-i', sanitized_output_template,
+                        '-metadata', f'comment={video_url}',
+                        '-codec', 'copy',
+                        f'{sanitized_output_template}_with_metadata.mp4'
+                    ]
+
+                    try:
+                        subprocess.run(metadata_command, check=True, capture_output=True, text=True)
+                        os.replace(f'{sanitized_output_template}_with_metadata.mp4', sanitized_output_template)
+                        logging.info(f"Metadata added: {sanitized_output_template}")
+                        
+                        socketio.emit('import_video', {'path': sanitized_output_template})
+                        time.sleep(0.5)  # Give time for import to process
+                        socketio.emit('download-complete')
+                    except subprocess.CalledProcessError as e:
+                        logging.error(f"Error adding metadata: {e.stderr}")
+                        socketio.emit('download-failed', {'message': f'Failed to add metadata: {e.stderr}'})
+                        return
+                else:
+                    error_msg = "Download completed but file not found"
+                    logging.error(error_msg)
+                    socketio.emit('download-failed', {'message': error_msg})
+                    
+            except Exception as e:
+                error_msg = f"Error during download: {str(e)}"
+                logging.error(error_msg)
+                socketio.emit('download-failed', {'message': error_msg})
+                return
 
     except Exception as e:
-        logging.error(f"Error during download: {e}")
-        socketio.emit('download-failed', {'message': str(e)})
+        error_msg = f"Error during download setup: {str(e)}"
+        logging.error(error_msg)
+        socketio.emit('download-failed', {'message': error_msg})
+        return
 
 
 def download_audio(video_url, download_path, ffmpeg_path, socketio, settings=None, current_download=None):
