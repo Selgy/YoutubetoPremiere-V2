@@ -43,6 +43,25 @@ jobs:
           chmod +x src/exec/ffmpeg
           echo "FFmpeg copied to src/exec/ffmpeg"
 
+      - name: Import Code Signing Certificate (macOS)
+        if: matrix.os == 'macos-latest'
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo $CERTIFICATE_BASE64 | base64 --decode > certificate.p12
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security import certificate.p12 -k build.keychain -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
+
+      - name: Sign FFmpeg (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime src/exec/ffmpeg
+          echo "FFmpeg signed successfully"
+
       - name: Upload FFmpeg artifact
         uses: actions/upload-artifact@v3
         with:
@@ -83,8 +102,38 @@ jobs:
         run: chmod +x src/exec/ffmpeg
         
       - name: Build executable
-        run: python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath build/YoutubetoPremiere
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath build/YoutubetoPremiere
+          else
+            # For macOS, build without code signing first
+            python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath build/YoutubetoPremiere --osx-no-codesign
+          fi
         shell: bash
+
+      - name: Import Code Signing Certificate (macOS)
+        if: matrix.os == 'macos-latest'
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo $CERTIFICATE_BASE64 | base64 --decode > certificate.p12
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security import certificate.p12 -k build.keychain -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
+
+      - name: Sign executable (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          # Sign the main executable
+          /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime build/YoutubetoPremiere/YoutubetoPremiere
+          # Sign all dylib files
+          find build/YoutubetoPremiere/YoutubetoPremiere.app -name "*.dylib" -exec /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime {} \;
+          # Sign the .app bundle
+          /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime build/YoutubetoPremiere/YoutubetoPremiere.app
+          echo "All components signed successfully"
 
       - name: Upload executable and FFmpeg artifact
         uses: actions/upload-artifact@v3
