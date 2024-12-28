@@ -139,7 +139,7 @@ jobs:
         with:
           name: executable-${{ matrix.os }}
           path: |
-            build/YoutubetoPremiere/**/*
+            build/YoutubetoPremiere/YoutubetoPremiere*
             src/exec/ffmpeg*
 
   package-zxp:
@@ -179,17 +179,35 @@ jobs:
 
       - name: Organize executables
         run: |
+          # List contents to debug
+          echo "Windows directory contents:"
+          ls -R dist/cep/exec/windows/
+          echo "macOS directory contents:"
+          ls -R dist/cep/exec/macos/
+          
+          # Create backup of existing files
+          mkdir -p dist/cep/exec/backup
+          mv dist/cep/exec/*.* dist/cep/exec/backup/ 2>/dev/null || true
+          
           # Move Windows files
-          mv dist/cep/exec/windows/build/YoutubetoPremiere/YoutubetoPremiere.exe dist/cep/exec/
-          mv dist/cep/exec/windows/src/exec/ffmpeg.exe dist/cep/exec/
+          cp dist/cep/exec/windows/YoutubetoPremiere.exe dist/cep/exec/ || echo "Windows executable not found"
+          cp dist/cep/exec/windows/ffmpeg.exe dist/cep/exec/ || echo "Windows FFmpeg not found"
           
           # Move macOS files
-          mv dist/cep/exec/macos/build/YoutubetoPremiere/YoutubetoPremiere dist/cep/exec/
-          mv dist/cep/exec/macos/src/exec/ffmpeg dist/cep/exec/
+          cp dist/cep/exec/macos/YoutubetoPremiere dist/cep/exec/ || echo "macOS executable not found"
+          cp dist/cep/exec/macos/ffmpeg dist/cep/exec/ || echo "macOS FFmpeg not found"
           
-          # Clean up temporary directories
+          # Restore any missing files from backup
+          cp -n dist/cep/exec/backup/* dist/cep/exec/ 2>/dev/null || true
+          
+          # Clean up
           rm -rf dist/cep/exec/windows
           rm -rf dist/cep/exec/macos
+          rm -rf dist/cep/exec/backup
+          
+          # List final contents
+          echo "Final dist/cep/exec contents:"
+          ls -la dist/cep/exec/
         shell: bash
 
       - name: Copy sounds
