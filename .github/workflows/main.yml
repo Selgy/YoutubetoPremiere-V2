@@ -211,7 +211,10 @@ jobs:
           cache: 'yarn'
 
       - name: Install dependencies
-        run: yarn install
+        run: |
+          yarn install
+          yarn add -D typescript
+          yarn add -D cross-env
 
       - name: Create directories
         shell: pwsh
@@ -230,9 +233,13 @@ jobs:
           path: artifacts/macos-latest
 
       - name: Build CEP
+        shell: bash
         env:
           SKIP_PYTHON_BUILD: true
-        run: yarn clean && tsc -p "tsconfig-build.json" && cross-env vite build --force --watch false
+        run: |
+          yarn clean
+          yarn tsc -p "tsconfig-build.json"
+          yarn cross-env vite build --force --watch false
 
       - name: Copy executables and FFmpeg
         shell: pwsh
