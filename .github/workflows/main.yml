@@ -103,11 +103,12 @@ jobs:
         
       - name: Build executable
         run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath build/YoutubetoPremiere
-          else
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
             # For macOS, build without code signing first
-            python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath build/YoutubetoPremiere --osx-no-codesign
+            python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath build/YoutubetoPremiere --codesign-identity "-"
+          else
+            # For Windows
+            python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath build/YoutubetoPremiere
           fi
         shell: bash
 
