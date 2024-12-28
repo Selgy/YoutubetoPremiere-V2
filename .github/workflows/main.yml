@@ -198,7 +198,10 @@ jobs:
 
   build-executables:
     needs: [check-artifacts, build-ffmpeg]
-    if: needs.check-artifacts.outputs.app-changed == 'true' || needs.check-artifacts.outputs.executable-windows == 'false' || needs.check-artifacts.outputs.executable-macos == 'false'
+    if: |
+      needs.check-artifacts.outputs.app-changed == 'true' || 
+      needs.check-artifacts.outputs.executable-windows == 'false' || 
+      needs.check-artifacts.outputs.executable-macos == 'false'
     strategy:
       matrix:
         os: [windows-latest, macos-latest]
@@ -257,6 +260,16 @@ jobs:
 
   package-zxp:
     needs: [check-artifacts, build-executables]
+    if: |
+      always() &&
+      (
+        (needs.check-artifacts.outputs.app-changed == 'false' && 
+         needs.check-artifacts.outputs.executable-windows == 'true' && 
+         needs.check-artifacts.outputs.executable-macos == 'true' && 
+         needs.check-artifacts.outputs.ffmpeg-windows == 'true' && 
+         needs.check-artifacts.outputs.ffmpeg-macos == 'true') ||
+        needs.build-executables.result == 'success'
+      )
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v3
