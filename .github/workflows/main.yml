@@ -374,17 +374,9 @@ jobs:
           SKIP_PYTHON_BUILD: true
           NO_PYTHON: true
         run: |
-          # Save executables
-          mkdir -p temp_exec_backup
-          cp -r dist/cep/exec/* temp_exec_backup/
-          
-          # Build
           yarn clean
           yarn tsc -p "tsconfig-build.json"
           yarn cross-env vite build --force --watch false
-          
-          # Restore executables
-          cp -r temp_exec_backup/* dist/cep/exec/
           
           # Verify executables after build
           echo "Checking dist/cep/exec contents after build:"
@@ -397,25 +389,29 @@ jobs:
           NO_PYTHON: true
           SKIP_PYTHON_BUILD: true
         run: |
-          # Backup executables before packaging
-          Write-Host "Backing up executables before packaging..."
-          $backupDir = "exec_backup"
-          New-Item -ItemType Directory -Force -Path $backupDir
-          Copy-Item -Path "dist/cep/exec/*" -Destination $backupDir -Recurse -Force
-          
           # Verify executables before packaging
           Write-Host "Checking dist/cep/exec contents before packaging:"
           Get-ChildItem -Path dist/cep/exec -Force
           
-          yarn zxp
+          # Ensure executables are in the correct location for packaging
+          Write-Host "Ensuring executables are in place for packaging..."
+          if (-not (Test-Path "dist/cep/exec/ffmpeg.exe") -or -not (Test-Path "dist/cep/exec/ffmpeg")) {
+            Write-Host "Copying FFmpeg files..."
+            Copy-Item -Path "artifacts/src/exec/ffmpeg.exe" -Destination "dist/cep/exec/" -Force
+            Copy-Item -Path "artifacts/src/exec/ffmpeg" -Destination "dist/cep/exec/" -Force
+          }
           
-          # Restore executables after packaging
-          Write-Host "Restoring executables after packaging..."
-          Copy-Item -Path "$backupDir/*" -Destination "dist/cep/exec" -Recurse -Force
+          if (-not (Test-Path "dist/cep/exec/YoutubetoPremiere.exe") -or -not (Test-Path "dist/cep/exec/YoutubetoPremiere")) {
+            Write-Host "Copying executable files..."
+            Copy-Item -Path "artifacts/build/YoutubetoPremiere/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -Force
+            Copy-Item -Path "artifacts/build/YoutubetoPremiere/YoutubetoPremiere" -Destination "dist/cep/exec/" -Force
+          }
           
-          # Verify executables after packaging
-          Write-Host "Checking dist/cep/exec contents after packaging:"
+          # Verify files before ZXP packaging
+          Write-Host "Final check of dist/cep/exec contents before ZXP packaging:"
           Get-ChildItem -Path dist/cep/exec -Force
+          
+          yarn zxp
           
           # Verify the ZXP package was created
           if (-not (Test-Path "dist/zxp/*.zxp")) {
@@ -423,6 +419,10 @@ jobs:
             exit 1
           }
           Write-Host "ZXP package created successfully"
+          
+          # Verify contents after packaging
+          Write-Host "Checking dist/cep/exec contents after packaging:"
+          Get-ChildItem -Path dist/cep/exec -Force
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
