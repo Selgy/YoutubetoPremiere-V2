@@ -29,8 +29,9 @@ jobs:
         with:
           name: ffmpeg-windows-latest
           path: temp
-      - run: |
-          if [ "${{ steps.check-ffmpeg-windows.conclusion }}" == "success" ]; then
+      - shell: bash
+        run: |
+          if [[ -f "temp/ffmpeg.exe" ]]; then
             echo "windows=true" >> "$GITHUB_OUTPUT"
           else
             echo "windows=false" >> "$GITHUB_OUTPUT"
@@ -43,8 +44,9 @@ jobs:
         with:
           name: ffmpeg-macos-latest
           path: temp
-      - run: |
-          if [ "${{ steps.check-ffmpeg-macos.conclusion }}" == "success" ]; then
+      - shell: bash
+        run: |
+          if [[ -f "temp/ffmpeg" ]]; then
             echo "macos=true" >> "$GITHUB_OUTPUT"
           else
             echo "macos=false" >> "$GITHUB_OUTPUT"
@@ -57,8 +59,9 @@ jobs:
         with:
           name: executable-windows-latest
           path: temp
-      - run: |
-          if [ "${{ steps.check-executable-windows.conclusion }}" == "success" ]; then
+      - shell: bash
+        run: |
+          if [[ -f "temp/build/YoutubetoPremiere/YoutubetoPremiere.exe" ]]; then
             echo "windows=true" >> "$GITHUB_OUTPUT"
           else
             echo "windows=false" >> "$GITHUB_OUTPUT"
@@ -71,8 +74,9 @@ jobs:
         with:
           name: executable-macos-latest
           path: temp
-      - run: |
-          if [ "${{ steps.check-executable-macos.conclusion }}" == "success" ]; then
+      - shell: bash
+        run: |
+          if [[ -f "temp/build/YoutubetoPremiere/YoutubetoPremiere" ]]; then
             echo "macos=true" >> "$GITHUB_OUTPUT"
           else
             echo "macos=false" >> "$GITHUB_OUTPUT"
