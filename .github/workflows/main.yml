@@ -374,13 +374,17 @@ jobs:
           SKIP_PYTHON_BUILD: true
           NO_PYTHON: true
         run: |
-          # Verify executables before build
-          echo "Checking dist/cep/exec contents before build:"
-          ls -la dist/cep/exec
+          # Save executables
+          mkdir -p temp_exec_backup
+          cp -r dist/cep/exec/* temp_exec_backup/
           
+          # Build
           yarn clean
           yarn tsc -p "tsconfig-build.json"
           yarn cross-env vite build --force --watch false
+          
+          # Restore executables
+          cp -r temp_exec_backup/* dist/cep/exec/
           
           # Verify executables after build
           echo "Checking dist/cep/exec contents after build:"
@@ -390,7 +394,17 @@ jobs:
         env:
           ZXP_PACKAGE: true
           NO_PYTHON: true
-        run: yarn zxp
+          SKIP_PYTHON_BUILD: true
+        run: |
+          # Verify executables before packaging
+          echo "Checking dist/cep/exec contents before packaging:"
+          ls -la dist/cep/exec
+          
+          yarn zxp
+          
+          # Verify executables after packaging
+          echo "Checking dist/cep/exec contents after packaging:"
+          ls -la dist/cep/exec
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
