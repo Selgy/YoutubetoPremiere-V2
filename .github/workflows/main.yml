@@ -40,6 +40,7 @@ jobs:
           name: ffmpeg-windows-latest
           path: temp/ffmpeg-windows-latest
           search_artifacts: true
+          workflow_conclusion: completed
           if_no_artifact_found: warn
 
       - name: Download macOS FFmpeg
@@ -52,6 +53,7 @@ jobs:
           name: ffmpeg-macos-latest
           path: temp/ffmpeg-macos-latest
           search_artifacts: true
+          workflow_conclusion: completed
           if_no_artifact_found: warn
 
       - name: Download Windows executable
@@ -64,6 +66,7 @@ jobs:
           name: executable-windows-latest
           path: temp/executable-windows-latest
           search_artifacts: true
+          workflow_conclusion: completed
           if_no_artifact_found: warn
 
       - name: Download macOS executable
@@ -76,6 +79,7 @@ jobs:
           name: executable-macos-latest
           path: temp/executable-macos-latest
           search_artifacts: true
+          workflow_conclusion: completed
           if_no_artifact_found: warn
 
       - name: Check for Windows FFmpeg
@@ -132,8 +136,8 @@ jobs:
         with:
           name: found-artifacts
           path: |
-            src/exec/*
-            build/YoutubetoPremiere/**/*
+            src/exec/ffmpeg*
+            build/YoutubetoPremiere/YoutubetoPremiere*
 
       - name: Check for app changes
         id: check-changes
@@ -194,7 +198,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: ffmpeg-${{ matrix.os }}
-          path: src/exec/
+          path: src/exec/ffmpeg*
 
   build-executables:
     needs: [check-artifacts, build-ffmpeg]
@@ -255,8 +259,16 @@ jobs:
         with:
           name: executable-${{ matrix.os }}
           path: |
-            build/YoutubetoPremiere/**/*
+            build/YoutubetoPremiere/YoutubetoPremiere${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+
+      - name: Upload found artifacts
+        if: steps.check-ffmpeg-windows.outputs.windows == 'true' || steps.check-ffmpeg-macos.outputs.macos == 'true' || steps.check-executable-windows.outputs.windows == 'true' || steps.check-executable-macos.outputs.macos == 'true'
+        uses: actions/upload-artifact@v3
+        with:
+          name: found-artifacts
+          path: |
             src/exec/ffmpeg*
+            build/YoutubetoPremiere/YoutubetoPremiere*
 
   package-zxp:
     needs: [check-artifacts, build-executables]
@@ -326,49 +338,35 @@ jobs:
           New-Item -ItemType Directory -Force -Path artifacts/src/exec
           
       - name: Download found artifacts
-        uses: actions/download-artifact@v3
+        uses: dawidd6/action-download-artifact@v2
         continue-on-error: true
         with:
+          github_token: ${{ github.token }}
+          workflow: main.yml
           name: found-artifacts
           path: artifacts
+          search_artifacts: true
+          workflow_conclusion: completed
+          if_no_artifact_found: warn
 
-      - name: Download build artifacts if needed
-        if: needs.check-artifacts.outputs.app-changed == 'true' || needs.check-artifacts.outputs.executable-windows == 'false' || needs.check-artifacts.outputs.executable-macos == 'false'
+      - name: Download build artifacts
+        uses: dawidd6/action-download-artifact@v2
+        continue-on-error: true
+        with:
+          github_token: ${{ github.token }}
+          workflow: main.yml
+          path: artifacts
+          search_artifacts: true
+          workflow_conclusion: completed
+          if_no_artifact_found: warn
+          name_is_regexp: true
+          name: ^(executable|ffmpeg)-(windows|macos)-latest$
+
+      - name: List downloaded artifacts
         shell: pwsh
         run: |
-          # Download Windows executable
-          Write-Host "Downloading Windows executable..."
-          try {
-            gh run download --name executable-windows-latest --dir artifacts/build/YoutubetoPremiere
-          } catch {
-            Write-Warning "Failed to download Windows executable"
-          }
-          
-          # Download macOS executable
-          Write-Host "Downloading macOS executable..."
-          try {
-            gh run download --name executable-macos-latest --dir artifacts/build/YoutubetoPremiere
-          } catch {
-            Write-Warning "Failed to download macOS executable"
-          }
-          
-          # Download Windows FFmpeg
-          Write-Host "Downloading Windows FFmpeg..."
-          try {
-            gh run download --name ffmpeg-windows-latest --dir artifacts/src/exec
-          } catch {
-            Write-Warning "Failed to download Windows FFmpeg"
-          }
-          
-          # Download macOS FFmpeg
-          Write-Host "Downloading macOS FFmpeg..."
-          try {
-            gh run download --name ffmpeg-macos-latest --dir artifacts/src/exec
-          } catch {
-            Write-Warning "Failed to download macOS FFmpeg"
-          }
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+          Write-Host "Contents of artifacts directory:"
+          Get-ChildItem -Path artifacts -Recurse -Force
 
       - name: Copy executables and FFmpeg
         shell: pwsh
