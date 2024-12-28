@@ -291,8 +291,9 @@ jobs:
           python -m pip install pyinstaller
 
       - name: Install dependencies
+        shell: pwsh
         run: |
-          rm -f package-lock.json
+          Remove-Item -Path package-lock.json -Force -ErrorAction SilentlyContinue
           yarn install --network-timeout 300000 --network-concurrency 1
           yarn add -D typescript
           yarn add -D cross-env
