@@ -14,6 +14,8 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    outputs:
+      cache-hit: ${{ steps.cache-ffmpeg.outputs.cache-hit }}
     steps:
       - uses: actions/checkout@v3
       
@@ -22,7 +24,9 @@ jobs:
         uses: actions/cache@v3
         with:
           path: src/exec
-          key: ffmpeg-${{ matrix.os }}-${{ hashFiles('**/main.yml') }}
+          key: ffmpeg-${{ matrix.os }}-v1
+          restore-keys: |
+            ffmpeg-${{ matrix.os }}-
       
       - name: Download FFmpeg for Windows
         if: matrix.os == 'windows-latest' && steps.cache-ffmpeg.outputs.cache-hit != 'true'
@@ -74,40 +78,56 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
+      - name: Cache executable
+        id: cache-executable
+        uses: actions/cache@v3
+        with:
+          path: |
+            build/YoutubetoPremiere
+            src/exec
+          key: executable-${{ matrix.os }}-${{ hashFiles('app/**', 'requirements.txt', 'YoutubetoPremiere.spec') }}-v1
+          restore-keys: |
+            executable-${{ matrix.os }}-
+      
       - name: Setup Python
+        if: steps.cache-executable.outputs.cache-hit != 'true'
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
           cache: 'pip'
       
       - name: Cache Python dependencies
+        if: steps.cache-executable.outputs.cache-hit != 'true'
         uses: actions/cache@v3
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
           
       - name: Install Python dependencies
+        if: steps.cache-executable.outputs.cache-hit != 'true'
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install pygame
           
       - name: Download FFmpeg artifact
+        if: steps.cache-executable.outputs.cache-hit != 'true'
         uses: actions/download-artifact@v3
         with:
           name: ffmpeg-${{ matrix.os }}
           path: src/exec/
           
       - name: Make FFmpeg executable (macOS)
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' && steps.cache-executable.outputs.cache-hit != 'true'
         run: chmod +x src/exec/ffmpeg
         
       - name: Build executable
+        if: steps.cache-executable.outputs.cache-hit != 'true'
         run: python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath build/YoutubetoPremiere
         shell: bash
 
       - name: Sign executable (macOS)
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' && steps.cache-executable.outputs.cache-hit != 'true'
         env:
           CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
           CERTIFICATE_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
@@ -144,18 +164,25 @@ jobs:
       - name: Install dependencies
         run: yarn install
 
-      - name: Download artifacts and package
+      - name: Create directories
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path dist/cep/exec
+          
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: executable-windows-latest
+          path: dist/cep/exec/windows-latest
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: executable-macos-latest
+          path: dist/cep/exec/macos-latest
+
+      - name: Organize files
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist/cep/exec
-          
-          # Download artifacts
-          foreach ($os in @('windows-latest', 'macos-latest')) {
-            $path = "dist/cep/exec/$os"
-            New-Item -ItemType Directory -Force -Path $path
-            gh run download -n "executable-$os" -D $path
-          }
-          
           # Organize files
           Copy-Item -Path "dist/cep/exec/windows-latest/build/YoutubetoPremiere/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -ErrorAction SilentlyContinue
           if (-not $?) { Write-Host "Windows exe not found" }
@@ -172,8 +199,6 @@ jobs:
           # Remove temporary directories
           Remove-Item -Path "dist/cep/exec/windows-latest" -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item -Path "dist/cep/exec/macos-latest" -Recurse -Force -ErrorAction SilentlyContinue
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build ZXP
         env:
