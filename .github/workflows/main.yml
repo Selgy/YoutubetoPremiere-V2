@@ -169,13 +169,28 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: executable-windows-latest
-          path: dist/cep/exec/
+          path: dist/cep/exec/windows/
 
       - name: Download macOS artifacts
         uses: actions/download-artifact@v3
         with:
           name: executable-macos-latest
-          path: dist/cep/exec/
+          path: dist/cep/exec/macos/
+
+      - name: Organize executables
+        run: |
+          # Move Windows files
+          mv dist/cep/exec/windows/build/YoutubetoPremiere/YoutubetoPremiere.exe dist/cep/exec/
+          mv dist/cep/exec/windows/src/exec/ffmpeg.exe dist/cep/exec/
+          
+          # Move macOS files
+          mv dist/cep/exec/macos/build/YoutubetoPremiere/YoutubetoPremiere dist/cep/exec/
+          mv dist/cep/exec/macos/src/exec/ffmpeg dist/cep/exec/
+          
+          # Clean up temporary directories
+          rm -rf dist/cep/exec/windows
+          rm -rf dist/cep/exec/macos
+        shell: bash
 
       - name: Copy sounds
         run: |
