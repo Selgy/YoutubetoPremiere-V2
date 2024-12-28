@@ -30,18 +30,38 @@ jobs:
         with:
           fetch-depth: 2
       
-      - name: Get latest successful run artifacts
-        id: get-artifacts
+      - name: Download Windows FFmpeg
+        id: get-ffmpeg-windows
         uses: actions/download-artifact@v3
         continue-on-error: true
         with:
-          path: temp
-          name: |
-            ffmpeg-windows-latest
-            ffmpeg-macos-latest
-            executable-windows-latest
-            executable-macos-latest
-          
+          name: ffmpeg-windows-latest
+          path: temp/ffmpeg-windows-latest
+
+      - name: Download macOS FFmpeg
+        id: get-ffmpeg-macos
+        uses: actions/download-artifact@v3
+        continue-on-error: true
+        with:
+          name: ffmpeg-macos-latest
+          path: temp/ffmpeg-macos-latest
+
+      - name: Download Windows executable
+        id: get-executable-windows
+        uses: actions/download-artifact@v3
+        continue-on-error: true
+        with:
+          name: executable-windows-latest
+          path: temp/executable-windows-latest
+
+      - name: Download macOS executable
+        id: get-executable-macos
+        uses: actions/download-artifact@v3
+        continue-on-error: true
+        with:
+          name: executable-macos-latest
+          path: temp/executable-macos-latest
+
       - name: Check for Windows FFmpeg
         id: check-ffmpeg-windows
         shell: bash
