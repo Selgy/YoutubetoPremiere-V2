@@ -145,24 +145,33 @@ jobs:
         run: yarn install
 
       - name: Download artifacts and package
+        shell: pwsh
         run: |
-          mkdir -p dist/cep/exec
+          New-Item -ItemType Directory -Force -Path dist/cep/exec
           
           # Download artifacts
-          for os in windows-latest macos-latest; do
-            path="dist/cep/exec/$os"
-            mkdir -p "$path"
-            gh run download -n "executable-$os" -D "$path"
-          done
+          foreach ($os in @('windows-latest', 'macos-latest')) {
+            $path = "dist/cep/exec/$os"
+            New-Item -ItemType Directory -Force -Path $path
+            gh run download -n "executable-$os" -D $path
+          }
           
           # Organize files
-          cp dist/cep/exec/windows-latest/build/YoutubetoPremiere/YoutubetoPremiere.exe dist/cep/exec/ || echo "Windows exe not found"
-          cp dist/cep/exec/windows-latest/src/exec/ffmpeg.exe dist/cep/exec/ || echo "Windows FFmpeg not found"
-          cp dist/cep/exec/macos-latest/build/YoutubetoPremiere/YoutubetoPremiere dist/cep/exec/ || echo "macOS executable not found"
-          cp dist/cep/exec/macos-latest/src/exec/ffmpeg dist/cep/exec/ || echo "macOS FFmpeg not found"
-          chmod +x dist/cep/exec/YoutubetoPremiere || true
-          chmod +x dist/cep/exec/ffmpeg || true
-          rm -rf dist/cep/exec/windows-latest dist/cep/exec/macos-latest
+          Copy-Item -Path "dist/cep/exec/windows-latest/build/YoutubetoPremiere/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -ErrorAction SilentlyContinue
+          if (-not $?) { Write-Host "Windows exe not found" }
+          
+          Copy-Item -Path "dist/cep/exec/windows-latest/src/exec/ffmpeg.exe" -Destination "dist/cep/exec/" -ErrorAction SilentlyContinue
+          if (-not $?) { Write-Host "Windows FFmpeg not found" }
+          
+          Copy-Item -Path "dist/cep/exec/macos-latest/build/YoutubetoPremiere/YoutubetoPremiere" -Destination "dist/cep/exec/" -ErrorAction SilentlyContinue
+          if (-not $?) { Write-Host "macOS executable not found" }
+          
+          Copy-Item -Path "dist/cep/exec/macos-latest/src/exec/ffmpeg" -Destination "dist/cep/exec/" -ErrorAction SilentlyContinue
+          if (-not $?) { Write-Host "macOS FFmpeg not found" }
+          
+          # Remove temporary directories
+          Remove-Item -Path "dist/cep/exec/windows-latest" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "dist/cep/exec/macos-latest" -Recurse -Force -ErrorAction SilentlyContinue
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
