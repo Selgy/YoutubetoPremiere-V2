@@ -130,10 +130,8 @@ jobs:
         run: |
           # Sign the main executable
           /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime build/YoutubetoPremiere/YoutubetoPremiere
-          # Sign all dylib files
-          find build/YoutubetoPremiere/YoutubetoPremiere.app -name "*.dylib" -exec /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime {} \;
-          # Sign the .app bundle
-          /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime build/YoutubetoPremiere/YoutubetoPremiere.app
+          # Sign all dylib files in the executable directory
+          find build/YoutubetoPremiere -name "*.dylib" -exec /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime {} \;
           echo "All components signed successfully"
 
       - name: Upload executable and FFmpeg artifact
