@@ -108,7 +108,7 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 # Platform specific options
 if is_macos:
     target_arch = None  # Let PyInstaller detect the architecture
-    codesign_identity = "Developer ID Application: mickael ducatez (9H8DB46V75)"
+    codesign_identity = None  # Disable code signing during build
     entitlements_file = None
     bundle_identifier = "com.mickaelducatez.youtubetopremiereV2"
     info_plist = {
