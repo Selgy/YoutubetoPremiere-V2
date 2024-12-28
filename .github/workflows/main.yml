@@ -279,7 +279,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          yarn install
+          rm -f package-lock.json
+          yarn install --network-timeout 300000 --network-concurrency 1
           yarn add -D typescript
           yarn add -D cross-env
 
@@ -299,16 +300,6 @@ jobs:
           name: executable-macos-latest
           path: artifacts/macos-latest
 
-      - name: Build CEP
-        shell: bash
-        env:
-          SKIP_PYTHON_BUILD: true
-          NO_PYTHON: true
-        run: |
-          yarn clean
-          yarn tsc -p "tsconfig-build.json"
-          yarn cross-env vite build --force --watch false
-
       - name: Copy executables and FFmpeg
         shell: pwsh
         run: |
@@ -316,16 +307,56 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist/cep/exec
 
           # Copy Windows files
-          Copy-Item -Path "artifacts/windows-latest/build/YoutubetoPremiere/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -ErrorAction SilentlyContinue
-          if (-not $?) { Write-Host "Windows exe not found" }
-          Copy-Item -Path "artifacts/windows-latest/src/exec/ffmpeg.exe" -Destination "dist/cep/exec/" -ErrorAction SilentlyContinue
-          if (-not $?) { Write-Host "Windows FFmpeg not found" }
+          if (Test-Path "artifacts/windows-latest/build/YoutubetoPremiere/YoutubetoPremiere.exe") {
+            Copy-Item -Path "artifacts/windows-latest/build/YoutubetoPremiere/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -Force
+            Write-Host "Windows exe copied successfully"
+          } else {
+            Write-Error "Windows exe not found"
+          }
+          
+          if (Test-Path "artifacts/windows-latest/src/exec/ffmpeg.exe") {
+            Copy-Item -Path "artifacts/windows-latest/src/exec/ffmpeg.exe" -Destination "dist/cep/exec/" -Force
+            Write-Host "Windows FFmpeg copied successfully"
+          } else {
+            Write-Error "Windows FFmpeg not found"
+          }
           
           # Copy macOS files
-          Copy-Item -Path "artifacts/macos-latest/build/YoutubetoPremiere/YoutubetoPremiere" -Destination "dist/cep/exec/" -ErrorAction SilentlyContinue
-          if (-not $?) { Write-Host "macOS executable not found" }
-          Copy-Item -Path "artifacts/macos-latest/src/exec/ffmpeg" -Destination "dist/cep/exec/" -ErrorAction SilentlyContinue
-          if (-not $?) { Write-Host "macOS FFmpeg not found" }
+          if (Test-Path "artifacts/macos-latest/build/YoutubetoPremiere/YoutubetoPremiere") {
+            Copy-Item -Path "artifacts/macos-latest/build/YoutubetoPremiere/YoutubetoPremiere" -Destination "dist/cep/exec/" -Force
+            Write-Host "macOS executable copied successfully"
+          } else {
+            Write-Error "macOS executable not found"
+          }
+          
+          if (Test-Path "artifacts/macos-latest/src/exec/ffmpeg") {
+            Copy-Item -Path "artifacts/macos-latest/src/exec/ffmpeg" -Destination "dist/cep/exec/" -Force
+            Write-Host "macOS FFmpeg copied successfully"
+          } else {
+            Write-Error "macOS FFmpeg not found"
+          }
+
+          # List contents of dist/cep/exec to verify
+          Write-Host "Contents of dist/cep/exec:"
+          Get-ChildItem -Path dist/cep/exec
+
+      - name: Build CEP
+        shell: bash
+        env:
+          SKIP_PYTHON_BUILD: true
+          NO_PYTHON: true
+        run: |
+          # Verify executables before build
+          echo "Checking dist/cep/exec contents before build:"
+          ls -la dist/cep/exec
+          
+          yarn clean
+          yarn tsc -p "tsconfig-build.json"
+          yarn cross-env vite build --force --watch false
+          
+          # Verify executables after build
+          echo "Checking dist/cep/exec contents after build:"
+          ls -la dist/cep/exec
 
       - name: Package ZXP
         env:
