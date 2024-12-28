@@ -22,16 +22,23 @@ jobs:
         with:
           fetch-depth: 2
       
-      - name: Check for Windows FFmpeg
-        id: check-ffmpeg-windows
-        uses: actions/download-artifact@v3
+      - name: Get latest successful run artifacts
+        id: get-artifacts
+        uses: dawidd6/action-download-artifact@v2
         continue-on-error: true
         with:
-          name: ffmpeg-windows-latest
+          workflow: main.yml
+          workflow_conclusion: success
+          branch: main
           path: temp
-      - shell: bash
+          
+      - name: Check for Windows FFmpeg
+        id: check-ffmpeg-windows
+        shell: bash
         run: |
-          if [[ -f "temp/ffmpeg.exe" ]]; then
+          if [[ -f "temp/ffmpeg-windows-latest/ffmpeg.exe" ]]; then
+            mkdir -p src/exec
+            cp temp/ffmpeg-windows-latest/ffmpeg.exe src/exec/
             echo "windows=true" >> "$GITHUB_OUTPUT"
           else
             echo "windows=false" >> "$GITHUB_OUTPUT"
@@ -39,14 +46,11 @@ jobs:
 
       - name: Check for macOS FFmpeg
         id: check-ffmpeg-macos
-        uses: actions/download-artifact@v3
-        continue-on-error: true
-        with:
-          name: ffmpeg-macos-latest
-          path: temp
-      - shell: bash
+        shell: bash
         run: |
-          if [[ -f "temp/ffmpeg" ]]; then
+          if [[ -f "temp/ffmpeg-macos-latest/ffmpeg" ]]; then
+            mkdir -p src/exec
+            cp temp/ffmpeg-macos-latest/ffmpeg src/exec/
             echo "macos=true" >> "$GITHUB_OUTPUT"
           else
             echo "macos=false" >> "$GITHUB_OUTPUT"
@@ -54,14 +58,11 @@ jobs:
 
       - name: Check for Windows executable
         id: check-executable-windows
-        uses: actions/download-artifact@v3
-        continue-on-error: true
-        with:
-          name: executable-windows-latest
-          path: temp
-      - shell: bash
+        shell: bash
         run: |
-          if [[ -f "temp/build/YoutubetoPremiere/YoutubetoPremiere.exe" ]]; then
+          if [[ -f "temp/executable-windows-latest/build/YoutubetoPremiere/YoutubetoPremiere.exe" ]]; then
+            mkdir -p build/YoutubetoPremiere
+            cp -r temp/executable-windows-latest/build/YoutubetoPremiere/* build/YoutubetoPremiere/
             echo "windows=true" >> "$GITHUB_OUTPUT"
           else
             echo "windows=false" >> "$GITHUB_OUTPUT"
@@ -69,18 +70,24 @@ jobs:
 
       - name: Check for macOS executable
         id: check-executable-macos
-        uses: actions/download-artifact@v3
-        continue-on-error: true
-        with:
-          name: executable-macos-latest
-          path: temp
-      - shell: bash
+        shell: bash
         run: |
-          if [[ -f "temp/build/YoutubetoPremiere/YoutubetoPremiere" ]]; then
+          if [[ -f "temp/executable-macos-latest/build/YoutubetoPremiere/YoutubetoPremiere" ]]; then
+            mkdir -p build/YoutubetoPremiere
+            cp -r temp/executable-macos-latest/build/YoutubetoPremiere/* build/YoutubetoPremiere/
             echo "macos=true" >> "$GITHUB_OUTPUT"
           else
             echo "macos=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Upload found artifacts
+        if: steps.check-ffmpeg-windows.outputs.windows == 'true' || steps.check-ffmpeg-macos.outputs.macos == 'true' || steps.check-executable-windows.outputs.windows == 'true' || steps.check-executable-macos.outputs.macos == 'true'
+        uses: actions/upload-artifact@v3
+        with:
+          name: found-artifacts
+          path: |
+            src/exec/*
+            build/YoutubetoPremiere/**/*
 
       - name: Check for app changes
         id: check-changes
