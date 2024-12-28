@@ -17,8 +17,15 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
+      - name: Cache FFmpeg
+        id: cache-ffmpeg
+        uses: actions/cache@v3
+        with:
+          path: src/exec
+          key: ffmpeg-${{ matrix.os }}-${{ hashFiles('**/main.yml') }}
+      
       - name: Download FFmpeg for Windows
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && steps.cache-ffmpeg.outputs.cache-hit != 'true'
         run: |
           $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
           Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
@@ -26,25 +33,20 @@ jobs:
           New-Item -ItemType Directory -Force -Path src/exec
           Get-ChildItem -Path ffmpeg_temp -Recurse -Filter "ffmpeg.exe" | 
             Select-Object -First 1 | 
-            ForEach-Object { 
-              Copy-Item $_.FullName -Destination "src/exec/ffmpeg.exe"
-              Write-Host "FFmpeg copied from: $($_.FullName)"
-            }
-          Write-Host "FFmpeg copied to src/exec/ffmpeg.exe"
+            ForEach-Object { Copy-Item $_.FullName -Destination "src/exec/ffmpeg.exe" }
         shell: pwsh
 
       - name: Download FFmpeg for macOS
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' && steps.cache-ffmpeg.outputs.cache-hit != 'true'
         run: |
           curl -L https://evermeet.cx/ffmpeg/ffmpeg-6.1.zip -o ffmpeg.zip
           unzip ffmpeg.zip
           mkdir -p src/exec
           mv ffmpeg src/exec/
           chmod +x src/exec/ffmpeg
-          echo "FFmpeg copied to src/exec/ffmpeg"
 
-      - name: Import Code Signing Certificate (macOS)
-        if: matrix.os == 'macos-latest'
+      - name: Sign FFmpeg (macOS)
+        if: matrix.os == 'macos-latest' && steps.cache-ffmpeg.outputs.cache-hit != 'true'
         env:
           CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
           CERTIFICATE_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
@@ -55,12 +57,7 @@ jobs:
           security unlock-keychain -p "" build.keychain
           security import certificate.p12 -k build.keychain -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
-
-      - name: Sign FFmpeg (macOS)
-        if: matrix.os == 'macos-latest'
-        run: |
           /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime src/exec/ffmpeg
-          echo "FFmpeg signed successfully"
 
       - name: Upload FFmpeg artifact
         uses: actions/upload-artifact@v3
@@ -76,14 +73,18 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
-        with:
-          ref: ${{ github.ref }}
       
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
           cache: 'pip'
+      
+      - name: Cache Python dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
           
       - name: Install Python dependencies
         run: |
@@ -102,17 +103,10 @@ jobs:
         run: chmod +x src/exec/ffmpeg
         
       - name: Build executable
-        run: |
-          if [ "${{ matrix.os }}" = "macos-latest" ]; then
-            # For macOS, build without code signing first
-            python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath build/YoutubetoPremiere
-          else
-            # For Windows
-            python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath build/YoutubetoPremiere
-          fi
+        run: python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath build/YoutubetoPremiere
         shell: bash
 
-      - name: Import Code Signing Certificate (macOS)
+      - name: Sign executable (macOS)
         if: matrix.os == 'macos-latest'
         env:
           CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
@@ -124,22 +118,15 @@ jobs:
           security unlock-keychain -p "" build.keychain
           security import certificate.p12 -k build.keychain -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
-
-      - name: Sign executable (macOS)
-        if: matrix.os == 'macos-latest'
-        run: |
-          # Sign the main executable
           /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime build/YoutubetoPremiere/YoutubetoPremiere
-          # Sign all dylib files in the executable directory
           find build/YoutubetoPremiere -name "*.dylib" -exec /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime {} \;
-          echo "All components signed successfully"
 
-      - name: Upload executable and FFmpeg artifact
+      - name: Upload executable artifact
         uses: actions/upload-artifact@v3
         with:
           name: executable-${{ matrix.os }}
           path: |
-            build/YoutubetoPremiere/YoutubetoPremiere*
+            build/YoutubetoPremiere/**/*
             src/exec/ffmpeg*
 
   package-zxp:
@@ -147,8 +134,6 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v3
-        with:
-          ref: ${{ github.ref }}
       
       - name: Setup Node.js
         uses: actions/setup-node@v3
@@ -159,68 +144,27 @@ jobs:
       - name: Install dependencies
         run: yarn install
 
-      - name: Create directories
+      - name: Download artifacts and package
         run: |
           mkdir -p dist/cep/exec
-          mkdir -p src/exec/sounds
-        shell: bash
-
-      - name: Download Windows artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: executable-windows-latest
-          path: dist/cep/exec/windows/
-
-      - name: Download macOS artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: executable-macos-latest
-          path: dist/cep/exec/macos/
-
-      - name: Organize executables
-        run: |
-          # List contents to debug
-          echo "Windows directory contents:"
-          ls -R dist/cep/exec/windows/
-          echo "macOS directory contents:"
-          ls -R dist/cep/exec/macos/
           
-          # Create backup of existing files
-          mkdir -p dist/cep/exec/backup
-          mv dist/cep/exec/*.* dist/cep/exec/backup/ 2>/dev/null || true
+          # Download artifacts
+          for os in windows-latest macos-latest; do
+            path="dist/cep/exec/$os"
+            mkdir -p "$path"
+            gh run download -n "executable-$os" -D "$path"
+          done
           
-          # Move Windows files
-          cp dist/cep/exec/windows/YoutubetoPremiere.exe dist/cep/exec/ || echo "Windows executable not found"
-          cp dist/cep/exec/windows/ffmpeg.exe dist/cep/exec/ || echo "Windows FFmpeg not found"
-          
-          # Move macOS files
-          cp dist/cep/exec/macos/YoutubetoPremiere dist/cep/exec/ || echo "macOS executable not found"
-          cp dist/cep/exec/macos/ffmpeg dist/cep/exec/ || echo "macOS FFmpeg not found"
-          
-          # Restore any missing files from backup
-          cp -n dist/cep/exec/backup/* dist/cep/exec/ 2>/dev/null || true
-          
-          # Clean up
-          rm -rf dist/cep/exec/windows
-          rm -rf dist/cep/exec/macos
-          rm -rf dist/cep/exec/backup
-          
-          # List final contents
-          echo "Final dist/cep/exec contents:"
-          ls -la dist/cep/exec/
-        shell: bash
-
-      - name: Copy sounds
-        run: |
-          if [ -d "src/exec/sounds" ]; then
-            cp -r src/exec/sounds dist/cep/exec/
-          fi
-        shell: bash
-
-      - name: Set environment variable for ZXP packaging
-        run: |
-          echo "SKIP_PYTHON_BUILD=true" >> $GITHUB_ENV
-        shell: bash
+          # Organize files
+          cp dist/cep/exec/windows-latest/build/YoutubetoPremiere/YoutubetoPremiere.exe dist/cep/exec/ || echo "Windows exe not found"
+          cp dist/cep/exec/windows-latest/src/exec/ffmpeg.exe dist/cep/exec/ || echo "Windows FFmpeg not found"
+          cp dist/cep/exec/macos-latest/build/YoutubetoPremiere/YoutubetoPremiere dist/cep/exec/ || echo "macOS executable not found"
+          cp dist/cep/exec/macos-latest/src/exec/ffmpeg dist/cep/exec/ || echo "macOS FFmpeg not found"
+          chmod +x dist/cep/exec/YoutubetoPremiere || true
+          chmod +x dist/cep/exec/ffmpeg || true
+          rm -rf dist/cep/exec/windows-latest dist/cep/exec/macos-latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build ZXP
         env:
@@ -230,10 +174,6 @@ jobs:
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ github.ref_name }}
-          files: |
-            ./dist/zxp/*.zxp
+          files: ./dist/zxp/*.zxp
           generate_release_notes: true
