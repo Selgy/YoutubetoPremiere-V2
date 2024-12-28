@@ -40,8 +40,9 @@ jobs:
           name: ffmpeg-windows-latest
           path: temp/ffmpeg-windows-latest
           search_artifacts: true
-          check_artifacts: true
+          check_artifacts: false
           if_no_artifact_found: warn
+          pr: false
 
       - name: Download macOS FFmpeg
         id: get-ffmpeg-macos
@@ -53,8 +54,9 @@ jobs:
           name: ffmpeg-macos-latest
           path: temp/ffmpeg-macos-latest
           search_artifacts: true
-          check_artifacts: true
+          check_artifacts: false
           if_no_artifact_found: warn
+          pr: false
 
       - name: Download Windows executable
         id: get-executable-windows
@@ -66,8 +68,9 @@ jobs:
           name: executable-windows-latest
           path: temp/executable-windows-latest
           search_artifacts: true
-          check_artifacts: true
+          check_artifacts: false
           if_no_artifact_found: warn
+          pr: false
 
       - name: Download macOS executable
         id: get-executable-macos
@@ -79,8 +82,9 @@ jobs:
           name: executable-macos-latest
           path: temp/executable-macos-latest
           search_artifacts: true
-          check_artifacts: true
+          check_artifacts: false
           if_no_artifact_found: warn
+          pr: false
 
       - name: Check for Windows FFmpeg
         id: check-ffmpeg-windows
