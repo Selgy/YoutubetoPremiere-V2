@@ -111,23 +111,22 @@ const copyAppFiles = () => ({
           console.log('Sounds folder copied to dist/cep/exec/sounds');
         }
 
-        // Copy executables to exec folder of CEP package
-        const ffmpegSrc = path.resolve(__dirname, 'ffmpeg*');
-        const youtubeSrc = path.resolve(__dirname, 'YoutubetoPremiere*');
+        // Copy executables from build directory to CEP package
+        const buildDir = path.resolve(__dirname, 'build/executables');
         const execDir = path.resolve(__dirname, 'dist/cep/exec');
-
-        // Ensure exec directory exists
         await fs.ensureDir(execDir);
 
-        // Use glob to copy all matching files
-        const glob = require('glob');
-        const ffmpegFiles = glob.sync(ffmpegSrc);
-        const youtubeFiles = glob.sync(youtubeSrc);
-
-        for (const file of [...ffmpegFiles, ...youtubeFiles]) {
-          const filename = path.basename(file);
-          await fs.copy(file, path.join(execDir, filename));
-          console.log(`Copied ${filename} to CEP exec directory`);
+        // Copy all executables from build directory
+        const files = await fs.readdir(buildDir);
+        for (const file of files) {
+          // Only copy executables and ffmpeg
+          if (file.match(/^(ffmpeg|YoutubetoPremiere)(\.exe)?$/)) {
+            await fs.copy(
+              path.join(buildDir, file),
+              path.join(execDir, file)
+            );
+            console.log(`Copied ${file} to CEP exec directory`);
+          }
         }
       } catch (error) {
         console.error('Failed in copyAppFiles:', error);

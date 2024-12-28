@@ -59,12 +59,13 @@ jobs:
           security import certificate.p12 -k build.keychain -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
           /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime ffmpeg
+          rm -f certificate.p12
 
       - name: Upload FFmpeg artifact
         uses: actions/upload-artifact@v3
         with:
           name: ffmpeg-${{ matrix.os }}
-          path: ffmpeg*
+          path: ffmpeg${{ matrix.os == 'windows-latest' && '.exe' || '' }}
           retention-days: 1
 
   build-executables:
@@ -87,16 +88,6 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install pygame
-          
-      - name: Download FFmpeg artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: ffmpeg-${{ matrix.os }}
-          path: ./
-      
-      - name: Make FFmpeg executable (macOS)
-        if: matrix.os == 'macos-latest'
-        run: chmod +x ffmpeg
         
       - name: Build executable
         shell: bash
@@ -121,6 +112,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
           /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime YoutubetoPremiere
           find . -name "*.dylib" -exec /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime {} \;
+          rm -f certificate.p12
 
       - name: Upload executable
         uses: actions/upload-artifact@v3
@@ -155,25 +147,25 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: executable-windows-latest
-          path: dist/cep/exec
+          path: build/executables
 
       - name: Download macOS executable
         uses: actions/download-artifact@v3
         with:
           name: executable-macos-latest
-          path: dist/cep/exec
+          path: build/executables
 
       - name: Download Windows FFmpeg
         uses: actions/download-artifact@v3
         with:
           name: ffmpeg-windows-latest
-          path: dist/cep/exec
+          path: build/executables
 
       - name: Download macOS FFmpeg
         uses: actions/download-artifact@v3
         with:
           name: ffmpeg-macos-latest
-          path: dist/cep/exec
+          path: build/executables
 
       - name: List contents to verify
         shell: pwsh
