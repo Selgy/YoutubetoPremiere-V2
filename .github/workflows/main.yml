@@ -184,7 +184,15 @@ jobs:
           fi
         shell: bash
 
+      - name: Set environment variable for ZXP packaging
+        run: |
+          echo "SKIP_PYTHON_BUILD=true" >> $GITHUB_ENV
+        shell: bash
+
       - name: Build ZXP
+        env:
+          ZXP_PACKAGE: true
+          SKIP_PYTHON_BUILD: true
         run: yarn zxp
 
       - name: Create Release

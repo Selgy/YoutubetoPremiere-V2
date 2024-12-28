@@ -123,6 +123,33 @@ const copyAppFiles = () => ({
         throw error;
       }
     }
+  },
+  buildEnd: async () => {
+    if (process.env.ZXP_PACKAGE === 'true') {
+      // Skip Python build if SKIP_PYTHON_BUILD is set
+      if (!process.env.SKIP_PYTHON_BUILD) {
+        console.log('Building Python executable...');
+        try {
+          const specPath = path.resolve(__dirname, 'YoutubetoPremiere.spec');
+          const workPath = path.resolve(__dirname, 'build', 'work');
+          const distPath = path.resolve(__dirname, 'build', 'YoutubetoPremiere');
+          
+          await execAsync(`python -m PyInstaller "${specPath}" -y --workpath "${workPath}" --distpath "${distPath}"`);
+        } catch (error) {
+          console.error('[copy-app-files]', error);
+          throw error;
+        }
+      } else {
+        console.log('Skipping Python build as SKIP_PYTHON_BUILD is set');
+      }
+
+      // Copy sounds folder if it exists
+      const soundsSrc = path.resolve(__dirname, 'src', 'exec', 'sounds');
+      const soundsDest = path.resolve(__dirname, 'dist', 'cep', 'exec', 'sounds');
+      if (fs.existsSync(soundsSrc)) {
+        await fs.copy(soundsSrc, soundsDest);
+      }
+    }
   }
 });
 
