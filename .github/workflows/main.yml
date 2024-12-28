@@ -32,16 +32,15 @@ jobs:
       
       - name: Get latest successful run artifacts
         id: get-artifacts
-        uses: dawidd6/action-download-artifact@v2
+        uses: actions/download-artifact@v3
         continue-on-error: true
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          workflow: main.yml
-          workflow_conclusion: completed
-          branch: main
           path: temp
-          search_artifacts: true
-          if_no_artifact_found: warn
+          name: |
+            ffmpeg-windows-latest
+            ffmpeg-macos-latest
+            executable-windows-latest
+            executable-macos-latest
           
       - name: Check for Windows FFmpeg
         id: check-ffmpeg-windows
