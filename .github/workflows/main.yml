@@ -65,6 +65,7 @@ jobs:
         with:
           name: ffmpeg-${{ matrix.os }}
           path: ffmpeg*
+          retention-days: 1
 
   build-executables:
     needs: build-ffmpeg
@@ -121,16 +122,17 @@ jobs:
           /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime YoutubetoPremiere
           find . -name "*.dylib" -exec /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime {} \;
 
-      - name: Upload executable artifact
+      - name: Upload executable
         uses: actions/upload-artifact@v3
         with:
           name: executable-${{ matrix.os }}
           path: |
-            YoutubetoPremiere*
-            ffmpeg*
+            ${{ matrix.os == 'windows-latest' && 'YoutubetoPremiere.exe' || 'YoutubetoPremiere' }}
+          retention-days: 1
+          if-no-files-found: error
 
   package-zxp:
-    needs: build-executables
+    needs: [build-ffmpeg, build-executables]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v3
@@ -148,49 +150,36 @@ jobs:
         run: mkdir -p dist/cep/exec
         shell: bash
 
-      - name: Download all artifacts
+      # Download artifacts
+      - name: Download Windows executable
         uses: actions/download-artifact@v3
         with:
-          path: artifacts
+          name: executable-windows-latest
+          path: dist/cep/exec
 
-      - name: Copy executables and FFmpeg to CEP directory
+      - name: Download macOS executable
+        uses: actions/download-artifact@v3
+        with:
+          name: executable-macos-latest
+          path: dist/cep/exec
+
+      - name: Download Windows FFmpeg
+        uses: actions/download-artifact@v3
+        with:
+          name: ffmpeg-windows-latest
+          path: dist/cep/exec
+
+      - name: Download macOS FFmpeg
+        uses: actions/download-artifact@v3
+        with:
+          name: ffmpeg-macos-latest
+          path: dist/cep/exec
+
+      - name: List contents to verify
         shell: pwsh
         run: |
-          # Create exec directory if it doesn't exist
-          New-Item -ItemType Directory -Force -Path dist/cep/exec
-          
-          # Debug: List artifacts directory contents
-          Write-Host "Contents of artifacts directory:"
-          Get-ChildItem -Path artifacts -Recurse
-          
-          # Copy Windows artifacts
-          if (Test-Path "artifacts/executable-windows-latest") {
-              Write-Host "Copying Windows artifacts..."
-              Copy-Item -Path "artifacts/executable-windows-latest/*" -Destination "dist/cep/exec/" -Force
-          } else {
-              Write-Error "Windows artifacts directory not found!"
-          }
-          
-          # Copy macOS artifacts
-          if (Test-Path "artifacts/executable-macos-latest") {
-              Write-Host "Copying macOS artifacts..."
-              Copy-Item -Path "artifacts/executable-macos-latest/*" -Destination "dist/cep/exec/" -Force
-          } else {
-              Write-Error "macOS artifacts directory not found!"
-          }
-          
-          # List contents to verify
           Write-Host "Contents of dist/cep/exec:"
           Get-ChildItem -Path dist/cep/exec
-
-      - name: Build CEP Extension
-        env:
-          SKIP_PYTHON_BUILD: true
-          NO_PYTHON: true
-        run: |
-          yarn clean
-          yarn tsc -p "tsconfig-build.json"
-          yarn cross-env vite build --force --watch false
 
       - name: Package ZXP
         env:
