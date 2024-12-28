@@ -172,38 +172,37 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: executable-windows-latest
-          path: dist/cep/exec/windows-latest
+          path: artifacts/windows-latest
 
       - name: Download macOS artifacts
         uses: actions/download-artifact@v3
         with:
           name: executable-macos-latest
-          path: dist/cep/exec/macos-latest
+          path: artifacts/macos-latest
 
-      - name: Organize files
+      - name: Build CEP
+        env:
+          SKIP_PYTHON_BUILD: true
+        run: yarn clean && tsc -p "tsconfig-build.json" && cross-env vite build --force --watch false
+
+      - name: Copy executables and FFmpeg
         shell: pwsh
         run: |
-          # Organize files
-          Copy-Item -Path "dist/cep/exec/windows-latest/build/YoutubetoPremiere/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -ErrorAction SilentlyContinue
+          # Copy Windows files
+          Copy-Item -Path "artifacts/windows-latest/build/YoutubetoPremiere/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -ErrorAction SilentlyContinue
           if (-not $?) { Write-Host "Windows exe not found" }
-          
-          Copy-Item -Path "dist/cep/exec/windows-latest/src/exec/ffmpeg.exe" -Destination "dist/cep/exec/" -ErrorAction SilentlyContinue
+          Copy-Item -Path "artifacts/windows-latest/src/exec/ffmpeg.exe" -Destination "dist/cep/exec/" -ErrorAction SilentlyContinue
           if (-not $?) { Write-Host "Windows FFmpeg not found" }
           
-          Copy-Item -Path "dist/cep/exec/macos-latest/build/YoutubetoPremiere/YoutubetoPremiere" -Destination "dist/cep/exec/" -ErrorAction SilentlyContinue
+          # Copy macOS files
+          Copy-Item -Path "artifacts/macos-latest/build/YoutubetoPremiere/YoutubetoPremiere" -Destination "dist/cep/exec/" -ErrorAction SilentlyContinue
           if (-not $?) { Write-Host "macOS executable not found" }
-          
-          Copy-Item -Path "dist/cep/exec/macos-latest/src/exec/ffmpeg" -Destination "dist/cep/exec/" -ErrorAction SilentlyContinue
+          Copy-Item -Path "artifacts/macos-latest/src/exec/ffmpeg" -Destination "dist/cep/exec/" -ErrorAction SilentlyContinue
           if (-not $?) { Write-Host "macOS FFmpeg not found" }
-          
-          # Remove temporary directories
-          Remove-Item -Path "dist/cep/exec/windows-latest" -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item -Path "dist/cep/exec/macos-latest" -Recurse -Force -ErrorAction SilentlyContinue
 
-      - name: Build ZXP
+      - name: Package ZXP
         env:
           ZXP_PACKAGE: true
-          SKIP_PYTHON_BUILD: true
         run: yarn zxp
 
       - name: Create Release
