@@ -87,8 +87,7 @@ jobs:
         shell: bash
         run: |
           if [[ -f "temp/ffmpeg-windows-latest/ffmpeg.exe" ]]; then
-            mkdir -p src/exec
-            cp temp/ffmpeg-windows-latest/ffmpeg.exe src/exec/
+            cp temp/ffmpeg-windows-latest/ffmpeg.exe ./
             echo "windows=true" >> "$GITHUB_OUTPUT"
           else
             echo "windows=false" >> "$GITHUB_OUTPUT"
@@ -99,8 +98,7 @@ jobs:
         shell: bash
         run: |
           if [[ -f "temp/ffmpeg-macos-latest/ffmpeg" ]]; then
-            mkdir -p src/exec
-            cp temp/ffmpeg-macos-latest/ffmpeg src/exec/
+            cp temp/ffmpeg-macos-latest/ffmpeg ./
             echo "macos=true" >> "$GITHUB_OUTPUT"
           else
             echo "macos=false" >> "$GITHUB_OUTPUT"
@@ -110,9 +108,8 @@ jobs:
         id: check-executable-windows
         shell: bash
         run: |
-          if [[ -f "temp/executable-windows-latest/build/YoutubetoPremiere/YoutubetoPremiere.exe" ]]; then
-            mkdir -p build/YoutubetoPremiere
-            cp -r temp/executable-windows-latest/build/YoutubetoPremiere/* build/YoutubetoPremiere/
+          if [[ -f "temp/executable-windows-latest/YoutubetoPremiere.exe" ]]; then
+            cp temp/executable-windows-latest/YoutubetoPremiere.exe ./
             echo "windows=true" >> "$GITHUB_OUTPUT"
           else
             echo "windows=false" >> "$GITHUB_OUTPUT"
@@ -122,9 +119,8 @@ jobs:
         id: check-executable-macos
         shell: bash
         run: |
-          if [[ -f "temp/executable-macos-latest/build/YoutubetoPremiere/YoutubetoPremiere" ]]; then
-            mkdir -p build/YoutubetoPremiere
-            cp -r temp/executable-macos-latest/build/YoutubetoPremiere/* build/YoutubetoPremiere/
+          if [[ -f "temp/executable-macos-latest/YoutubetoPremiere" ]]; then
+            cp temp/executable-macos-latest/YoutubetoPremiere ./
             echo "macos=true" >> "$GITHUB_OUTPUT"
           else
             echo "macos=false" >> "$GITHUB_OUTPUT"
@@ -136,8 +132,8 @@ jobs:
         with:
           name: found-artifacts
           path: |
-            src/exec/ffmpeg*
-            build/YoutubetoPremiere/YoutubetoPremiere*
+            ffmpeg*
+            YoutubetoPremiere*
 
       - name: Check for app changes
         id: check-changes
@@ -165,10 +161,9 @@ jobs:
           $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
           Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
           Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_temp
-          New-Item -ItemType Directory -Force -Path src/exec
           Get-ChildItem -Path ffmpeg_temp -Recurse -Filter "ffmpeg.exe" | 
             Select-Object -First 1 | 
-            ForEach-Object { Copy-Item $_.FullName -Destination "src/exec/ffmpeg.exe" }
+            ForEach-Object { Copy-Item $_.FullName -Destination "ffmpeg.exe" }
         shell: pwsh
 
       - name: Download FFmpeg for macOS
@@ -176,9 +171,7 @@ jobs:
         run: |
           curl -L https://evermeet.cx/ffmpeg/ffmpeg-6.1.zip -o ffmpeg.zip
           unzip ffmpeg.zip
-          mkdir -p src/exec
-          mv ffmpeg src/exec/
-          chmod +x src/exec/ffmpeg
+          chmod +x ffmpeg
 
       - name: Sign FFmpeg (macOS)
         if: matrix.os == 'macos-latest' && needs.check-artifacts.outputs.ffmpeg-macos == 'false'
@@ -192,13 +185,13 @@ jobs:
           security unlock-keychain -p "" build.keychain
           security import certificate.p12 -k build.keychain -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
-          /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime src/exec/ffmpeg
+          /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime ffmpeg
 
       - name: Upload FFmpeg artifact
         uses: actions/upload-artifact@v3
         with:
           name: ffmpeg-${{ matrix.os }}
-          path: src/exec/ffmpeg*
+          path: ffmpeg*
 
   build-executables:
     needs: [check-artifacts, build-ffmpeg]
@@ -229,14 +222,14 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: ffmpeg-${{ matrix.os }}
-          path: src/exec/
+          path: ./
           
       - name: Make FFmpeg executable (macOS)
         if: matrix.os == 'macos-latest'
-        run: chmod +x src/exec/ffmpeg
+        run: chmod +x ffmpeg
         
       - name: Build executable
-        run: python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath build/YoutubetoPremiere
+        run: python -m PyInstaller YoutubetoPremiere.spec -y --workpath work --distpath ./
         shell: bash
 
       - name: Sign executable (macOS)
@@ -251,15 +244,15 @@ jobs:
           security unlock-keychain -p "" build.keychain
           security import certificate.p12 -k build.keychain -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
-          /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime build/YoutubetoPremiere/YoutubetoPremiere
-          find build/YoutubetoPremiere -name "*.dylib" -exec /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime {} \;
+          /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime YoutubetoPremiere
+          find . -name "*.dylib" -exec /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime {} \;
 
       - name: Upload executable artifact
         uses: actions/upload-artifact@v3
         with:
           name: executable-${{ matrix.os }}
           path: |
-            build/YoutubetoPremiere/YoutubetoPremiere${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+            YoutubetoPremiere${{ matrix.os == 'windows-latest' && '.exe' || '' }}
 
       - name: Build CEP
         shell: bash
@@ -271,9 +264,10 @@ jobs:
           yarn tsc -p "tsconfig-build.json"
           yarn cross-env vite build --force --watch false
           
-          # Verify executables after build
-          echo "Checking dist/cep/exec contents after build:"
-          ls -la dist/cep/exec
+          # Create exec directory and copy files
+          mkdir -p dist/cep/exec
+          cp ffmpeg* dist/cep/exec/
+          cp YoutubetoPremiere* dist/cep/exec/
 
       - name: Package ZXP
         shell: pwsh
@@ -369,8 +363,6 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist/cep/exec
-          New-Item -ItemType Directory -Force -Path artifacts/build/YoutubetoPremiere
-          New-Item -ItemType Directory -Force -Path artifacts/src/exec
           
       - name: Download found artifacts
         uses: dawidd6/action-download-artifact@v2
@@ -379,7 +371,7 @@ jobs:
           github_token: ${{ github.token }}
           workflow: main.yml
           name: found-artifacts
-          path: artifacts
+          path: ./
           search_artifacts: true
           workflow_conclusion: completed
           if_no_artifact_found: warn
@@ -390,7 +382,7 @@ jobs:
         with:
           github_token: ${{ github.token }}
           workflow: main.yml
-          path: artifacts
+          path: ./
           search_artifacts: true
           workflow_conclusion: completed
           if_no_artifact_found: warn
@@ -400,78 +392,18 @@ jobs:
       - name: List downloaded artifacts
         shell: pwsh
         run: |
-          Write-Host "Contents of artifacts directory:"
-          Get-ChildItem -Path artifacts -Recurse -Force
+          Write-Host "Contents of root directory:"
+          Get-ChildItem -Path . -Force
 
-      - name: Copy executables and FFmpeg
+      - name: Copy executables and FFmpeg to CEP directory
         shell: pwsh
         run: |
-          # Function to copy file with better error handling
-          function Copy-FileWithCheck {
-            param (
-              [string]$Source,
-              [string]$Destination,
-              [string]$Description
-            )
-            
-            Write-Host "Looking for $Description at: $Source"
-            if (Test-Path $Source) {
-              Copy-Item -Path $Source -Destination $Destination -Force
-              Write-Host "$Description copied successfully"
-              return $true
-            } else {
-              Write-Host "Warning: $Description not found at $Source"
-              # List parent directory contents to help debug
-              $parentDir = Split-Path -Parent $Source
-              if (Test-Path $parentDir) {
-                Write-Host "Contents of parent directory:"
-                Get-ChildItem -Path $parentDir -Recurse
-              }
-              return $false
-            }
-          }
-
-          $errors = @()
+          # Copy all FFmpeg and YoutubetoPremiere files to dist/cep/exec
+          Copy-Item -Path ffmpeg* -Destination dist/cep/exec/ -Force
+          Copy-Item -Path YoutubetoPremiere* -Destination dist/cep/exec/ -Force
           
-          # Copy Windows files
-          if (-not (Copy-FileWithCheck -Source "artifacts/executable-windows-latest/build/YoutubetoPremiere/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -Description "Windows exe")) {
-            if (-not (Copy-FileWithCheck -Source "artifacts/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -Description "Windows exe (alternative path)")) {
-              $errors += "Windows exe"
-            }
-          }
-          
-          if (-not (Copy-FileWithCheck -Source "artifacts/ffmpeg-windows-latest/ffmpeg.exe" -Destination "dist/cep/exec/" -Description "Windows FFmpeg")) {
-            if (-not (Copy-FileWithCheck -Source "artifacts/ffmpeg.exe" -Destination "dist/cep/exec/" -Description "Windows FFmpeg (alternative path)")) {
-              $errors += "Windows FFmpeg"
-            }
-          }
-          
-          # Copy macOS files
-          if (-not (Copy-FileWithCheck -Source "artifacts/executable-macos-latest/build/YoutubetoPremiere/YoutubetoPremiere" -Destination "dist/cep/exec/" -Description "macOS executable")) {
-            if (-not (Copy-FileWithCheck -Source "artifacts/YoutubetoPremiere" -Destination "dist/cep/exec/" -Description "macOS executable (alternative path)")) {
-              $errors += "macOS executable"
-            }
-          }
-          
-          if (-not (Copy-FileWithCheck -Source "artifacts/ffmpeg-macos-latest/ffmpeg" -Destination "dist/cep/exec/" -Description "macOS FFmpeg")) {
-            if (-not (Copy-FileWithCheck -Source "artifacts/ffmpeg" -Destination "dist/cep/exec/" -Description "macOS FFmpeg (alternative path)")) {
-              $errors += "macOS FFmpeg"
-            }
-          }
-
-          # List contents of dist/cep/exec to verify
-          Write-Host "`nContents of dist/cep/exec:"
+          Write-Host "Contents of dist/cep/exec:"
           Get-ChildItem -Path dist/cep/exec -Force
-          
-          # List contents of artifacts to help debug
-          Write-Host "`nContents of artifacts directory:"
-          Get-ChildItem -Path artifacts -Recurse -Force
-          
-          # Report any missing files
-          if ($errors.Count -gt 0) {
-            Write-Error "Failed to copy the following files: $($errors -join ', ')"
-            exit 1
-          }
 
       - name: Build CEP
         shell: bash
