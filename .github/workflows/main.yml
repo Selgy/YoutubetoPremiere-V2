@@ -280,39 +280,42 @@ jobs:
           node-version: '18'
           cache: 'yarn'
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
+      - name: Get yarn cache directory path
+        id: yarn-cache-dir-path
+        run: echo "dir=$(yarn cache dir)" >> $GITHUB_OUTPUT
 
-      - name: Install PyInstaller
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pyinstaller
+      - name: Cache yarn dependencies
+        uses: actions/cache@v3
+        id: yarn-cache
+        with:
+          path: |
+            ${{ steps.yarn-cache-dir-path.outputs.dir }}
+            node_modules
+          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-yarn-
 
       - name: Install dependencies
         shell: pwsh
         run: |
           Remove-Item -Path package-lock.json -Force -ErrorAction SilentlyContinue
-          yarn install --network-timeout 300000 --network-concurrency 1
-          yarn add -D typescript
-          yarn add -D cross-env
+          yarn install --prefer-offline --frozen-lockfile --network-timeout 300000 --network-concurrency 1
+          if (-not (Test-Path node_modules/typescript)) {
+            yarn add -D typescript --prefer-offline
+          }
+          if (-not (Test-Path node_modules/cross-env)) {
+            yarn add -D cross-env --prefer-offline
+          }
 
       - name: Create directories
         shell: pwsh
         run: New-Item -ItemType Directory -Force -Path dist/cep/exec
           
-      - name: Download Windows artifacts
+      - name: Download found artifacts
         uses: actions/download-artifact@v3
         with:
-          name: executable-windows-latest
-          path: artifacts/windows-latest
-
-      - name: Download macOS artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: executable-macos-latest
-          path: artifacts/macos-latest
+          name: found-artifacts
+          path: artifacts
 
       - name: Copy executables and FFmpeg
         shell: pwsh
@@ -321,30 +324,30 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist/cep/exec
 
           # Copy Windows files
-          if (Test-Path "artifacts/windows-latest/build/YoutubetoPremiere/YoutubetoPremiere.exe") {
-            Copy-Item -Path "artifacts/windows-latest/build/YoutubetoPremiere/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -Force
+          if (Test-Path "artifacts/build/YoutubetoPremiere/YoutubetoPremiere.exe") {
+            Copy-Item -Path "artifacts/build/YoutubetoPremiere/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -Force
             Write-Host "Windows exe copied successfully"
           } else {
             Write-Error "Windows exe not found"
           }
           
-          if (Test-Path "artifacts/windows-latest/src/exec/ffmpeg.exe") {
-            Copy-Item -Path "artifacts/windows-latest/src/exec/ffmpeg.exe" -Destination "dist/cep/exec/" -Force
+          if (Test-Path "artifacts/src/exec/ffmpeg.exe") {
+            Copy-Item -Path "artifacts/src/exec/ffmpeg.exe" -Destination "dist/cep/exec/" -Force
             Write-Host "Windows FFmpeg copied successfully"
           } else {
             Write-Error "Windows FFmpeg not found"
           }
           
           # Copy macOS files
-          if (Test-Path "artifacts/macos-latest/build/YoutubetoPremiere/YoutubetoPremiere") {
-            Copy-Item -Path "artifacts/macos-latest/build/YoutubetoPremiere/YoutubetoPremiere" -Destination "dist/cep/exec/" -Force
+          if (Test-Path "artifacts/build/YoutubetoPremiere/YoutubetoPremiere") {
+            Copy-Item -Path "artifacts/build/YoutubetoPremiere/YoutubetoPremiere" -Destination "dist/cep/exec/" -Force
             Write-Host "macOS executable copied successfully"
           } else {
             Write-Error "macOS executable not found"
           }
           
-          if (Test-Path "artifacts/macos-latest/src/exec/ffmpeg") {
-            Copy-Item -Path "artifacts/macos-latest/src/exec/ffmpeg" -Destination "dist/cep/exec/" -Force
+          if (Test-Path "artifacts/src/exec/ffmpeg") {
+            Copy-Item -Path "artifacts/src/exec/ffmpeg" -Destination "dist/cep/exec/" -Force
             Write-Host "macOS FFmpeg copied successfully"
           } else {
             Write-Error "macOS FFmpeg not found"
