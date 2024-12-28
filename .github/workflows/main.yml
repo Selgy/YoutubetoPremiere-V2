@@ -17,132 +17,7 @@ permissions:
   statuses: read
 
 jobs:
-  check-artifacts:
-    runs-on: ubuntu-latest
-    outputs:
-      ffmpeg-windows: ${{ steps.check-ffmpeg-windows.outputs.windows }}
-      ffmpeg-macos: ${{ steps.check-ffmpeg-macos.outputs.macos }}
-      executable-windows: ${{ steps.check-executable-windows.outputs.windows }}
-      executable-macos: ${{ steps.check-executable-macos.outputs.macos }}
-      app-changed: ${{ steps.check-changes.outputs.changed }}
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          fetch-depth: 2
-      
-      - name: Download Windows FFmpeg
-        id: get-ffmpeg-windows
-        uses: dawidd6/action-download-artifact@v2
-        with:
-          github_token: ${{ github.token }}
-          workflow: main.yml
-          name: ffmpeg-windows-latest
-          path: temp/ffmpeg-windows-latest
-          search_artifacts: true
-          workflow_conclusion: completed
-          # Removed "continue-on-error" and "if_no_artifact_found: warn" 
-          # so the workflow fails if not found
-
-      - name: Download macOS FFmpeg
-        id: get-ffmpeg-macos
-        uses: dawidd6/action-download-artifact@v2
-        with:
-          github_token: ${{ github.token }}
-          workflow: main.yml
-          name: ffmpeg-macos-latest
-          path: temp/ffmpeg-macos-latest
-          search_artifacts: true
-          workflow_conclusion: completed
-
-      - name: Download Windows executable
-        id: get-executable-windows
-        uses: dawidd6/action-download-artifact@v2
-        with:
-          github_token: ${{ github.token }}
-          workflow: main.yml
-          name: executable-windows-latest
-          path: temp/executable-windows-latest
-          search_artifacts: true
-          workflow_conclusion: completed
-
-      - name: Download macOS executable
-        id: get-executable-macos
-        uses: dawidd6/action-download-artifact@v2
-        with:
-          github_token: ${{ github.token }}
-          workflow: main.yml
-          name: executable-macos-latest
-          path: temp/executable-macos-latest
-          search_artifacts: true
-          workflow_conclusion: completed
-
-      - name: Check for Windows FFmpeg
-        id: check-ffmpeg-windows
-        shell: bash
-        run: |
-          if [[ -f "temp/ffmpeg-windows-latest/ffmpeg.exe" ]]; then
-            cp temp/ffmpeg-windows-latest/ffmpeg.exe ./ffmpeg.exe
-            echo "windows=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "windows=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Check for macOS FFmpeg
-        id: check-ffmpeg-macos
-        shell: bash
-        run: |
-          if [[ -f "temp/ffmpeg-macos-latest/ffmpeg" ]]; then
-            cp temp/ffmpeg-macos-latest/ffmpeg ./ffmpeg
-            echo "macos=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "macos=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Check for Windows executable
-        id: check-executable-windows
-        shell: bash
-        run: |
-          if [[ -f "temp/executable-windows-latest/YoutubetoPremiere.exe" ]]; then
-            cp temp/executable-windows-latest/YoutubetoPremiere.exe ./YoutubetoPremiere.exe
-            echo "windows=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "windows=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Check for macOS executable
-        id: check-executable-macos
-        shell: bash
-        run: |
-          if [[ -f "temp/executable-macos-latest/YoutubetoPremiere" ]]; then
-            cp temp/executable-macos-latest/YoutubetoPremiere ./YoutubetoPremiere
-            echo "macos=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "macos=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Upload found artifacts
-        if: steps.check-ffmpeg-windows.outputs.windows == 'true' || steps.check-ffmpeg-macos.outputs.macos == 'true' || steps.check-executable-windows.outputs.windows == 'true' || steps.check-executable-macos.outputs.macos == 'true'
-        uses: actions/upload-artifact@v3
-        with:
-          name: found-artifacts
-          path: |
-            ffmpeg*
-            YoutubetoPremiere*
-
-      - name: Check for app changes
-        id: check-changes
-        run: |
-          git diff --name-only HEAD^ HEAD > changes.txt
-          if grep -q "^app/" changes.txt || grep -q "requirements.txt" changes.txt || grep -q "YoutubetoPremiere.spec" changes.txt; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          fi
-
   build-ffmpeg:
-    needs: check-artifacts
-    # If we already have ffmpeg for both platforms, skip
-    if: needs.check-artifacts.outputs.ffmpeg-windows == 'false' || needs.check-artifacts.outputs.ffmpeg-macos == 'false'
     strategy:
       matrix:
         os: [windows-latest, macos-latest]
@@ -151,7 +26,7 @@ jobs:
       - uses: actions/checkout@v3
       
       - name: Download FFmpeg for Windows
-        if: matrix.os == 'windows-latest' && needs.check-artifacts.outputs.ffmpeg-windows == 'false'
+        if: matrix.os == 'windows-latest'
         run: |
           $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
           Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
@@ -159,17 +34,20 @@ jobs:
           Get-ChildItem -Path ffmpeg_temp -Recurse -Filter "ffmpeg.exe" | 
             Select-Object -First 1 | 
             ForEach-Object { Copy-Item $_.FullName -Destination "ffmpeg.exe" }
+          Remove-Item -Path ffmpeg.zip -Force
+          Remove-Item -Path ffmpeg_temp -Recurse -Force
         shell: pwsh
 
       - name: Download FFmpeg for macOS
-        if: matrix.os == 'macos-latest' && needs.check-artifacts.outputs.ffmpeg-macos == 'false'
+        if: matrix.os == 'macos-latest'
         run: |
           curl -L https://evermeet.cx/ffmpeg/ffmpeg-6.1.zip -o ffmpeg.zip
           unzip ffmpeg.zip
           chmod +x ffmpeg
+          rm -f ffmpeg.zip
 
       - name: Sign FFmpeg (macOS)
-        if: matrix.os == 'macos-latest' && needs.check-artifacts.outputs.ffmpeg-macos == 'false'
+        if: matrix.os == 'macos-latest'
         env:
           CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
           CERTIFICATE_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
@@ -182,19 +60,18 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
           /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime ffmpeg
 
-      - name: "Debug: list directory"
-        run: ls -la
-
       - name: Upload FFmpeg artifact
         uses: actions/upload-artifact@v3
         with:
           name: ffmpeg-${{ matrix.os }}
           path: ffmpeg*
 
-  build-executables-windows:
-    needs: [check-artifacts, build-ffmpeg]
-    if: needs.check-artifacts.outputs.executable-windows == 'false'
-    runs-on: windows-latest
+  build-executables:
+    needs: build-ffmpeg
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
       
@@ -213,58 +90,24 @@ jobs:
       - name: Download FFmpeg artifact
         uses: actions/download-artifact@v3
         with:
-          name: ffmpeg-windows-latest
+          name: ffmpeg-${{ matrix.os }}
           path: ./
       
-      - name: Build executable
-        shell: bash
-        run: |
-          python -m PyInstaller YoutubetoPremiere.spec -y --workpath work --distpath ./
-      
-      - name: List dist directory
-        shell: pwsh
-        run: dir
-
-      - name: Upload executable artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: executable-windows-latest
-          path: YoutubetoPremiere.exe
-
-  build-executables-macos:
-    needs: [check-artifacts, build-ffmpeg]
-    if: needs.check-artifacts.outputs.executable-macos == 'false'
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v3
-     
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-          cache: 'pip'
-      
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install pygame
-          
-      - name: Download FFmpeg artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: ffmpeg-macos-latest
-          path: ./
-          
-      - name: Make FFmpeg executable
+      - name: Make FFmpeg executable (macOS)
+        if: matrix.os == 'macos-latest'
         run: chmod +x ffmpeg
         
       - name: Build executable
         shell: bash
         run: |
-          python -m PyInstaller YoutubetoPremiere.spec -y --workpath work --distpath ./
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath ./
+          else
+            python -m PyInstaller YoutubetoPremiere.local.spec -y --workpath build/work --distpath ./
+          fi
       
-      - name: Sign executable
+      - name: Sign executable (macOS)
+        if: matrix.os == 'macos-latest'
         env:
           CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
           CERTIFICATE_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
@@ -278,19 +121,16 @@ jobs:
           /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime YoutubetoPremiere
           find . -name "*.dylib" -exec /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime {} \;
 
-      - name: List dist directory
-        run: ls -la
-
       - name: Upload executable artifact
         uses: actions/upload-artifact@v3
         with:
-          name: executable-macos-latest
-          path: YoutubetoPremiere
+          name: executable-${{ matrix.os }}
+          path: |
+            YoutubetoPremiere*
+            ffmpeg*
 
   package-zxp:
-    # We want this to run every time and not skip if artifacts exist:
-    needs: [check-artifacts, build-executables-windows, build-executables-macos]
-    if: always()
+    needs: build-executables
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v3
@@ -301,87 +141,49 @@ jobs:
           node-version: '18'
           cache: 'yarn'
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-          cache: 'pip'
-
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pyinstaller
-
-      - name: Get yarn cache directory path
-        id: yarn-cache-dir-path
-        run: echo "dir=$(yarn cache dir)" >> $GITHUB_OUTPUT
-
-      - name: Cache yarn dependencies
-        uses: actions/cache@v3
-        id: yarn-cache
-        with:
-          path: |
-            ${{ steps.yarn-cache-dir-path.outputs.dir }}
-            node_modules
-          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-yarn-
-
       - name: Install dependencies
-        shell: pwsh
-        run: |
-          Remove-Item -Path package-lock.json -Force -ErrorAction SilentlyContinue
-          yarn install --prefer-offline --frozen-lockfile --network-timeout 300000 --network-concurrency 1
-          if (-not (Test-Path node_modules/typescript)) {
-            yarn add -D typescript --prefer-offline
-          }
-          if (-not (Test-Path node_modules/cross-env)) {
-            yarn add -D cross-env --prefer-offline
+        run: yarn install
 
-      - name: Create directories
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist/cep/exec
-          
-      - name: Download found artifacts (debug)
-        uses: dawidd6/action-download-artifact@v2
-        with:
-          github_token: ${{ github.token }}
-          workflow: main.yml
-          name: found-artifacts
-          path: ./
-          search_artifacts: true
-          workflow_conclusion: completed
-      
-      - name: Download build artifacts
-        uses: dawidd6/action-download-artifact@v2
-        with:
-          github_token: ${{ github.token }}
-          workflow: main.yml
-          path: ./
-          search_artifacts: true
-          workflow_conclusion: completed
-          name_is_regexp: true
-          name: ^(executable|ffmpeg)-(windows|macos)-latest$
+      - name: Create exec directory
+        run: mkdir -p dist/cep/exec
+        shell: bash
 
-      - name: List downloaded artifacts
-        shell: pwsh
-        run: |
-          Write-Host "Contents of root directory:"
-          Get-ChildItem -Path . -Force
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
 
       - name: Copy executables and FFmpeg to CEP directory
         shell: pwsh
         run: |
-          # Copy all FFmpeg and YoutubetoPremiere files to dist/cep/exec
-          Copy-Item -Path ffmpeg* -Destination dist/cep/exec/ -Force -ErrorAction Continue
-          Copy-Item -Path YoutubetoPremiere* -Destination dist/cep/exec/ -Force -ErrorAction Continue
+          # Create exec directory if it doesn't exist
+          New-Item -ItemType Directory -Force -Path dist/cep/exec
           
+          # Debug: List artifacts directory contents
+          Write-Host "Contents of artifacts directory:"
+          Get-ChildItem -Path artifacts -Recurse
+          
+          # Copy Windows artifacts
+          if (Test-Path "artifacts/executable-windows-latest") {
+              Write-Host "Copying Windows artifacts..."
+              Copy-Item -Path "artifacts/executable-windows-latest/*" -Destination "dist/cep/exec/" -Force
+          } else {
+              Write-Error "Windows artifacts directory not found!"
+          }
+          
+          # Copy macOS artifacts
+          if (Test-Path "artifacts/executable-macos-latest") {
+              Write-Host "Copying macOS artifacts..."
+              Copy-Item -Path "artifacts/executable-macos-latest/*" -Destination "dist/cep/exec/" -Force
+          } else {
+              Write-Error "macOS artifacts directory not found!"
+          }
+          
+          # List contents to verify
           Write-Host "Contents of dist/cep/exec:"
-          Get-ChildItem -Path dist/cep/exec -Force
+          Get-ChildItem -Path dist/cep/exec
 
-      - name: Build CEP
-        shell: bash
+      - name: Build CEP Extension
         env:
           SKIP_PYTHON_BUILD: true
           NO_PYTHON: true
@@ -389,34 +191,23 @@ jobs:
           yarn clean
           yarn tsc -p "tsconfig-build.json"
           yarn cross-env vite build --force --watch false
-          
-          # Verify executables after build
-          echo "Checking dist/cep/exec contents after build:"
-          ls -la dist/cep/exec
 
       - name: Package ZXP
-        shell: pwsh
         env:
-          ZXP_PACKAGE: true
-          NO_PYTHON: true
           SKIP_PYTHON_BUILD: true
+          NO_PYTHON: true
+          ZXP_PACKAGE: true
+        run: yarn zxp
+
+      - name: Verify ZXP Package
+        shell: pwsh
         run: |
-          # Verify executables before packaging
-          Write-Host "Checking dist/cep/exec contents before packaging:"
-          Get-ChildItem -Path dist/cep/exec -Force
-          
-          yarn zxp
-          
-          # Verify the ZXP package was created
           if (-not (Test-Path "dist/zxp/*.zxp")) {
-            Write-Error "ZXP package was not created!"
-            exit 1
+              Write-Error "ZXP package was not created!"
+              exit 1
           }
           Write-Host "ZXP package created successfully"
-          
-          # Verify contents after packaging
-          Write-Host "Checking dist/cep/exec contents after packaging:"
-          Get-ChildItem -Path dist/cep/exec -Force
+          Get-ChildItem -Path dist/zxp
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
