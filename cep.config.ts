@@ -79,7 +79,7 @@ const config: CEP_Config = {
   copyAssets: [
     "./js",
     "./jsx",
-    "./exec",
+    "./exec"
   ],
   copyZipAssets: [],
 };
