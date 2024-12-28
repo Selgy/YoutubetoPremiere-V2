@@ -261,14 +261,49 @@ jobs:
           path: |
             build/YoutubetoPremiere/YoutubetoPremiere${{ matrix.os == 'windows-latest' && '.exe' || '' }}
 
-      - name: Upload found artifacts
-        if: steps.check-ffmpeg-windows.outputs.windows == 'true' || steps.check-ffmpeg-macos.outputs.macos == 'true' || steps.check-executable-windows.outputs.windows == 'true' || steps.check-executable-macos.outputs.macos == 'true'
-        uses: actions/upload-artifact@v3
+      - name: Build CEP
+        shell: bash
+        env:
+          SKIP_PYTHON_BUILD: true
+          NO_PYTHON: true
+        run: |
+          yarn clean
+          yarn tsc -p "tsconfig-build.json"
+          yarn cross-env vite build --force --watch false
+          
+          # Verify executables after build
+          echo "Checking dist/cep/exec contents after build:"
+          ls -la dist/cep/exec
+
+      - name: Package ZXP
+        shell: pwsh
+        env:
+          ZXP_PACKAGE: true
+          NO_PYTHON: true
+          SKIP_PYTHON_BUILD: true
+        run: |
+          # Verify executables before packaging
+          Write-Host "Checking dist/cep/exec contents before packaging:"
+          Get-ChildItem -Path dist/cep/exec -Force
+          
+          yarn zxp
+          
+          # Verify the ZXP package was created
+          if (-not (Test-Path "dist/zxp/*.zxp")) {
+            Write-Error "ZXP package was not created!"
+            exit 1
+          }
+          Write-Host "ZXP package created successfully"
+          
+          # Verify contents after packaging
+          Write-Host "Checking dist/cep/exec contents after packaging:"
+          Get-ChildItem -Path dist/cep/exec -Force
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
         with:
-          name: found-artifacts
-          path: |
-            src/exec/ffmpeg*
-            build/YoutubetoPremiere/YoutubetoPremiere*
+          files: ./dist/zxp/*.zxp
+          generate_release_notes: true
 
   package-zxp:
     needs: [check-artifacts, build-executables]
