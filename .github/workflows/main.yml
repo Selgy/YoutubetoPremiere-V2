@@ -91,7 +91,7 @@ jobs:
         with:
           name: executable-${{ matrix.os }}
           path: |
-            build/YoutubetoPremiere/
+            build/YoutubetoPremiere/**/*
             src/exec/ffmpeg*
 
   package-zxp:
