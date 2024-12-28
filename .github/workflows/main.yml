@@ -193,16 +193,10 @@ jobs:
           name: ffmpeg-${{ matrix.os }}
           path: ffmpeg*
 
-  build-executables:
+  build-executables-windows:
     needs: [check-artifacts, build-ffmpeg]
-    if: |
-      needs.check-artifacts.outputs.app-changed == 'true' || 
-      needs.check-artifacts.outputs.executable-windows == 'false' || 
-      needs.check-artifacts.outputs.executable-macos == 'false'
-    strategy:
-      matrix:
-        os: [windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    if: needs.check-artifacts.outputs.executable-windows == 'false'
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v3
       
@@ -221,19 +215,52 @@ jobs:
       - name: Download FFmpeg artifact
         uses: actions/download-artifact@v3
         with:
-          name: ffmpeg-${{ matrix.os }}
+          name: ffmpeg-windows-latest
           path: ./
           
-      - name: Make FFmpeg executable (macOS)
-        if: matrix.os == 'macos-latest'
+      - name: Build executable
+        run: python -m PyInstaller YoutubetoPremiere.spec -y --workpath work --distpath ./
+        shell: bash
+
+      - name: Upload executable artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: executable-windows-latest
+          path: YoutubetoPremiere.exe
+
+  build-executables-macos:
+    needs: [check-artifacts, build-ffmpeg]
+    if: needs.check-artifacts.outputs.executable-macos == 'false'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pygame
+          
+      - name: Download FFmpeg artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: ffmpeg-macos-latest
+          path: ./
+          
+      - name: Make FFmpeg executable
         run: chmod +x ffmpeg
         
       - name: Build executable
         run: python -m PyInstaller YoutubetoPremiere.spec -y --workpath work --distpath ./
         shell: bash
 
-      - name: Sign executable (macOS)
-        if: matrix.os == 'macos-latest'
+      - name: Sign executable
         env:
           CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
           CERTIFICATE_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
@@ -250,27 +277,21 @@ jobs:
       - name: Upload executable artifact
         uses: actions/upload-artifact@v3
         with:
-          name: executable-${{ matrix.os }}
-          path: |
-            YoutubetoPremiere${{ matrix.os == 'windows-latest' && '.exe' || '' }}
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: ./dist/zxp/*.zxp
-          generate_release_notes: true
+          name: executable-macos-latest
+          path: YoutubetoPremiere
 
   package-zxp:
-    needs: [check-artifacts, build-executables]
+    needs: [check-artifacts, build-executables-windows, build-executables-macos]
     if: |
       always() &&
       (
         (needs.check-artifacts.outputs.app-changed == 'false' && 
-         needs.check-artifacts.outputs.executable-windows == 'true' && 
-         needs.check-artifacts.outputs.executable-macos == 'true' && 
+         (needs.check-artifacts.outputs.executable-windows == 'true' || needs.build-executables-windows.result == 'success') && 
+         (needs.check-artifacts.outputs.executable-macos == 'true' || needs.build-executables-macos.result == 'success') && 
          needs.check-artifacts.outputs.ffmpeg-windows == 'true' && 
          needs.check-artifacts.outputs.ffmpeg-macos == 'true') ||
-        needs.build-executables.result == 'success'
+        (needs.build-executables-windows.result == 'success' || needs.check-artifacts.outputs.executable-windows == 'true') &&
+        (needs.build-executables-macos.result == 'success' || needs.check-artifacts.outputs.executable-macos == 'true')
       )
     runs-on: windows-latest
     steps:
