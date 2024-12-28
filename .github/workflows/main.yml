@@ -221,6 +221,16 @@ jobs:
           node-version: '18'
           cache: 'yarn'
 
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller
+
       - name: Install dependencies
         run: |
           yarn install
@@ -247,6 +257,7 @@ jobs:
         shell: bash
         env:
           SKIP_PYTHON_BUILD: true
+          NO_PYTHON: true
         run: |
           yarn clean
           yarn tsc -p "tsconfig-build.json"
@@ -255,6 +266,9 @@ jobs:
       - name: Copy executables and FFmpeg
         shell: pwsh
         run: |
+          # Create exec directory if it doesn't exist
+          New-Item -ItemType Directory -Force -Path dist/cep/exec
+
           # Copy Windows files
           Copy-Item -Path "artifacts/windows-latest/build/YoutubetoPremiere/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -ErrorAction SilentlyContinue
           if (-not $?) { Write-Host "Windows exe not found" }
@@ -270,6 +284,7 @@ jobs:
       - name: Package ZXP
         env:
           ZXP_PACKAGE: true
+          NO_PYTHON: true
         run: yarn zxp
 
       - name: Create Release
