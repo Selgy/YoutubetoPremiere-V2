@@ -320,20 +320,59 @@ jobs:
 
       - name: Create directories
         shell: pwsh
-        run: New-Item -ItemType Directory -Force -Path dist/cep/exec
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/cep/exec
+          New-Item -ItemType Directory -Force -Path artifacts/build/YoutubetoPremiere
+          New-Item -ItemType Directory -Force -Path artifacts/src/exec
           
       - name: Download found artifacts
         uses: actions/download-artifact@v3
+        continue-on-error: true
         with:
           name: found-artifacts
           path: artifacts
 
+      - name: Download build artifacts if needed
+        if: needs.check-artifacts.outputs.app-changed == 'true' || needs.check-artifacts.outputs.executable-windows == 'false' || needs.check-artifacts.outputs.executable-macos == 'false'
+        shell: pwsh
+        run: |
+          # Download Windows executable
+          Write-Host "Downloading Windows executable..."
+          try {
+            gh run download --name executable-windows-latest --dir artifacts/build/YoutubetoPremiere
+          } catch {
+            Write-Warning "Failed to download Windows executable"
+          }
+          
+          # Download macOS executable
+          Write-Host "Downloading macOS executable..."
+          try {
+            gh run download --name executable-macos-latest --dir artifacts/build/YoutubetoPremiere
+          } catch {
+            Write-Warning "Failed to download macOS executable"
+          }
+          
+          # Download Windows FFmpeg
+          Write-Host "Downloading Windows FFmpeg..."
+          try {
+            gh run download --name ffmpeg-windows-latest --dir artifacts/src/exec
+          } catch {
+            Write-Warning "Failed to download Windows FFmpeg"
+          }
+          
+          # Download macOS FFmpeg
+          Write-Host "Downloading macOS FFmpeg..."
+          try {
+            gh run download --name ffmpeg-macos-latest --dir artifacts/src/exec
+          } catch {
+            Write-Warning "Failed to download macOS FFmpeg"
+          }
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
       - name: Copy executables and FFmpeg
         shell: pwsh
         run: |
-          # Create exec directory if it doesn't exist
-          New-Item -ItemType Directory -Force -Path dist/cep/exec
-          
           # Function to copy file with better error handling
           function Copy-FileWithCheck {
             param (
@@ -424,24 +463,6 @@ jobs:
         run: |
           # Verify executables before packaging
           Write-Host "Checking dist/cep/exec contents before packaging:"
-          Get-ChildItem -Path dist/cep/exec -Force
-          
-          # Ensure executables are in the correct location for packaging
-          Write-Host "Ensuring executables are in place for packaging..."
-          if (-not (Test-Path "dist/cep/exec/ffmpeg.exe") -or -not (Test-Path "dist/cep/exec/ffmpeg")) {
-            Write-Host "Copying FFmpeg files..."
-            Copy-Item -Path "artifacts/src/exec/ffmpeg.exe" -Destination "dist/cep/exec/" -Force
-            Copy-Item -Path "artifacts/src/exec/ffmpeg" -Destination "dist/cep/exec/" -Force
-          }
-          
-          if (-not (Test-Path "dist/cep/exec/YoutubetoPremiere.exe") -or -not (Test-Path "dist/cep/exec/YoutubetoPremiere")) {
-            Write-Host "Copying executable files..."
-            Copy-Item -Path "artifacts/build/YoutubetoPremiere/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -Force
-            Copy-Item -Path "artifacts/build/YoutubetoPremiere/YoutubetoPremiere" -Destination "dist/cep/exec/" -Force
-          }
-          
-          # Verify files before ZXP packaging
-          Write-Host "Final check of dist/cep/exec contents before ZXP packaging:"
           Get-ChildItem -Path dist/cep/exec -Force
           
           yarn zxp
