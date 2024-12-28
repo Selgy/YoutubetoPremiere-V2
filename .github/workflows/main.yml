@@ -83,19 +83,16 @@ jobs:
         run: chmod +x src/exec/ffmpeg
         
       - name: Build executable
-        run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath build/YoutubetoPremiere
-          else
-            python -m PyInstaller YoutubetoPremiere.local.spec -y --workpath build/work --distpath build/YoutubetoPremiere
-          fi
+        run: python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath build/YoutubetoPremiere
         shell: bash
 
-      - name: Upload executable artifact
+      - name: Upload executable and FFmpeg artifact
         uses: actions/upload-artifact@v3
         with:
           name: executable-${{ matrix.os }}
-          path: build/YoutubetoPremiere/
+          path: |
+            build/YoutubetoPremiere/
+            src/exec/ffmpeg*
 
   package-zxp:
     needs: build-executables
@@ -120,13 +117,13 @@ jobs:
           mkdir -p src/exec/sounds
         shell: bash
 
-      - name: Download Windows executable
+      - name: Download Windows artifacts
         uses: actions/download-artifact@v3
         with:
           name: executable-windows-latest
           path: dist/cep/exec/
 
-      - name: Download macOS executable
+      - name: Download macOS artifacts
         uses: actions/download-artifact@v3
         with:
           name: executable-macos-latest
