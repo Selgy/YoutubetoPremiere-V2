@@ -36,7 +36,6 @@ jobs:
       - name: Download FFmpeg for macOS
         if: matrix.os == 'macos-latest'
         run: |
-          # Using a specific version from evermeet
           curl -L https://evermeet.cx/ffmpeg/ffmpeg-6.1.zip -o ffmpeg.zip
           unzip ffmpeg.zip
           mkdir -p src/exec
@@ -50,9 +49,12 @@ jobs:
           name: ffmpeg-${{ matrix.os }}
           path: src/exec/
 
-  build-mac:
+  build-executables:
     needs: build-ffmpeg
-    runs-on: macos-latest
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
         with:
@@ -70,64 +72,33 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install pygame
           
-      - name: Setup Keychain
-        env:
-          CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          # Create keychain
-          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security set-keychain-settings -t 3600 -l build.keychain
+      - name: Download FFmpeg artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: ffmpeg-${{ matrix.os }}
+          path: src/exec/
           
-          # Import certificate
-          echo "$CERTIFICATE_BASE64" | base64 --decode > certificate.p12
-          security import certificate.p12 -k build.keychain -P "$KEYCHAIN_PASSWORD" -T /usr/bin/codesign
-          
-          # Update keychain settings
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-          
-      - name: Build executable
-        run: python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath build
+      - name: Make FFmpeg executable (macOS)
+        if: matrix.os == 'macos-latest'
+        run: chmod +x src/exec/ffmpeg
         
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: dist-macos-latest
-          path: build/
-          
-  build-windows:
-    needs: build-ffmpeg
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          ref: ${{ github.ref }}
-      
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-          cache: 'pip'
-          
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install pygame
-          
       - name: Build executable
-        run: python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath build
-        
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: dist-windows-latest
-          path: build/
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath build/YoutubetoPremiere
+          else
+            python -m PyInstaller YoutubetoPremiere.local.spec -y --workpath build/work --distpath build/YoutubetoPremiere
+          fi
+        shell: bash
 
-  package:
-    needs: [build-mac, build-windows]
+      - name: Upload executable artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: executable-${{ matrix.os }}
+          path: build/YoutubetoPremiere/
+
+  package-zxp:
+    needs: build-executables
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v3
@@ -140,65 +111,36 @@ jobs:
           node-version: '18'
           cache: 'yarn'
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-          cache: 'pip'
-
       - name: Install dependencies
-        run: |
-          yarn install
-          python -m pip install -r requirements.txt
-          python -m pip install pygame
+        run: yarn install
 
-      - name: Download artifacts
+      - name: Create directories
+        run: |
+          mkdir -p dist/cep/exec
+          mkdir -p src/exec/sounds
+        shell: bash
+
+      - name: Download Windows executable
         uses: actions/download-artifact@v3
         with:
-          path: artifacts
+          name: executable-windows-latest
+          path: dist/cep/exec/
 
-      - name: Move executables and build CEP Extension
-        shell: pwsh
+      - name: Download macOS executable
+        uses: actions/download-artifact@v3
+        with:
+          name: executable-macos-latest
+          path: dist/cep/exec/
+
+      - name: Copy sounds
         run: |
-          # Create src/exec directory
-          New-Item -ItemType Directory -Force -Path "src/exec" | Out-Null
-          New-Item -ItemType Directory -Force -Path "dist/cep/exec" | Out-Null
-          
-          # Move Windows executable
-          $winExe = Get-ChildItem -Path artifacts/dist-windows-latest -Recurse -Filter "YoutubetoPremiere.exe" | Select-Object -First 1
-          if ($winExe) {
-            Copy-Item -Force $winExe.FullName "src/exec/"
-            Write-Host "Copied Windows executable: $($winExe.FullName)"
-          } else {
-            Write-Host "Windows executable not found!"
-          }
-          
-          # Move macOS executable
-          $macExe = Get-ChildItem -Path artifacts/dist-macos-latest -Recurse -Filter "YoutubetoPremiere" | Select-Object -First 1
-          if ($macExe) {
-            Copy-Item -Force $macExe.FullName "src/exec/"
-            Write-Host "Copied macOS executable: $($macExe.FullName)"
-          } else {
-            Write-Host "macOS executable not found!"
-          }
+          if [ -d "src/exec/sounds" ]; then
+            cp -r src/exec/sounds dist/cep/exec/
+          fi
+        shell: bash
 
-          # Move FFmpeg executables
-          Copy-Item -Force "artifacts/ffmpeg-windows-latest/ffmpeg.exe" "src/exec/"
-          Copy-Item -Force "artifacts/ffmpeg-macos-latest/ffmpeg" "src/exec/"
-          Write-Host "Copied FFmpeg executables"
-
-          # Copy sounds folder from app directory
-          if (Test-Path "app/sounds") {
-            Copy-Item -Force -Recurse "app/sounds" "src/exec/"
-            Write-Host "Copied sounds folder from app directory"
-          } else {
-            Write-Host "Sounds folder not found in app directory!"
-            Get-ChildItem -Path "app" -Recurse | ForEach-Object { Write-Host $_.FullName }
-          }
-          
-          # Build and package
-          yarn build
-          yarn zxp
+      - name: Build ZXP
+        run: yarn zxp
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
