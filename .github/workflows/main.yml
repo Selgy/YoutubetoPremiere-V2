@@ -391,20 +391,21 @@ jobs:
           ls -la dist/cep/exec
 
       - name: Package ZXP
+        shell: pwsh
         env:
           ZXP_PACKAGE: true
           NO_PYTHON: true
           SKIP_PYTHON_BUILD: true
         run: |
           # Verify executables before packaging
-          echo "Checking dist/cep/exec contents before packaging:"
-          ls -la dist/cep/exec
+          Write-Host "Checking dist/cep/exec contents before packaging:"
+          Get-ChildItem -Path dist/cep/exec -Force
           
           yarn zxp
           
           # Verify executables after packaging
-          echo "Checking dist/cep/exec contents after packaging:"
-          ls -la dist/cep/exec
+          Write-Host "Checking dist/cep/exec contents after packaging:"
+          Get-ChildItem -Path dist/cep/exec -Force
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
