@@ -254,45 +254,6 @@ jobs:
           path: |
             YoutubetoPremiere${{ matrix.os == 'windows-latest' && '.exe' || '' }}
 
-      - name: Build CEP
-        shell: bash
-        env:
-          SKIP_PYTHON_BUILD: true
-          NO_PYTHON: true
-        run: |
-          yarn clean
-          yarn tsc -p "tsconfig-build.json"
-          yarn cross-env vite build --force --watch false
-          
-          # Create exec directory and copy files
-          mkdir -p dist/cep/exec
-          cp ffmpeg* dist/cep/exec/
-          cp YoutubetoPremiere* dist/cep/exec/
-
-      - name: Package ZXP
-        shell: pwsh
-        env:
-          ZXP_PACKAGE: true
-          NO_PYTHON: true
-          SKIP_PYTHON_BUILD: true
-        run: |
-          # Verify executables before packaging
-          Write-Host "Checking dist/cep/exec contents before packaging:"
-          Get-ChildItem -Path dist/cep/exec -Force
-          
-          yarn zxp
-          
-          # Verify the ZXP package was created
-          if (-not (Test-Path "dist/zxp/*.zxp")) {
-            Write-Error "ZXP package was not created!"
-            exit 1
-          }
-          Write-Host "ZXP package created successfully"
-          
-          # Verify contents after packaging
-          Write-Host "Checking dist/cep/exec contents after packaging:"
-          Get-ChildItem -Path dist/cep/exec -Force
-
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
