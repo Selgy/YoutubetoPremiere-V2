@@ -95,7 +95,6 @@ jobs:
 
   build-executables:
     needs: [check-changes]
-    if: needs.check-changes.outputs.app_changed == 'true'
     strategy:
       matrix:
         os: [windows-latest, macos-13]
@@ -103,30 +102,40 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      - name: Check executables cache
-        id: exec-cache
-        uses: actions/cache@v3
+      - name: Check existing artifact
+        id: check_artifact
+        continue-on-error: true
+        uses: actions/download-artifact@v3
         with:
-          path: |
-            ${{ matrix.os == 'windows-latest' && 'YoutubetoPremiere.exe' || 'YoutubetoPremiere' }}
-          key: executable-${{ matrix.os }}-${{ hashFiles('app/**', 'requirements.txt') }}
+          name: executable-${{ matrix.os }}
+          path: existing-artifact
+
+      - name: Should build
+        id: should_build
+        run: |
+          if [[ "${{ needs.check-changes.outputs.app_changed }}" == "false" && "${{ steps.check_artifact.outcome }}" == "success" ]]; then
+            echo "build=false" >> $GITHUB_OUTPUT
+          else
+            echo "build=true" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
       
       - name: Setup Python
-        if: steps.exec-cache.outputs.cache-hit != 'true'
+        if: steps.should_build.outputs.build == 'true'
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
           cache: 'pip'
       
       - name: Install Python dependencies
-        if: steps.exec-cache.outputs.cache-hit != 'true'
+        if: steps.should_build.outputs.build == 'true'
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install pygame
         
       - name: Build executable
-        if: steps.exec-cache.outputs.cache-hit != 'true'
+        if: steps.should_build.outputs.build == 'true'
         shell: bash
         run: |
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
@@ -136,7 +145,7 @@ jobs:
           fi
       
       - name: Sign executable (macOS)
-        if: matrix.os == 'macos-13' && steps.exec-cache.outputs.cache-hit != 'true'
+        if: matrix.os == 'macos-13' && steps.should_build.outputs.build == 'true'
         env:
           CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
           CERTIFICATE_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
@@ -151,6 +160,16 @@ jobs:
           find . -name "*.dylib" -exec /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime {} \;
           rm -f certificate.p12
 
+      - name: Move existing artifact if not building
+        if: steps.should_build.outputs.build == 'false'
+        run: |
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            mv existing-artifact/YoutubetoPremiere.exe ./
+          else
+            mv existing-artifact/YoutubetoPremiere ./
+          fi
+        shell: bash
+
       - name: Upload executable
         uses: actions/upload-artifact@v3
         with:
@@ -161,7 +180,7 @@ jobs:
           if-no-files-found: error
 
   package-zxp:
-    needs: [check-changes, build-ffmpeg]
+    needs: [check-changes, build-ffmpeg, build-executables]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v3
@@ -182,24 +201,15 @@ jobs:
       # Download artifacts
       - name: Download Windows executable
         uses: actions/download-artifact@v3
-        if: needs.check-changes.outputs.app_changed == 'true'
         with:
           name: executable-windows-latest
           path: build/executables
 
       - name: Download macOS executable
         uses: actions/download-artifact@v3
-        if: needs.check-changes.outputs.app_changed == 'true'
         with:
           name: executable-macos-13
           path: build/executables
-
-      - name: Use cached executables
-        if: needs.check-changes.outputs.app_changed != 'true'
-        uses: actions/cache@v3
-        with:
-          path: build/executables
-          key: executables-${{ hashFiles('app/**', 'requirements.txt') }}
 
       - name: Download Windows FFmpeg
         uses: actions/download-artifact@v3
