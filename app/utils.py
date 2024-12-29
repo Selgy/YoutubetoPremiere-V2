@@ -381,56 +381,21 @@ def is_premiere_running():
     return False
 
 def find_ffmpeg():
-    """Find FFmpeg executable in the same directory as the application, or system PATH as fallback."""
-    if platform.system() == 'Windows':
-        ffmpeg_name = 'ffmpeg.exe'
-    else:
-        ffmpeg_name = 'ffmpeg'
-
-    def is_valid_ffmpeg(path):
-        try:
-            result = subprocess.run([path, '-version'], capture_output=True, text=True)
-            return result.returncode == 0 and 'ffmpeg version' in result.stdout.lower()
-        except Exception:
-            return False
-
-    # Get the directory where the executable is located
     if getattr(sys, 'frozen', False):
-        # If running as compiled executable
-        base_dir = os.path.dirname(sys.executable)
+        base_path = os.path.dirname(sys.executable)
     else:
-        # If running as script
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-
-    # Look for FFmpeg in the same directory
-    ffmpeg_path = os.path.join(base_dir, ffmpeg_name)
-    if os.path.isfile(ffmpeg_path) and is_valid_ffmpeg(ffmpeg_path):
-        logging.info(f"Using FFmpeg from application directory: {ffmpeg_path}")
-        return ffmpeg_path
-
-    # If not found, look in system PATH
-    if platform.system() == 'Windows':
-        try:
-            result = subprocess.run(['where', 'ffmpeg'], capture_output=True, text=True)
-            if result.returncode == 0:
-                system_ffmpeg = result.stdout.strip().split('\n')[0]
-                if is_valid_ffmpeg(system_ffmpeg):
-                    logging.info(f"Using FFmpeg from system PATH: {system_ffmpeg}")
-                    return system_ffmpeg
-        except Exception as e:
-            logging.warning(f"Could not find FFmpeg in system PATH: {e}")
-    else:
-        try:
-            result = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True)
-            if result.returncode == 0:
-                system_ffmpeg = result.stdout.strip()
-                if is_valid_ffmpeg(system_ffmpeg):
-                    logging.info(f"Using FFmpeg from system PATH: {system_ffmpeg}")
-                    return system_ffmpeg
-        except Exception as e:
-            logging.warning(f"Could not find FFmpeg in system PATH: {e}")
-
-    raise FileNotFoundError(
-        "FFmpeg not found in application directory or system PATH. "
-        "Please ensure FFmpeg is properly installed."
-    )
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    
+    ffmpeg_paths = [
+        os.path.join(base_path, 'exec', 'ffmpeg.exe'),
+        os.path.join(base_path, 'ffmpeg.exe'),
+        os.path.join(os.path.dirname(base_path), 'exec', 'ffmpeg.exe'),
+        os.path.join(os.path.dirname(base_path), 'ffmpeg.exe')
+    ]
+    
+    for path in ffmpeg_paths:
+        if os.path.exists(path):
+            logging.info(f"Found FFmpeg at: {path}")
+            return path
+            
+    raise Exception("FFmpeg not found in any of the expected locations")

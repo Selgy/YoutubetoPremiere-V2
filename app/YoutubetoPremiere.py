@@ -95,34 +95,42 @@ try:
     app.config['PROPAGATE_EXCEPTIONS'] = True
 
     socketio = SocketIO(app, 
-                       cors_allowed_origins="*",
-                       async_mode='threading',
-                       logger=True,
-                       engineio_logger=True,
-                       ping_timeout=120,
-                       ping_interval=10,
-                       max_http_buffer_size=1e8,
-                       allow_upgrades=True,
-                       transports=['websocket', 'polling'],
-                       always_connect=True,
-                       manage_session=True,
-                       cookie=None,
-                       reconnection=True,
-                       reconnection_attempts=10,
-                       reconnection_delay=1000,
-                       reconnection_delay_max=5000,
-                       randomization_factor=0.5)
+        cors_allowed_origins="*",
+        async_mode='threading',
+        ping_timeout=60,
+        ping_interval=25,
+        max_http_buffer_size=100 * 1024 * 1024,  # 100MB
+        transport='websocket',
+        logger=True,
+        engineio_logger=True,
+        always_connect=True,
+        reconnection=True,
+        reconnection_attempts=5,
+        reconnection_delay=1000,
+        reconnection_delay_max=5000
+    )
 
     logging.info("Flask and SocketIO initialized successfully")
 except Exception as e:
     logging.critical(f"Failed to initialize Flask/SocketIO: {str(e)}", exc_info=True)
     sys.exit(1)
 
-# Add error handlers for common issues
-@app.errorhandler(Exception)
-def handle_error(e):
-    logging.error(f'Server error: {str(e)}')
-    return jsonify(error=str(e)), 500
+# Register error handlers
+@app.errorhandler(404)
+def not_found_error(error):
+    return jsonify({'error': 'Not found'}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({'error': 'Internal server error'}), 500
+
+# Enable CORS
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
 
 @socketio.on_error()
 def error_handler(e):
