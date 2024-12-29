@@ -70,13 +70,25 @@ def load_settings():
 def save_settings(settings):
     settings_path = settings.get('SETTINGS_FILE')
     if settings_path:
-        # Create a copy of settings without the SETTINGS_FILE path
+        # Load existing settings first
+        existing_settings = {}
+        if os.path.exists(settings_path):
+            try:
+                with open(settings_path, 'r') as f:
+                    existing_settings = json.load(f)
+            except:
+                pass
+        
+        # Create a copy of settings without the internal fields
         settings_to_save = settings.copy()
         settings_to_save.pop('SETTINGS_FILE', None)
         settings_to_save.pop('ffmpeg_path', None)
         
+        # Update existing settings with new values
+        existing_settings.update(settings_to_save)
+        
         with open(settings_path, 'w') as f:
-            json.dump(settings_to_save, f, indent=4)
+            json.dump(existing_settings, f, indent=4)
         return True
     return False
 

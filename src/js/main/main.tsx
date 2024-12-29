@@ -8,7 +8,10 @@ const Main = () => {
     downloadPath: '',
     downloadMP3: false,
     secondsBefore: '15',
-    secondsAfter: '15'
+    secondsAfter: '15',
+    notificationVolume: 30,
+    notificationSound: 'notification_sound',
+    licenseKey: ''
   });
 
   const [lastPaths, setLastPaths] = useState<string[]>([]);
@@ -19,7 +22,7 @@ const Main = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [latestVersion, setLatestVersion] = useState('');
-  const currentVersion = '3.0.0'; // Get this from your package.json
+  const currentVersion = '3.0.1'; // Get this from your package.json
   const [currentPage, setCurrentPage] = useState('main');
 
   useEffect(() => {
@@ -31,7 +34,7 @@ const Main = () => {
         
         if (data.isValid) {
           setIsLicenseValid(true);
-          loadSettings();
+          await loadSettings();
         }
       } catch (error) {
         console.error('Error checking license:', error);
@@ -103,37 +106,67 @@ const Main = () => {
     setIsLoading(false);
   };
 
-  const loadSettings = () => {
-    // Load settings from localStorage or your preferred storage method
-    const savedSettings = localStorage.getItem('settings');
-    if (savedSettings) {
-      setSettings(JSON.parse(savedSettings));
-    }
+  const loadSettings = async () => {
+    try {
+      // First try to get settings from the server
+      const response = await fetch('http://localhost:3001/settings');
+      if (response.ok) {
+        const serverSettings = await response.json();
+        setSettings(serverSettings);
+        localStorage.setItem('settings', JSON.stringify(serverSettings));
+      } else {
+        // If server request fails, try to get from localStorage
+        const savedSettings = localStorage.getItem('settings');
+        if (savedSettings) {
+          setSettings(JSON.parse(savedSettings));
+        }
+      }
 
-    const savedPaths = localStorage.getItem('lastPaths');
-    if (savedPaths) {
-      setLastPaths(JSON.parse(savedPaths));
+      const savedPaths = localStorage.getItem('lastPaths');
+      if (savedPaths) {
+        setLastPaths(JSON.parse(savedPaths));
+      }
+    } catch (error) {
+      console.error('Error loading settings:', error);
+      // Try localStorage as fallback
+      const savedSettings = localStorage.getItem('settings');
+      if (savedSettings) {
+        setSettings(JSON.parse(savedSettings));
+      }
     }
   };
 
   const saveSettings = async (newSettings: typeof settings) => {
-    setSettings(newSettings);
-    localStorage.setItem('settings', JSON.stringify(newSettings));
-
     try {
-      const response = await fetch('http://localhost:3001/settings', {
+      // Create a copy of the settings with all fields
+      const settingsToSave = {
+        ...settings,
+        ...newSettings,
+        notificationVolume: settings.notificationVolume,
+        notificationSound: settings.notificationSound,
+        licenseKey: settings.licenseKey
+      };
+
+      // Save to server
+      const saveResponse = await fetch('http://localhost:3001/settings', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(newSettings),
+        body: JSON.stringify(settingsToSave),
       });
       
-      if (!response.ok) {
-        throw new Error('Failed to save settings');
+      if (!saveResponse.ok) {
+        throw new Error('Failed to save settings: ' + await saveResponse.text());
       }
+
+      // Update local state and storage only after successful save
+      setSettings(settingsToSave);
+      localStorage.setItem('settings', JSON.stringify(settingsToSave));
     } catch (error) {
       console.error('Error saving settings:', error);
+      // On error, preserve current settings
+      localStorage.setItem('settings', JSON.stringify(settings));
     }
   };
 

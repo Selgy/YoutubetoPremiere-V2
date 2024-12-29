@@ -133,12 +133,20 @@ def handle_video_url(request, settings, socketio, current_download):
 
     data = request.get_json()
     logging.info(f"Received data: {data}")
+    logging.info(f"Request headers: {dict(request.headers)}")
+    logging.info(f"Request method: {request.method}")
+    logging.info(f"Request content type: {request.content_type}")
 
     if not data:
         logging.error("No data received in request.")
         return jsonify(error="No data provided"), 400
 
     video_url = data.get('videoUrl')
+    logging.info(f"Video URL: {video_url}, Type: {type(video_url)}")
+    if not video_url:
+        logging.error("No video URL provided")
+        return jsonify(error="No video URL provided"), 400
+
     current_time = data.get('currentTime')
     download_type = data.get('downloadType')
     download_path = data.get('downloadPath', settings.get('downloadPath', '')).strip()

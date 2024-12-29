@@ -2,7 +2,7 @@ from flask import request, jsonify
 import logging
 import json
 from video_processing import handle_video_url
-from utils import play_notification_sound, save_license_key, get_license_key
+from utils import play_notification_sound, save_license_key, get_license_key, load_settings, save_settings
 import os
 import sys
 import requests
@@ -32,21 +32,30 @@ def register_routes(app, socketio, settings):
         return jsonify(version='2.1.6') 
 
 
-    @app.route('/settings', methods=['POST'])
-    def update_settings():
-        try:
-            new_settings = request.get_json()
-            with open(settings['SETTINGS_FILE'], 'w') as f:
-                json.dump(new_settings, f, indent=4)
-            # Update the in-memory settings as well
-            settings.update(new_settings)
-            return jsonify(success=True), 200
-        except KeyError as e:
-            logging.error(f"KeyError: {e}")
-            return jsonify(success=False, error=f"Missing key: {e}"), 400
-        except Exception as e:
-            logging.error(f"Exception: {e}")
-            return jsonify(success=False, error=str(e)), 500
+    @app.route('/settings', methods=['GET', 'POST'])
+    def handle_settings():
+        if request.method == 'GET':
+            try:
+                current_settings = load_settings()
+                settings_to_send = current_settings.copy()
+                settings_to_send.pop('SETTINGS_FILE', None)
+                settings_to_send.pop('ffmpeg_path', None)
+                settings_to_send.pop('ffmpeg_error', None)
+                return jsonify(settings_to_send), 200
+            except Exception as e:
+                logging.error(f"Error reading settings: {e}")
+                return jsonify(error=str(e)), 500
+        else:  # POST
+            try:
+                new_settings = request.get_json()
+                settings.update(new_settings)
+                if save_settings(settings):
+                    return jsonify(success=True), 200
+                else:
+                    return jsonify(success=False, error="Failed to save settings"), 500
+            except Exception as e:
+                logging.error(f"Error saving settings: {e}")
+                return jsonify(success=False, error=str(e)), 500
 
     @app.route('/handle-video-url', methods=['POST'])
     def handle_video_url_route():

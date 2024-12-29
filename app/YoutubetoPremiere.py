@@ -62,7 +62,17 @@ possible_ffmpeg_locations = [
     script_dir,  # Current directory
     os.path.join(script_dir, 'ffmpeg'),  # ffmpeg subdirectory
     os.path.join(os.path.dirname(script_dir), 'ffmpeg'),  # Parent's ffmpeg subdirectory
+    os.path.join(os.path.dirname(script_dir), 'exec'),  # exec subdirectory
+    os.path.join(os.path.dirname(os.path.dirname(script_dir)), 'exec'),  # Parent's exec subdirectory
 ]
+
+# Add extension root path if available
+extension_root = os.environ.get('EXTENSION_ROOT', '')
+if extension_root:
+    possible_ffmpeg_locations.extend([
+        extension_root,
+        os.path.join(extension_root, 'exec'),
+    ])
 
 ffmpeg_found = False
 for ffmpeg_dir in possible_ffmpeg_locations:
@@ -87,19 +97,21 @@ try:
     socketio = SocketIO(app, 
                        cors_allowed_origins="*",
                        async_mode='threading',
-                       logger=False,
-                       engineio_logger=False,
-                       ping_timeout=60,
-                       ping_interval=25,
+                       logger=True,
+                       engineio_logger=True,
+                       ping_timeout=120,
+                       ping_interval=10,
                        max_http_buffer_size=1e8,
                        allow_upgrades=True,
-                       transports=['polling', 'websocket'],
+                       transports=['websocket', 'polling'],
                        always_connect=True,
                        manage_session=True,
                        cookie=None,
                        reconnection=True,
-                       reconnection_attempts=5,
-                       reconnection_delay=1000)
+                       reconnection_attempts=10,
+                       reconnection_delay=1000,
+                       reconnection_delay_max=5000,
+                       randomization_factor=0.5)
 
     logging.info("Flask and SocketIO initialized successfully")
 except Exception as e:
@@ -203,7 +215,28 @@ def handle_percentage(data):
 @socketio.on('import_video')
 def handle_import_video(data):
     """Forward import events only to Premiere extension"""
-    emit_to_client_type('import_video', data, 'premiere')
+    try:
+        path = data.get('path', '')
+        if not path:
+            logging.error("No path provided for import")
+            emit_to_client_type('import_failed', {'error': 'No path provided'}, 'premiere')
+            return
+        
+        if not os.path.exists(path):
+            logging.error(f"File does not exist: {path}")
+            emit_to_client_type('import_failed', {'error': 'File not found'}, 'premiere')
+            return
+            
+        logging.info(f"Attempting to import video: {path}")
+        emit_to_client_type('import_video', data, 'premiere')
+        
+        # Add a delay to ensure the message is sent before any potential disconnection
+        time.sleep(0.5)
+        
+    except Exception as e:
+        error_msg = f"Error during import: {str(e)}"
+        logging.error(error_msg)
+        emit_to_client_type('import_failed', {'error': error_msg}, 'premiere')
 
 @socketio.on('download-complete')
 def handle_download_complete():

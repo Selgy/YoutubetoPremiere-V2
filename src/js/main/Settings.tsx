@@ -7,59 +7,61 @@ interface SettingsProps {
 }
 
 const Settings = ({ onBack }: SettingsProps) => {
-  const [notificationVolume, setNotificationVolume] = useState(30);
-  const [selectedSound, setSelectedSound] = useState('default');
+  const [settings, setSettings] = useState({
+    notificationVolume: 30,
+    notificationSound: 'notification_sound',
+    resolution: '1080',
+    downloadPath: '',
+    downloadMP3: false,
+    secondsBefore: '15',
+    secondsAfter: '15',
+    licenseKey: ''
+  });
   const [isTestPlaying, setIsTestPlaying] = useState(false);
   const [availableSounds, setAvailableSounds] = useState<string[]>([]);
 
-  const handleVolumeChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const volume = parseInt(e.target.value);
-    setNotificationVolume(volume);
-    localStorage.setItem('notificationVolume', volume.toString());
-    
+  const saveSettings = async (newSettings: typeof settings) => {
     try {
-      const response = await fetch('http://localhost:3001/update-sound-settings', {
+      // First get current settings from server
+      const response = await fetch('http://localhost:3001/settings');
+      let settingsToSave = newSettings;
+      
+      if (response.ok) {
+        const currentServerSettings = await response.json();
+        // Merge current server settings with new settings
+        settingsToSave = { ...currentServerSettings, ...newSettings };
+      }
+      
+      // Save merged settings
+      setSettings(settingsToSave);
+      localStorage.setItem('settings', JSON.stringify(settingsToSave));
+
+      const saveResponse = await fetch('http://localhost:3001/settings', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          volume,
-          sound: selectedSound
-        })
+        body: JSON.stringify(settingsToSave),
       });
       
-      if (!response.ok) {
-        console.error('Failed to update sound settings');
+      if (!saveResponse.ok) {
+        throw new Error('Failed to save settings');
       }
     } catch (error) {
-      console.error('Error updating sound settings:', error);
+      console.error('Error saving settings:', error);
     }
+  };
+
+  const handleVolumeChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const volume = parseInt(e.target.value);
+    const newSettings = { ...settings, notificationVolume: volume };
+    await saveSettings(newSettings);
   };
 
   const handleSoundChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const sound = e.target.value;
-    setSelectedSound(sound);
-    localStorage.setItem('notificationSound', sound);
-    
-    try {
-      const response = await fetch('http://localhost:3001/update-sound-settings', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          volume: notificationVolume,
-          sound
-        })
-      });
-      
-      if (!response.ok) {
-        console.error('Failed to update sound settings');
-      }
-    } catch (error) {
-      console.error('Error updating sound settings:', error);
-    }
+    const newSettings = { ...settings, notificationSound: sound };
+    await saveSettings(newSettings);
   };
 
   const playTestSound = async () => {
@@ -73,8 +75,8 @@ const Settings = ({ onBack }: SettingsProps) => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          volume: notificationVolume,
-          sound: selectedSound
+          volume: settings.notificationVolume,
+          sound: settings.notificationSound
         })
       });
       
@@ -89,17 +91,22 @@ const Settings = ({ onBack }: SettingsProps) => {
   };
 
   useEffect(() => {
-    const savedVolume = localStorage.getItem('notificationVolume');
-    if (savedVolume) {
-      setNotificationVolume(parseInt(savedVolume));
-    }
+    // Load settings from server
+    const loadSettings = async () => {
+      try {
+        const response = await fetch('http://localhost:3001/settings');
+        if (response.ok) {
+          const serverSettings = await response.json();
+          setSettings(serverSettings);
+        }
+      } catch (error) {
+        console.error('Error loading settings:', error);
+      }
+    };
 
-    const savedSound = localStorage.getItem('notificationSound');
-    if (savedSound) {
-      setSelectedSound(savedSound);
-    }
+    loadSettings();
 
-    // Fetch available sounds when component mounts
+    // Fetch available sounds
     fetch('http://localhost:3001/available-sounds')
       .then(response => response.json())
       .then(data => {
@@ -131,13 +138,13 @@ const Settings = ({ onBack }: SettingsProps) => {
             <div className="space-y-4">
               <div>
                 <label className="block text-white font-medium mb-2">
-                  Notification Volume: {notificationVolume}%
+                  Notification Volume: {settings.notificationVolume}%
                 </label>
                 <input
                   type="range"
                   min="0"
                   max="100"
-                  value={notificationVolume}
+                  value={settings.notificationVolume}
                   onChange={handleVolumeChange}
                   className="w-full"
                 />
@@ -148,7 +155,7 @@ const Settings = ({ onBack }: SettingsProps) => {
                   Notification Sound
                 </label>
                 <select
-                  value={selectedSound}
+                  value={settings.notificationSound}
                   onChange={handleSoundChange}
                   className="input-base mb-2"
                 >

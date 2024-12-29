@@ -195,7 +195,7 @@ async function startPythonServer() {
 
         PythonServerProcess = spawn(PythonExecutablePath, [], {
             cwd: path.dirname(PythonExecutablePath),
-            env: {...process.env, Python_BACKTRACE: '1'},
+            env: {...process.env, Python_BACKTRACE: '1', EXTENSION_ROOT: extensionRoot},
             stdio: ['inherit', 'pipe', 'pipe'],
             detached: false
         });
