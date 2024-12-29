@@ -55,11 +55,25 @@ logging.info(f'Process ID: {os.getpid()}')
 # Get and log all application paths
 paths = get_app_paths()
 
-# Add ffmpeg to PATH
+# Add ffmpeg to PATH - look in multiple possible locations
 script_dir = paths['script_dir']
-ffmpeg_dir = os.path.join(script_dir, 'app')
-os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
-logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
+possible_ffmpeg_locations = [
+    os.path.dirname(script_dir),  # Parent directory
+    script_dir,  # Current directory
+    os.path.join(script_dir, 'ffmpeg'),  # ffmpeg subdirectory
+    os.path.join(os.path.dirname(script_dir), 'ffmpeg'),  # Parent's ffmpeg subdirectory
+]
+
+ffmpeg_found = False
+for ffmpeg_dir in possible_ffmpeg_locations:
+    if os.path.exists(os.path.join(ffmpeg_dir, 'ffmpeg.exe' if sys.platform == 'win32' else 'ffmpeg')):
+        os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
+        logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
+        ffmpeg_found = True
+        break
+
+if not ffmpeg_found:
+    logging.error("FFmpeg not found in any of the expected locations")
 
 try:
     app = Flask(__name__)

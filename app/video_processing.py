@@ -19,6 +19,70 @@ from utils import (
 )
 import traceback
 
+def get_ffmpeg_path():
+    """Get the path to ffmpeg executable"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    possible_locations = [
+        os.path.dirname(script_dir),  # Parent directory
+        script_dir,  # Current directory
+        os.path.join(script_dir, 'ffmpeg'),  # ffmpeg subdirectory
+        os.path.join(os.path.dirname(script_dir), 'ffmpeg'),  # Parent's ffmpeg subdirectory
+        os.path.join(os.path.dirname(os.path.dirname(script_dir)), 'exec'),  # CEP extension exec directory
+        os.environ.get('EXTENSION_ROOT', ''),  # Extension root if set
+    ]
+    
+    # Add the current working directory and its parent
+    possible_locations.extend([
+        os.getcwd(),
+        os.path.dirname(os.getcwd()),
+        os.path.join(os.getcwd(), 'exec'),
+        os.path.join(os.path.dirname(os.getcwd()), 'exec'),
+    ])
+    
+    # Filter out empty paths and remove duplicates while preserving order
+    possible_locations = list(dict.fromkeys(filter(None, possible_locations)))
+    
+    ffmpeg_name = 'ffmpeg.exe' if sys.platform == 'win32' else 'ffmpeg'
+    
+    for location in possible_locations:
+        ffmpeg_path = os.path.join(location, ffmpeg_name)
+        if os.path.exists(ffmpeg_path):
+            logging.info(f"Found ffmpeg at: {ffmpeg_path}")
+            # Verify the file is executable
+            try:
+                if sys.platform != 'win32':  # On Unix-like systems, check executable permission
+                    if not os.access(ffmpeg_path, os.X_OK):
+                        logging.warning(f"FFmpeg found at {ffmpeg_path} but is not executable")
+                        continue
+                # Try to run ffmpeg -version to verify it works
+                result = subprocess.run([ffmpeg_path, '-version'], 
+                                     stdout=subprocess.PIPE, 
+                                     stderr=subprocess.PIPE,
+                                     timeout=5)
+                if result.returncode == 0:
+                    logging.info(f"Verified ffmpeg is working at: {ffmpeg_path}")
+                    return location
+                else:
+                    logging.warning(f"FFmpeg found at {ffmpeg_path} but failed version check")
+            except Exception as e:
+                logging.warning(f"Error verifying ffmpeg at {ffmpeg_path}: {str(e)}")
+                continue
+    
+    logging.error("FFmpeg not found in any of the expected locations")
+    logging.error(f"Searched locations: {possible_locations}")
+    return None
+
+def check_ffmpeg(settings, socketio):
+    """Check if ffmpeg is available"""
+    ffmpeg_path = get_ffmpeg_path()
+    if not ffmpeg_path:
+        error_msg = "FFmpeg not found. Please ensure ffmpeg is properly installed."
+        logging.error(error_msg)
+        if socketio:
+            socketio.emit('error', {'message': error_msg})
+        return False
+    return True
+
 def validate_license(license_key):
     if not license_key:
         return False
@@ -48,14 +112,6 @@ def validate_license(license_key):
         return False
 
     return False
-
-def check_ffmpeg(settings, socketio):
-    """Check if FFmpeg is available and configured correctly."""
-    if not settings.get('ffmpeg_path'):
-        error_msg = "There was a problem with the video processor. Please try restarting the application."
-        socketio.emit('download-failed', {'message': error_msg})
-        return False
-    return True
 
 def handle_video_url(request, settings, socketio, current_download):
     # Check FFmpeg availability first
@@ -252,24 +308,26 @@ def get_unique_filename(base_path, filename, extension):
     return f"{filename}_{counter}.{extension}"
 
 def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_path, socketio, settings, current_download):
-    logging.info(f"Starting video download for URL: {video_url}")
-    
+    """Download a video from YouTube"""
     try:
-        # Get the download path
-        final_download_path = download_path if download_path else get_default_download_path(socketio)
-        if final_download_path is None:
-            logging.error("No active Premiere Pro project found.")
-            socketio.emit('download-failed', {'message': 'No active Premiere Pro project found.'})
-            return None
+        ffmpeg_dir = get_ffmpeg_path()
+        if not ffmpeg_dir:
+            raise Exception("FFmpeg not found. Please ensure ffmpeg is properly installed.")
+
+        # Get the full path to ffmpeg executable
+        ffmpeg_exe = os.path.join(ffmpeg_dir, 'ffmpeg.exe' if sys.platform == 'win32' else 'ffmpeg')
+        if not os.path.exists(ffmpeg_exe):
+            raise Exception(f"FFmpeg executable not found at {ffmpeg_exe}")
+        
+        logging.info(f"Using ffmpeg from: {ffmpeg_exe}")
 
         def progress_hook(d):
             if d['status'] == 'downloading':
                 try:
                     if '_percent_str' in d:
                         percentage = d['_percent_str'].strip()
-                        # Clean up ANSI escape codes and ensure it's just the percentage
                         percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
-                        percentage = percentage.replace(' ', '')  # Remove any spaces
+                        percentage = percentage.replace(' ', '')
                         if not percentage.endswith('%'):
                             percentage += '%'
                         logging.info(f'Progress: {percentage}')
@@ -278,25 +336,22 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     logging.error(f"Error in progress hook: {e}")
                     logging.error(f"Progress hook data: {d}")
 
-        import yt_dlp
-
-        # Configure yt-dlp options for video info and download
-        format_string = f'bestvideo[vcodec^=avc1][ext=mp4][height<={resolution}]+bestaudio[ext=m4a]/best[ext=mp4]'
-        logging.info(f"Using format string: {format_string}")
-
         ydl_opts = {
-            'format': format_string,
+            'format': f'bestvideo[vcodec^=avc1][ext=mp4][height<={resolution}]+bestaudio[ext=m4a]/best[ext=mp4]',
             'merge_output_format': 'mp4',
-            'ffmpeg_location': os.path.dirname(ffmpeg_path),
+            'ffmpeg_location': ffmpeg_dir,  # Use the directory containing ffmpeg
             'progress_hooks': [progress_hook],
-            'postprocessor_hooks': [lambda d: logging.info(f"Postprocessing: {d}")],
-            'force_generic_extractor': False,
-            'quiet': False,
-            'no_warnings': False,
+            'postprocessor_hooks': [lambda d: socketio.emit('percentage', {'percentage': '100%'}) if d['status'] == 'finished' else None],
             'verbose': True
         }
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        final_download_path = download_path if download_path else get_default_download_path(socketio)
+        if final_download_path is None:
+            logging.error("No active Premiere Pro project found.")
+            socketio.emit('download-failed', {'message': 'No active Premiere Pro project found.'})
+            return None
+
+        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
             try:
                 # Extract video info first
                 info = ydl.extract_info(video_url, download=False)
