@@ -6,6 +6,7 @@ from utils import play_notification_sound, save_license_key, get_license_key, lo
 import os
 import sys
 import requests
+import socket
 
 def register_routes(app, socketio, settings):
     current_download = {'process': None}
@@ -232,3 +233,9 @@ def register_routes(app, socketio, settings):
         except Exception as e:
             logging.error(f'Error checking license: {e}')
             return jsonify({'isValid': False, 'message': str(e)})
+
+    @app.route('/get-ip', methods=['GET'])
+    def get_ip():
+        hostname = socket.gethostname()
+        local_ip = socket.gethostbyname(hostname)
+        return jsonify({'ip': local_ip})

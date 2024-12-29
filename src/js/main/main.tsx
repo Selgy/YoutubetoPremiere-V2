@@ -3,6 +3,18 @@ import './styles.css';
 import Settings from './Settings';
 import io from 'socket.io-client';
 
+// Get the local IP address from the server
+const getLocalIP = async () => {
+  try {
+    const response = await fetch('http://localhost:3001/get-ip');
+    const data = await response.json();
+    return data.ip;
+  } catch (error) {
+    console.error('Error getting local IP:', error);
+    return 'localhost';
+  }
+};
+
 const Main = () => {
   const [settings, setSettings] = useState({
     resolution: '1080',
@@ -23,14 +35,23 @@ const Main = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [latestVersion, setLatestVersion] = useState('');
-  const currentVersion = '3.0.0'; // Get this from your package.json
+  const currentVersion = '3.0.1'; // Get this from your package.json
   const [currentPage, setCurrentPage] = useState('main');
+  const [serverIP, setServerIP] = useState('localhost');
+
+  useEffect(() => {
+    const initializeConnection = async () => {
+      const ip = await getLocalIP();
+      setServerIP(ip);
+    };
+    initializeConnection();
+  }, []);
 
   useEffect(() => {
     const checkLicenseAndStart = async () => {
       setIsLoading(true);
       try {
-        const response = await fetch('http://localhost:3001/check-license');
+        const response = await fetch(`http://${serverIP}:3001/check-license`);
         const data = await response.json();
         
         if (data.isValid) {
@@ -43,27 +64,32 @@ const Main = () => {
       setIsLoading(false);
     };
 
-    checkLicenseAndStart();
-  }, []);
+    if (serverIP !== 'localhost') {
+      checkLicenseAndStart();
+    }
+  }, [serverIP]);
 
   useEffect(() => {
-    checkForUpdates();
-  }, []);
+    if (serverIP !== 'localhost') {
+      checkForUpdates();
+    }
+  }, [serverIP]);
 
   useEffect(() => {
-    const isDev = process.env.NODE_ENV === 'development';
-    const socket = io('http://localhost:3001', {
-      transports: ['websocket', 'polling'],
+    if (serverIP === 'localhost') return;
+
+    const socket = io(`http://${serverIP}:3001`, {
+      transports: ['polling', 'websocket'],
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      timeout: isDev ? 60000 : 120000,
+      timeout: 60000,
       forceNew: true,
       upgrade: true,
       rememberUpgrade: true,
       rejectUnauthorized: false,
       autoConnect: true,
-      path: isDev ? '/socket.io' : undefined,
+      withCredentials: true,
       query: { client_type: 'chrome' }
     });
 
@@ -80,18 +106,10 @@ const Main = () => {
       retryCount++;
       
       if (retryCount <= maxRetries) {
-        // Try to reconnect with polling if websocket fails
-        if (socket.io?.opts?.transports?.[0] === 'websocket') {
-          console.log('Switching to polling transport');
-          socket.io.opts.transports = ['polling', 'websocket'];
-        } else {
-          console.log('Switching to websocket transport');
-          socket.io.opts.transports = ['websocket', 'polling'];
-        }
+        console.log(`Retrying connection (${retryCount}/${maxRetries})`);
         setTimeout(() => {
-          console.log(`Retrying connection (${retryCount}/${maxRetries})`);
           socket.connect();
-        }, 1000 * retryCount);
+        }, Math.min(1000 * Math.pow(2, retryCount), 10000));
       }
     });
 
@@ -111,23 +129,21 @@ const Main = () => {
         setTimeout(() => {
           console.log(`Retrying after error (${retryCount}/${maxRetries})`);
           socket.connect();
-        }, 1000 * retryCount);
+        }, Math.min(1000 * Math.pow(2, retryCount), 10000));
       }
     });
 
     // Force initial connection
-    if (!socket.connected) {
-      socket.connect();
-    }
+    socket.connect();
 
     return () => {
       socket.disconnect();
     };
-  }, []);
+  }, [serverIP]);
 
   const checkForUpdates = async () => {
     try {
-      const response = await fetch('http://localhost:3001/get-version');
+      const response = await fetch(`http://${serverIP}:3001/get-version`);
       const data = await response.json();
       const latestVersion = data.version;
       setLatestVersion(latestVersion);
@@ -156,7 +172,7 @@ const Main = () => {
     setErrorMessage('');
     
     try {
-      const response = await fetch('http://localhost:3001/validate-license', {
+      const response = await fetch(`http://${serverIP}:3001/validate-license`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -184,14 +200,12 @@ const Main = () => {
 
   const loadSettings = async () => {
     try {
-      // First try to get settings from the server
-      const response = await fetch('http://localhost:3001/settings');
+      const response = await fetch(`http://${serverIP}:3001/settings`);
       if (response.ok) {
         const serverSettings = await response.json();
         setSettings(serverSettings);
         localStorage.setItem('settings', JSON.stringify(serverSettings));
       } else {
-        // If server request fails, try to get from localStorage
         const savedSettings = localStorage.getItem('settings');
         if (savedSettings) {
           setSettings(JSON.parse(savedSettings));
@@ -204,7 +218,6 @@ const Main = () => {
       }
     } catch (error) {
       console.error('Error loading settings:', error);
-      // Try localStorage as fallback
       const savedSettings = localStorage.getItem('settings');
       if (savedSettings) {
         setSettings(JSON.parse(savedSettings));
@@ -214,7 +227,6 @@ const Main = () => {
 
   const saveSettings = async (newSettings: typeof settings) => {
     try {
-      // Create a copy of the settings with all fields
       const settingsToSave = {
         ...settings,
         ...newSettings,
@@ -223,8 +235,7 @@ const Main = () => {
         licenseKey: settings.licenseKey
       };
 
-      // Save to server
-      const saveResponse = await fetch('http://localhost:3001/settings', {
+      const saveResponse = await fetch(`http://${serverIP}:3001/settings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -236,12 +247,10 @@ const Main = () => {
         throw new Error('Failed to save settings: ' + await saveResponse.text());
       }
 
-      // Update local state and storage only after successful save
       setSettings(settingsToSave);
       localStorage.setItem('settings', JSON.stringify(settingsToSave));
     } catch (error) {
       console.error('Error saving settings:', error);
-      // On error, preserve current settings
       localStorage.setItem('settings', JSON.stringify(settings));
     }
   };

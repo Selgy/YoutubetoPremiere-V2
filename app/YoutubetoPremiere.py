@@ -10,6 +10,7 @@ from flask_socketio import SocketIO
 from routes import register_routes
 from utils import load_settings, monitor_premiere_and_shutdown, play_notification_sound
 import re
+import socket
 
 # Configure logging with more detailed format
 logging.basicConfig(
@@ -296,9 +297,14 @@ def run_server():
     logging.info('Settings loaded: %s', settings)
     register_routes(app, socketio, settings)
 
+    # Get local IP address
+    hostname = socket.gethostname()
+    local_ip = socket.gethostbyname(hostname)
+    logging.info(f'Starting server on {local_ip}:3001')
+
     server_thread = threading.Thread(target=lambda: socketio.run(
         app, 
-        host='localhost', 
+        host=local_ip,  # Use local IP instead of localhost
         port=3001,
         debug=False,
         use_reloader=False

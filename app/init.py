@@ -2,29 +2,33 @@ from flask import Flask, request
 from flask_socketio import SocketIO
 from flask_cors import CORS
 import os
+import logging
 
 def create_app():
     app = Flask(__name__)
     CORS(app, resources={r"/*": {"origins": "*", "allow_headers": "*", "expose_headers": "*", "methods": ["GET", "POST", "OPTIONS"]}})
     
-    # Determine if we're in development mode
-    is_dev = os.environ.get('NODE_ENV') == 'development'
+    # Configure logging
+    logging.basicConfig(level=logging.INFO)
     
-    socketio = SocketIO(app, 
-                       cors_allowed_origins="*", 
-                       async_mode='threading',
-                       ping_timeout=60 if is_dev else 120,
-                       ping_interval=10000 if is_dev else 25000,
-                       max_http_buffer_size=1e8,
-                       allow_upgrades=True,
-                       transports=['websocket', 'polling'],
-                       always_connect=True,
-                       reconnection=True,
-                       reconnection_attempts=10,
-                       reconnection_delay=1000,
-                       reconnection_delay_max=5000,
-                       logger=True,
-                       engineio_logger=True)
+    socketio = SocketIO(
+        app,
+        cors_allowed_origins="*",
+        async_mode='threading',
+        ping_timeout=60,
+        ping_interval=25000,
+        max_http_buffer_size=1e8,
+        allow_upgrades=True,
+        transports=['polling', 'websocket'],  # Start with polling as default
+        always_connect=True,
+        reconnection=True,
+        reconnection_attempts=10,
+        reconnection_delay=1000,
+        reconnection_delay_max=5000,
+        logger=True,
+        engineio_logger=True,
+        cors_credentials=True
+    )
     
     # Add CORS headers for all responses
     @app.after_request
@@ -44,10 +48,15 @@ def create_app():
     # Add connection logging
     @socketio.on('connect')
     def handle_connect():
-        print(f"Client connected: {request.sid}")
+        logging.info(f"Client connected: {request.sid}")
+        return True
         
     @socketio.on('disconnect')
     def handle_disconnect():
-        print(f"Client disconnected: {request.sid}")
+        logging.info(f"Client disconnected: {request.sid}")
+    
+    @socketio.on_error()
+    def error_handler(e):
+        logging.error(f"SocketIO error: {str(e)}")
         
     return app, socketio
