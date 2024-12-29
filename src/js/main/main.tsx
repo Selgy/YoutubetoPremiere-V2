@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import './styles.css';
 import Settings from './Settings';
+import io from 'socket.io-client';
 
 const Main = () => {
   const [settings, setSettings] = useState({
@@ -22,7 +23,7 @@ const Main = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [latestVersion, setLatestVersion] = useState('');
-  const currentVersion = '3.0.2'; // Get this from your package.json
+  const currentVersion = '3.0.1'; // Get this from your package.json
   const [currentPage, setCurrentPage] = useState('main');
 
   useEffect(() => {
@@ -47,6 +48,42 @@ const Main = () => {
 
   useEffect(() => {
     checkForUpdates();
+  }, []);
+
+  useEffect(() => {
+    const socket = io('http://localhost:3001', {
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 120000,
+      forceNew: true,
+      query: { client_type: 'chrome' }
+    });
+
+    socket.on('connect', () => {
+      console.log('Connected to server');
+    });
+
+    socket.on('connect_error', (error) => {
+      console.error('Connection error:', error);
+      // Try to reconnect with polling if websocket fails
+      if (socket.io?.opts?.transports?.[0] === 'websocket') {
+        socket.io.opts.transports = ['polling', 'websocket'];
+      }
+    });
+
+    socket.on('disconnect', (reason) => {
+      console.log('Disconnected:', reason);
+      if (reason === 'io server disconnect') {
+        // Reconnect if server initiated disconnect
+        socket.connect();
+      }
+    });
+
+    return () => {
+      socket.disconnect();
+    };
   }, []);
 
   const checkForUpdates = async () => {

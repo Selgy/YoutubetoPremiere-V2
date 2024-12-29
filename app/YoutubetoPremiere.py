@@ -97,17 +97,19 @@ try:
     socketio = SocketIO(app, 
         cors_allowed_origins="*",
         async_mode='threading',
-        ping_timeout=60,
-        ping_interval=25,
+        ping_timeout=120,
+        ping_interval=25000,
         max_http_buffer_size=100 * 1024 * 1024,  # 100MB
-        transport='websocket',
+        transports=['websocket', 'polling'],
         logger=True,
         engineio_logger=True,
         always_connect=True,
         reconnection=True,
-        reconnection_attempts=5,
+        reconnection_attempts=10,
         reconnection_delay=1000,
-        reconnection_delay_max=5000
+        reconnection_delay_max=5000,
+        allow_upgrades=True,
+        cookie=None
     )
 
     logging.info("Flask and SocketIO initialized successfully")
@@ -128,9 +130,16 @@ def internal_error(error):
 @app.after_request
 def after_request(response):
     response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
     return response
+
+# Handle OPTIONS requests
+@app.route('/', methods=['OPTIONS'])
+@app.route('/<path:path>', methods=['OPTIONS'])
+def options_handler(path=None):
+    return '', 200
 
 @socketio.on_error()
 def error_handler(e):
