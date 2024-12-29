@@ -14,7 +14,7 @@ declare module "vite-cep-plugin" {
 
 const config: CEP_Config = {
   version,
-  id: "com.YoutubetoPremiereV2.cep",
+  id: "com.YoutubetoPremiereV2.cep.main",
   displayName: "YoutubetoPremiere V2",
   symlink: "local",
   port: 4000,
@@ -43,6 +43,7 @@ const config: CEP_Config = {
     {
       mainPath: "./main/index.html",
       name: "main",
+      id: "com.YoutubetoPremiereV2.cep.main",
       panelDisplayName: "YoutubetoPremiere",
       autoVisible: true,
       width: 400,
@@ -56,6 +57,7 @@ const config: CEP_Config = {
     {
       mainPath: "./settings/index.html", 
       name: "settings", 
+      id: "com.YoutubetoPremiereV2.cep.settings",
       autoVisible: false, 
       type: "Custom", 
       startOnEvents: ["com.adobe.csxs.events.ApplicationInitialized", "applicationActive"], 
