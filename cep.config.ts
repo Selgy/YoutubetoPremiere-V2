@@ -14,7 +14,7 @@ declare module "vite-cep-plugin" {
 
 const config: CEP_Config = {
   version,
-  id: "com.YoutubetoPremiereV2.cep.main",
+  id: "com.youtubetoPremiereV2.cep",
   displayName: "YoutubetoPremiere V2",
   symlink: "local",
   port: 4000,
