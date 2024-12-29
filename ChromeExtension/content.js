@@ -219,7 +219,176 @@ const buttonStates = {
 };
 
 // Socket.IO connection
-const socket = io.connect('http://localhost:3001');
+let socket = null;
+
+function initializeSocket() {
+    if (socket) {
+        socket.disconnect();
+    }
+    
+    socket = io.connect('http://localhost:3001', {
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        reconnectionAttempts: 5,
+        transports: ['polling', 'websocket'],
+        upgrade: true,
+        query: { client_type: 'chrome' },
+    });
+
+    // Clean up existing listeners
+    socket.off('percentage');
+    socket.off('download-complete');
+    socket.off('download-failed');
+    socket.off('download-cancelled');
+    socket.off('import_video');
+
+    // Add event listeners
+    socket.on('percentage', (data) => {
+        const buttons = {
+            premiere: document.getElementById('send-to-premiere-button'),
+            clip: document.getElementById('clip-button'),
+            audio: document.getElementById('audio-button')
+        };
+
+        // Find the active button based on the download type
+        let activeButtonType;
+        if (data.type === 'audio') {
+            activeButtonType = 'audio';
+        } else if (data.type === 'video') {
+            // For video downloads, check which video button is active
+            if (buttonStates.premiere.isDownloading) {
+                activeButtonType = 'premiere';
+            } else if (buttonStates.clip.isDownloading) {
+                activeButtonType = 'clip';
+            }
+        }
+
+        const button = buttons[activeButtonType];
+        if (button && buttonStates[activeButtonType].isDownloading) {
+            // Ensure the button shows it's downloading
+            button.classList.add('downloading');
+            button.classList.remove('loading');
+            
+            const progressText = button.querySelector('.progress-text');
+            if (progressText) {
+                // Update the progress text
+                progressText.textContent = data.percentage;
+                console.log('Updating progress:', data.percentage); // Debug log
+            }
+        }
+    });
+
+    socket.on('download-complete', () => {
+        const buttons = {
+            premiere: document.getElementById('send-to-premiere-button'),
+            clip: document.getElementById('clip-button'),
+            audio: document.getElementById('audio-button')
+        };
+
+        // Find the active button based on buttonStates
+        const activeButtonType = Object.keys(buttonStates).find(type => buttonStates[type].isDownloading);
+        const button = buttons[activeButtonType];
+        
+        if (button) {
+            button.classList.remove('downloading', 'loading');
+            button.classList.add('success');
+            const progressText = button.querySelector('.progress-text');
+            if (progressText) {
+                progressText.textContent = button.dataset.originalText;
+            }
+            buttonStates[activeButtonType].isDownloading = false;
+            
+            // Remove success class after animation
+            setTimeout(() => {
+                button.classList.remove('success');
+            }, 1000);
+        }
+
+        showNotification('Download completed successfully!', 'success');
+    });
+
+    socket.on('download-failed', (data) => {
+        const buttons = {
+            premiere: document.getElementById('send-to-premiere-button'),
+            clip: document.getElementById('clip-button'),
+            audio: document.getElementById('audio-button')
+        };
+
+        // Find the active button
+        const activeButtonType = Object.keys(buttonStates).find(type => buttonStates[type].isDownloading);
+        const button = buttons[activeButtonType];
+        
+        if (button) {
+            button.classList.remove('downloading', 'loading');
+            button.classList.add('failure');
+            resetButtonState(button);
+            buttonStates[activeButtonType].isDownloading = false;
+        }
+
+        showNotification(data.message || 'Download failed', 'error');
+    });
+
+    socket.on('download-cancelled', () => {
+        const buttons = {
+            premiere: document.getElementById('send-to-premiere-button'),
+            clip: document.getElementById('clip-button'),
+            audio: document.getElementById('audio-button')
+        };
+
+        // Find the active button
+        const activeButtonType = Object.keys(buttonStates).find(type => buttonStates[type].isDownloading);
+        const button = buttons[activeButtonType];
+        
+        if (button) {
+            resetButtonState(button);
+            buttonStates[activeButtonType].isDownloading = false;
+        }
+
+        showNotification('Download cancelled', 'warning');
+    });
+
+    socket.on('import_video', () => {
+        // Handle import video event if needed
+    });
+
+    socket.on('import_complete', (data) => {
+        const buttons = {
+            premiere: document.getElementById('send-to-premiere-button'),
+            clip: document.getElementById('clip-button'),
+            audio: document.getElementById('audio-button')
+        };
+
+        // Find the active button
+        const activeButtonType = Object.keys(buttonStates).find(type => buttonStates[type].isDownloading);
+        const button = buttons[activeButtonType];
+        
+        if (button) {
+            button.classList.remove('downloading', 'loading');
+            if (data.success) {
+                button.classList.add('success');
+                showNotification('Video imported successfully!', 'success');
+            } else {
+                button.classList.add('failure');
+                showNotification(data.error || 'Import failed', 'error');
+            }
+            resetButtonState(button);
+            buttonStates[activeButtonType].isDownloading = false;
+        }
+    });
+
+    return socket;
+}
+
+// Initialize socket when the script loads
+socket = initializeSocket();
+
+// Clean up socket connection when the page is unloaded
+window.addEventListener('unload', () => {
+    if (socket) {
+        socket.disconnect();
+    }
+});
 
 function createRipple(event, button) {
     const ripple = document.createElement('span');
@@ -290,28 +459,6 @@ function resetButtonState(button) {
     progressText.textContent = button.dataset.originalText;
 }
 
-socket.on('percentage', (data) => {
-    console.log('Received progress:', data.percentage);
-    const buttons = {
-        premiere: document.getElementById('send-to-premiere-button'),
-        clip: document.getElementById('clip-button'),
-        audio: document.getElementById('audio-button')
-    };
-
-    // Find the active button
-    const activeButtonType = Object.keys(buttonStates).find(type => buttonStates[type].isDownloading);
-    const button = buttons[activeButtonType];
-    
-    if (button) {
-        console.log('Updating button:', button.id);
-        button.classList.remove('loading');
-        const progressText = button.querySelector('.progress-text');
-        progressText.textContent = data.percentage;
-        button.dataset.downloading = 'true';
-        button.classList.add('downloading');
-    }
-});
-
 // Add notification functions
 function showNotification(message, type = 'info', duration = 5000) {
     // Remove any existing notification
@@ -355,71 +502,6 @@ function showNotification(message, type = 'info', duration = 5000) {
         }, duration);
     }
 }
-
-// Modify socket event handlers to use notifications
-socket.on('download-failed', (data) => {
-    console.error('Download failed:', data);
-    const buttons = {
-        premiere: document.getElementById('send-to-premiere-button'),
-        clip: document.getElementById('clip-button'),
-        audio: document.getElementById('audio-button')
-    };
-
-    // Find the active button
-    const activeButtonType = Object.keys(buttonStates).find(type => buttonStates[type].isDownloading);
-    const button = buttons[activeButtonType];
-    
-    if (button) {
-        button.classList.add('failure');
-        resetButtonState(button);
-    }
-
-    // Show error notification
-    if (data.error === 'Invalid license key' || data.error === 'No license key found') {
-        showNotification('No valid license found. Please enter a valid license key.', 'error');
-    } else {
-        showNotification(data.message || 'Failed to download video', 'error');
-    }
-});
-
-socket.on('download-complete', (data) => {
-    console.log('Download complete:', data);
-    const buttons = {
-        premiere: document.getElementById('send-to-premiere-button'),
-        clip: document.getElementById('clip-button'),
-        audio: document.getElementById('audio-button')
-    };
-
-    // Find the active button
-    const activeButtonType = Object.keys(buttonStates).find(type => buttonStates[type].isDownloading);
-    const button = buttons[activeButtonType];
-    
-    if (button) {
-        button.classList.add('success');
-        resetButtonState(button);
-    }
-
-    showNotification('Download completed successfully!', 'success');
-});
-
-socket.on('download-cancelled', () => {
-    console.log('Download cancelled');
-    const buttons = {
-        premiere: document.getElementById('send-to-premiere-button'),
-        clip: document.getElementById('clip-button'),
-        audio: document.getElementById('audio-button')
-    };
-
-    // Find the active button
-    const activeButtonType = Object.keys(buttonStates).find(type => buttonStates[type].isDownloading);
-    const button = buttons[activeButtonType];
-    
-    if (button) {
-        resetButtonState(button);
-    }
-
-    showNotification('Download cancelled', 'warning');
-});
 
 // Remove the connect_error handler since we'll handle errors in the fetch call
 function sendURL(downloadType, additionalData = {}) {

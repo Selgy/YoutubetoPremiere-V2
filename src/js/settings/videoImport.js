@@ -115,22 +115,23 @@ export function setupVideoImportHandler() {
             
             // Continue with socket setup
             const socket = io('http://localhost:3001', {
-                transports: ['polling'],
+                transports: ['polling', 'websocket'],
                 reconnection: true,
-                reconnectionAttempts: 10,
-                reconnectionDelay: 3000,
-                reconnectionDelayMax: 15000,
-                timeout: 20000,
+                reconnectionAttempts: Infinity,
+                reconnectionDelay: 1000,
+                reconnectionDelayMax: 5000,
+                timeout: 60000,
                 autoConnect: true,
-                forceNew: false,
-                upgrade: false,
+                forceNew: true,
+                upgrade: true,
                 rejectUnauthorized: false,
                 path: '/socket.io/',
                 withCredentials: false,
+                query: { client_type: 'premiere' },
                 transportOptions: {
                     polling: {
                         extraHeaders: {},
-                        timeout: 10000
+                        timeout: 60000
                     }
                 }
             });
@@ -138,28 +139,38 @@ export function setupVideoImportHandler() {
             // Enhanced connection handling
             socket.io.on("reconnect_attempt", (attempt) => {
                 console.log(`Attempting to reconnect... (Attempt ${attempt})`);
-                // Reset socket options on reconnect attempt
-                socket.io.opts.transports = ['polling'];
-                socket.io.opts.upgrade = false;
+                // Try both transports on reconnect
+                socket.io.opts.transports = ['polling', 'websocket'];
+                socket.io.opts.upgrade = true;
             });
 
             socket.io.on("reconnect", (attempt) => {
                 console.log(`Successfully reconnected after ${attempt} attempts`);
-                socket.emit('connection_check');
+                // Reset connection options after successful reconnect
+                socket.io.opts.transports = ['polling', 'websocket'];
+                socket.io.opts.upgrade = true;
             });
 
             socket.io.on("reconnect_error", (error) => {
                 console.error('Reconnection error:', error);
-                // Force a clean reconnection after error
+                // On error, try to reconnect with a clean slate
                 socket.disconnect();
-                setTimeout(() => socket.connect(), 1000);
+                setTimeout(() => {
+                    socket.io.opts.transports = ['polling', 'websocket'];
+                    socket.io.opts.upgrade = true;
+                    socket.connect();
+                }, 1000);
             });
 
             socket.io.on("reconnect_failed", () => {
                 console.error('Failed to reconnect after all attempts');
-                // Attempt to create a new connection
+                // Try to create a new connection with both transport options
                 socket.disconnect();
-                setTimeout(() => socket.connect(), 5000);
+                setTimeout(() => {
+                    socket.io.opts.transports = ['polling', 'websocket'];
+                    socket.io.opts.upgrade = true;
+                    socket.connect();
+                }, 5000);
             });
 
             socket.on('error', (error) => {
@@ -168,14 +179,22 @@ export function setupVideoImportHandler() {
                 if (socket.connected) {
                     socket.disconnect();
                 }
-                setTimeout(() => socket.connect(), 2000);
+                setTimeout(() => {
+                    socket.io.opts.transports = ['polling', 'websocket'];
+                    socket.io.opts.upgrade = true;
+                    socket.connect();
+                }, 2000);
             });
 
             socket.on('connect_error', (error) => {
                 console.error('Connection error:', error);
-                // Reset connection on error
+                // Reset connection on error with both transport options
                 socket.disconnect();
-                setTimeout(() => socket.connect(), 2000);
+                setTimeout(() => {
+                    socket.io.opts.transports = ['polling', 'websocket'];
+                    socket.io.opts.upgrade = true;
+                    socket.connect();
+                }, 2000);
             });
 
             connectWithRetry(socket);
