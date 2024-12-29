@@ -152,7 +152,7 @@ jobs:
       - name: Download macOS executable
         uses: actions/download-artifact@v3
         with:
-          name: executable-macos-latest
+          name: executable-macos-13
           path: build/executables
 
       - name: Download Windows FFmpeg
@@ -164,7 +164,7 @@ jobs:
       - name: Download macOS FFmpeg
         uses: actions/download-artifact@v3
         with:
-          name: ffmpeg-macos-latest
+          name: ffmpeg-macos-13
           path: build/executables
 
       - name: List contents to verify
