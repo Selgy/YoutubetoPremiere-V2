@@ -1,16 +1,5 @@
-import { CEP_Config } from "vite-cep-plugin";
+import type { CEP_Config } from "vite-cep-plugin";
 import { version } from "./package.json";
-
-// Add custom type declaration to extend CEF_Command
-declare module "vite-cep-plugin" {
-  type CEF_Command = 
-    | "--v=0"
-    | "--enable-nodejs"
-    | "--mixed-context"
-    | "--allow-file-access"
-    | "--allow-file-access-from-files"
-    | "--allow-insecure-localhost";
-}
 
 const config: CEP_Config = {
   version,
@@ -22,23 +11,27 @@ const config: CEP_Config = {
   startingDebugPort: 8880,
   extensionManifestVersion: 6.0,
   requiredRuntimeVersion: 9.0,
-  hosts: [
-    { name: "PPRO", version: "[0.0,99.9]" }
-  ],
+  hosts: [{ name: "PPRO", version: "[0.0,99.9]" }],
   type: "Panel",
   iconDarkNormal: "./src/assets/light-icon.png",
   iconNormal: "./src/assets/dark-icon.png",
   iconDarkNormalRollOver: "./src/assets/light-icon.png",
   iconNormalRollOver: "./src/assets/dark-icon.png",
+
+  // Cast 'parameters' to unknown (or 'any') to bypass type checking
   parameters: [
     "--v=0",
     "--enable-nodejs",
     "--mixed-context",
     "--allow-file-access",
-  ],
+    "--disable-web-security",
+    "--allow-file-access-from-files",
+    "--allow-insecure-localhost",
+    "--allow-running-insecure-content",
+  ] as unknown as CEP_Config["parameters"],
+
   width: 500,
   height: 550,
-
   panels: [
     {
       mainPath: "./main/index.html",
@@ -55,14 +48,14 @@ const config: CEP_Config = {
       type: "Modeless",
     },
     {
-      mainPath: "./settings/index.html", 
-      name: "settings", 
+      mainPath: "./settings/index.html",
+      name: "settings",
       id: "com.YoutubetoPremiereV2.cep.settings",
-      autoVisible: false, 
-      type: "Custom", 
-      startOnEvents: ["com.adobe.csxs.events.ApplicationInitialized", "applicationActive"], 
-      height: 1, 
-    }
+      autoVisible: false,
+      type: "Custom",
+      startOnEvents: ["com.adobe.csxs.events.ApplicationInitialized", "applicationActive"],
+      height: 1,
+    },
   ],
   build: {
     jsxBin: "off",
@@ -75,14 +68,10 @@ const config: CEP_Config = {
     password: "test",
     tsa: "http://timestamp.digicert.com/",
     sourceMap: false,
-    jsxBin: "off"
+    jsxBin: "off",
   },
   installModules: [],
-  copyAssets: [
-    "./js",
-    "./jsx",
-    "./exec"
-  ],
+  copyAssets: ["./js", "./jsx", "./exec"],
   copyZipAssets: [],
 };
 
