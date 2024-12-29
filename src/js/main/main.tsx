@@ -5,14 +5,30 @@ import io from 'socket.io-client';
 
 // Get the local IP address from the server
 const getLocalIP = async () => {
-  try {
-    const response = await fetch('http://localhost:3001/get-ip');
-    const data = await response.json();
-    return data.ip;
-  } catch (error) {
-    console.error('Error getting local IP:', error);
-    return 'localhost';
+  const possibleAddresses = ['localhost', '127.0.0.1', '192.168.56.1'];
+  
+  for (const address of possibleAddresses) {
+    try {
+      const response = await fetch(`http://${address}:3001/get-ip`);
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Successfully connected to server at:', address);
+        return data.ip;
+      }
+    } catch (error) {
+      console.log(`Failed to connect to ${address}:`, error);
+    }
   }
+  
+  // If we get here, try to use the last known working IP
+  const lastKnownIP = localStorage.getItem('serverIP');
+  if (lastKnownIP) {
+    console.log('Using last known IP:', lastKnownIP);
+    return lastKnownIP;
+  }
+  
+  console.error('Could not determine server IP, falling back to localhost');
+  return 'localhost';
 };
 
 const Main = () => {
@@ -35,14 +51,18 @@ const Main = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [latestVersion, setLatestVersion] = useState('');
-  const currentVersion = '3.0.1'; // Get this from your package.json
+  const currentVersion = '3.0.0'; // Get this from your package.json
   const [currentPage, setCurrentPage] = useState('main');
   const [serverIP, setServerIP] = useState('localhost');
 
   useEffect(() => {
     const initializeConnection = async () => {
       const ip = await getLocalIP();
+      if (ip !== 'localhost') {
+        localStorage.setItem('serverIP', ip);
+      }
       setServerIP(ip);
+      console.log('Server IP set to:', ip);
     };
     initializeConnection();
   }, []);

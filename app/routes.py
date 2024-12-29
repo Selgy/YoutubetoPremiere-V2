@@ -236,6 +236,28 @@ def register_routes(app, socketio, settings):
 
     @app.route('/get-ip', methods=['GET'])
     def get_ip():
-        hostname = socket.gethostname()
-        local_ip = socket.gethostbyname(hostname)
-        return jsonify({'ip': local_ip})
+        try:
+            # Try to get all possible IP addresses
+            hostname = socket.gethostname()
+            possible_ips = []
+            
+            # Get all network interfaces
+            for interface in socket.getaddrinfo(hostname, None):
+                ip = interface[4][0]
+                # Only include IPv4 addresses that aren't localhost
+                if '.' in ip and ip != '127.0.0.1':
+                    possible_ips.append(ip)
+            
+            # If we found any valid IPs, return the first one
+            if possible_ips:
+                logging.info(f'Found IP addresses: {possible_ips}')
+                return jsonify({'ip': possible_ips[0]})
+            
+            # Fallback to the basic method
+            local_ip = socket.gethostbyname(hostname)
+            logging.info(f'Using fallback IP: {local_ip}')
+            return jsonify({'ip': local_ip})
+            
+        except Exception as e:
+            logging.error(f'Error getting IP address: {e}')
+            return jsonify({'ip': 'localhost', 'error': str(e)})

@@ -297,14 +297,14 @@ def run_server():
     logging.info('Settings loaded: %s', settings)
     register_routes(app, socketio, settings)
 
-    # Get local IP address
+    # Get local IP address for logging purposes
     hostname = socket.gethostname()
     local_ip = socket.gethostbyname(hostname)
-    logging.info(f'Starting server on {local_ip}:3001')
+    logging.info(f'Starting server on all interfaces (including {local_ip}:3001)')
 
     server_thread = threading.Thread(target=lambda: socketio.run(
         app, 
-        host=local_ip,  # Use local IP instead of localhost
+        host='0.0.0.0',  # Bind to all available interfaces
         port=3001,
         debug=False,
         use_reloader=False
