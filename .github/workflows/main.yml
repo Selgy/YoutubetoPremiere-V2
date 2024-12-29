@@ -113,7 +113,7 @@ jobs:
       - name: Should build
         id: should_build
         run: |
-          if [[ "${{ needs.check-changes.outputs.app_changed }}" == "false" && "${{ steps.check_artifact.outcome }}" == "success" ]]; then
+          if [[ "${{ needs.check-changes.outputs.app_changed }}" == "false" && -f "existing-artifact/YoutubetoPremiere${{ matrix.os == 'windows-latest' && '.exe' || '' }}" ]]; then
             echo "build=false" >> $GITHUB_OUTPUT
           else
             echo "build=true" >> $GITHUB_OUTPUT
