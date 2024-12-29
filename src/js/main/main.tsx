@@ -23,7 +23,7 @@ const Main = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [latestVersion, setLatestVersion] = useState('');
-  const currentVersion = '3.0.1'; // Get this from your package.json
+  const currentVersion = '3.0.0'; // Get this from your package.json
   const [currentPage, setCurrentPage] = useState('main');
 
   useEffect(() => {
@@ -51,35 +51,74 @@ const Main = () => {
   }, []);
 
   useEffect(() => {
+    const isDev = process.env.NODE_ENV === 'development';
     const socket = io('http://localhost:3001', {
       transports: ['websocket', 'polling'],
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      timeout: 120000,
+      timeout: isDev ? 60000 : 120000,
       forceNew: true,
+      upgrade: true,
+      rememberUpgrade: true,
+      rejectUnauthorized: false,
+      autoConnect: true,
+      path: isDev ? '/socket.io' : undefined,
       query: { client_type: 'chrome' }
     });
 
+    let retryCount = 0;
+    const maxRetries = 5;
+
     socket.on('connect', () => {
       console.log('Connected to server');
+      retryCount = 0;
     });
 
     socket.on('connect_error', (error) => {
       console.error('Connection error:', error);
-      // Try to reconnect with polling if websocket fails
-      if (socket.io?.opts?.transports?.[0] === 'websocket') {
-        socket.io.opts.transports = ['polling', 'websocket'];
+      retryCount++;
+      
+      if (retryCount <= maxRetries) {
+        // Try to reconnect with polling if websocket fails
+        if (socket.io?.opts?.transports?.[0] === 'websocket') {
+          console.log('Switching to polling transport');
+          socket.io.opts.transports = ['polling', 'websocket'];
+        } else {
+          console.log('Switching to websocket transport');
+          socket.io.opts.transports = ['websocket', 'polling'];
+        }
+        setTimeout(() => {
+          console.log(`Retrying connection (${retryCount}/${maxRetries})`);
+          socket.connect();
+        }, 1000 * retryCount);
       }
     });
 
     socket.on('disconnect', (reason) => {
       console.log('Disconnected:', reason);
-      if (reason === 'io server disconnect') {
-        // Reconnect if server initiated disconnect
-        socket.connect();
+      if (reason === 'io server disconnect' || reason === 'transport close') {
+        setTimeout(() => {
+          console.log('Attempting to reconnect...');
+          socket.connect();
+        }, 1000);
       }
     });
+
+    socket.on('error', (error) => {
+      console.error('Socket error:', error);
+      if (retryCount <= maxRetries) {
+        setTimeout(() => {
+          console.log(`Retrying after error (${retryCount}/${maxRetries})`);
+          socket.connect();
+        }, 1000 * retryCount);
+      }
+    });
+
+    // Force initial connection
+    if (!socket.connected) {
+      socket.connect();
+    }
 
     return () => {
       socket.disconnect();
