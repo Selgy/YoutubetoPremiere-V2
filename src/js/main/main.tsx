@@ -19,7 +19,7 @@ const Main = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [latestVersion, setLatestVersion] = useState('');
-  const currentVersion = '3.0.11'; // Get this from your package.json
+  const currentVersion = '3.0.1'; // Get this from your package.json
   const [currentPage, setCurrentPage] = useState('main');
 
   useEffect(() => {
