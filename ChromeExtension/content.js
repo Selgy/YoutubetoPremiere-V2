@@ -249,7 +249,6 @@ function initializeSocket() {
             // Server initiated disconnect, try to reconnect
             socket.connect();
         }
-        showNotification('Disconnected from server. Attempting to reconnect...', 'warning');
     });
 
     // Clean up existing listeners
@@ -535,51 +534,78 @@ function sendURL(downloadType, additionalData = {}) {
     );
 
     if (button) {
-        buttonStates[buttonType].isDownloading = true;
-        button.classList.add('loading');
-        button.dataset.downloading = 'true';
-        
-        const videoId = new URLSearchParams(window.location.search).get('v');
-        if (videoId) {
-            const currentVideoUrl = `https://youtu.be/${videoId}`;
-            const serverUrl = 'http://localhost:3001/handle-video-url';
-            const requestData = {
-                url: currentVideoUrl,
-                downloadType: downloadType,
-                ...additionalData
-            };
-
-            fetch(serverUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(requestData)
-            })
-            .then(response => response.json().then(data => ({status: response.status, data})))
-            .then(({status, data}) => {
-                if (status === 403) {
-                    throw new Error(data.error || 'License validation failed');
-                }
-                if (status !== 200) {
-                    throw new Error(data.error || 'Failed to process video');
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                button.classList.remove('downloading', 'loading');
+        // First check license key
+        fetch('http://localhost:3001/check-license')
+        .then(response => response.json())
+        .then(data => {
+            if (!data.isValid) {
                 button.classList.add('failure');
-                if (error.message === 'Failed to fetch') {
-                    showNotification('Please make sure Adobe Premiere Pro is running.', 'error');
-                } else {
-                    showNotification(error.message || 'Failed to process video', 'error');
-                }
+                showNotification('Invalid or missing license key. Please enter a valid license key in the settings.', 'error');
                 setTimeout(() => {
                     button.classList.remove('failure');
-                    buttonStates[buttonType].isDownloading = false;
-                    const progressText = button.querySelector('.progress-text');
-                    progressText.textContent = button.dataset.originalText;
                 }, 1000);
-            });
-        }
+                return;
+            }
+
+            // Continue with download if license is valid
+            buttonStates[buttonType].isDownloading = true;
+            button.classList.add('loading');
+            button.dataset.downloading = 'true';
+            
+            const videoId = new URLSearchParams(window.location.search).get('v');
+            if (videoId) {
+                const currentVideoUrl = `https://youtu.be/${videoId}`;
+                const serverUrl = 'http://localhost:3001/handle-video-url';
+                const requestData = {
+                    url: currentVideoUrl,
+                    downloadType: downloadType,
+                    ...additionalData
+                };
+
+                fetch(serverUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestData)
+                })
+                .then(response => response.json().then(data => ({status: response.status, data})))
+                .then(({status, data}) => {
+                    if (status === 403) {
+                        resetButtonState(button);
+                        showNotification('Invalid or expired license. Please check your license key.', 'error');
+                        throw new Error('License validation failed');
+                    }
+                    if (status !== 200) {
+                        throw new Error(data.error || 'Failed to process video');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    button.classList.remove('downloading', 'loading');
+                    button.classList.add('failure');
+                    if (error.message === 'Failed to fetch') {
+                        showNotification('Connection to server failed. Please make sure Adobe Premiere Pro is open and YoutubetoPremiere is running.', 'error');
+                    } else if (error.message === 'License validation failed') {
+                        // Don't show another notification since we already showed one above
+                    } else {
+                        showNotification(error.message || 'Failed to process video', 'error');
+                    }
+                    setTimeout(() => {
+                        button.classList.remove('failure');
+                        buttonStates[buttonType].isDownloading = false;
+                        const progressText = button.querySelector('.progress-text');
+                        progressText.textContent = button.dataset.originalText;
+                    }, 1000);
+                });
+            }
+        })
+        .catch(error => {
+            console.error('License check error:', error);
+            button.classList.add('failure');
+            showNotification('Unable to verify license. Please check if the application is running.', 'error');
+            setTimeout(() => {
+                button.classList.remove('failure');
+            }, 1000);
+        });
     }
 }
 
