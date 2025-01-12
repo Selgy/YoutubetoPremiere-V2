@@ -30,6 +30,10 @@ def register_routes(app, socketio, settings):
     def root():
         return "Premiere is alive", 200
     
+    @app.route('/health')
+    def health_check():
+        return jsonify({'status': 'ok'}), 200
+
     @app.route('/get-version', methods=['GET'])
     def get_version():
         return jsonify(version='2.1.6') 

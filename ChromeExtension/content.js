@@ -237,7 +237,6 @@ function initializeSocket() {
 
     socket.on('connect_error', (error) => {
         console.error('Connection error:', error);
-        showNotification('Connection to server failed. Please check if the application is running.', 'error');
     });
 
     socket.on('reconnect_attempt', (attemptNumber) => {
@@ -569,7 +568,7 @@ function sendURL(downloadType, additionalData = {}) {
                 button.classList.remove('downloading', 'loading');
                 button.classList.add('failure');
                 if (error.message === 'Failed to fetch') {
-                    showNotification('Please make sure Adobe Premiere Pro is open and YoutubetoPremiere is running.', 'error');
+                    showNotification('Please make sure Adobe Premiere Pro is running.', 'error');
                 } else {
                     showNotification(error.message || 'Failed to process video', 'error');
                 }

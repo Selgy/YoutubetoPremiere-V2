@@ -9,6 +9,19 @@ let csInterface = null;
 let fsWatcher = null;
 let isProcessing = false;
 
+// Function to check if server is already running
+async function isServerRunning() {
+    try {
+        const response = await fetch('http://localhost:3001/health', {
+            method: 'GET',
+            timeout: 1000
+        });
+        return response.ok;
+    } catch (error) {
+        return false;
+    }
+}
+
 // Wait for CEP to be ready
 function initializeNodeModules() {
     return new Promise((resolve, reject) => {
@@ -265,6 +278,23 @@ async function setupScriptWatcher() {
 async function startPythonServer() {
     console.log("Starting Python server...");
     try {
+        // Check if server is already running
+        const serverRunning = await isServerRunning();
+        if (serverRunning) {
+            console.log("Server is already running, skipping server start");
+            // Still initialize the rest of the extension
+            const [nodeModules, cs] = await Promise.all([
+                initializeNodeModules(),
+                initializeCSInterface()
+            ]);
+            
+            csInterface = cs;
+            await initializeWithRetry(nodeModules);
+            await setupScriptWatcher();
+            setupVideoImportHandler(csInterface);
+            return;
+        }
+
         // Wait for both Node.js modules and CSInterface to be available
         const [nodeModules, cs] = await Promise.all([
             initializeNodeModules(),
