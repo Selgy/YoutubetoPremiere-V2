@@ -232,7 +232,6 @@ function initializeSocket() {
 
     socket.on('connect', () => {
         console.log('Connected to server');
-        showNotification('Connected to Premiere Pro server', 'success');
     });
 
     socket.on('connect_error', (error) => {
@@ -534,8 +533,15 @@ function sendURL(downloadType, additionalData = {}) {
     );
 
     if (button) {
-        // First check license key
-        fetch('http://localhost:3001/check-license')
+        // First check if server is running
+        fetch('http://localhost:3001/health')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Server not running');
+            }
+            // If server is running, then check license
+            return fetch('http://localhost:3001/check-license');
+        })
         .then(response => response.json())
         .then(data => {
             if (!data.isValid) {
@@ -599,9 +605,9 @@ function sendURL(downloadType, additionalData = {}) {
             }
         })
         .catch(error => {
-            console.error('License check error:', error);
+            console.error('Server check error:', error);
             button.classList.add('failure');
-            showNotification('Unable to verify license. Please check if the application is running.', 'error');
+            showNotification('Please make sure YoutubetoPremiere is running.', 'error');
             setTimeout(() => {
                 button.classList.remove('failure');
             }, 1000);
