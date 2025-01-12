@@ -43,18 +43,49 @@ export function setupVideoImportHandler(csInterface) {
 
             // Use evalTS to call the ExtendScript function
             const result = await evalTS('importVideoToSource', videoPath);
-            console.log('Import result:', result);
+            console.log('Import result:', result, 'Type:', typeof result);
 
-            if (result && result.includes('Error:')) {
-                throw new Error(result);
+            let response;
+            let success = false;
+
+            // Handle boolean responses and string 'true'/'false'
+            if (typeof result === 'boolean' || result === 'true' || result === 'false') {
+                console.log('Handling boolean/string-boolean response:', result);
+                success = result === true || result === 'true';
+                response = {
+                    success: success,
+                    path: videoPath,
+                    projectItem: null
+                };
+                console.log('Created boolean response:', response);
+            }
+            // Handle object response
+            else if (result && typeof result === 'object') {
+                console.log('Handling object response:', result);
+                success = result.success === true;
+                response = {
+                    success: success,
+                    path: result.path || videoPath,
+                    projectItem: result.projectItem,
+                    error: success ? undefined : (result.error || 'Import failed')
+                };
+                console.log('Created object response:', response);
+            }
+            // Handle invalid response
+            else {
+                console.log('Handling invalid response:', result);
+                response = {
+                    success: false,
+                    error: 'Invalid response format from Premiere',
+                    path: videoPath,
+                    projectItem: null
+                };
+                console.log('Created invalid response:', response);
             }
 
-            socket.emit('import_complete', {
-                success: true,
-                path: videoPath
-            });
-
-            return true;
+            console.log('Final success:', success, 'Final response:', response);
+            socket.emit('import_complete', response);
+            return success;
         } catch (error) {
             console.error('Import failed:', error);
             socket.emit('import_complete', {
