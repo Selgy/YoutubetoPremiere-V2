@@ -118,12 +118,16 @@ def validate_license(license_key):
 
     return False
 
-def handle_video_url(video_url, download_type, current_download, socketio):
+def handle_video_url(video_url, download_type, current_download, socketio, clip_start=None, clip_end=None):
     try:
-        # Get the download path
-        download_path = get_default_download_path()
+        # Get the download path from config or extension
+        download_path = get_default_download_path(socketio)
         if not download_path:
-            return {'error': 'Download path not set'}
+            # Request project path from extension
+            socketio.emit('request_project_path')
+            # Note: The path will be received asynchronously and stored by the extension
+            # We'll use the path from get_default_download_path in the download functions
+            logging.info("Requested project path from extension")
 
         # Get ffmpeg path
         ffmpeg_path = get_ffmpeg_path()
@@ -134,13 +138,13 @@ def handle_video_url(video_url, download_type, current_download, socketio):
         if download_type == 'audio':
             result = download_audio(video_url, download_path, ffmpeg_path, socketio, current_download=current_download)
         elif download_type == 'clip':
-            # For clips, we need additional parameters
+            # For clips, use the provided start and end times
             result = download_and_process_clip(
                 video_url=video_url,
                 resolution='1080p',
-                download_path=download_path,
-                clip_start=0,  # Default to start of video
-                clip_end=None,  # Default to end of video
+                download_path=download_path,  # Pass the download_path here
+                clip_start=clip_start,
+                clip_end=clip_end,
                 download_mp3=False,
                 ffmpeg_path=ffmpeg_path,
                 socketio=socketio,
@@ -151,7 +155,7 @@ def handle_video_url(video_url, download_type, current_download, socketio):
             result = download_video(
                 video_url=video_url,
                 resolution='1080p',
-                download_path=download_path,
+                download_path=download_path,  # Pass the download_path here
                 download_mp3=False,
                 ffmpeg_path=ffmpeg_path,
                 socketio=socketio,
@@ -179,9 +183,6 @@ def handle_video_url(video_url, download_type, current_download, socketio):
         return {'error': str(e)}
 
 def download_and_process_clip(video_url, resolution, download_path, clip_start, clip_end, download_mp3, ffmpeg_path, socketio, settings, current_download):
-    if not check_ffmpeg(settings, socketio):
-        return
-
     clip_duration = clip_end - clip_start
     logging.info(f"Received clip parameters: clip_start={clip_start}, clip_end={clip_end}, clip_duration={clip_duration}")
 
@@ -192,101 +193,85 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         return
 
     try:
-        import yt_dlp
-
-        def progress_hook(d):
-            if d['status'] == 'downloading':
-                try:
-                    if '_percent_str' in d:
-                        percentage = d['_percent_str'].strip()
-                        percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
-                        percentage = percentage.replace(' ', '')
-                        if not percentage.endswith('%'):
-                            percentage += '%'
-                        logging.info(f'Progress: {percentage}')
-                        socketio.emit('percentage', {'percentage': percentage, 'type': 'video'})
-                except Exception as e:
-                    logging.error(f"Error in progress hook: {e}")
-
-        # Configure yt-dlp options
-        format_string = f'bestvideo[vcodec^=avc1][ext=mp4][height<={resolution}]+bestaudio[ext=m4a]/best[ext=mp4]'
-        logging.info(f"Using format string: {format_string}")
-
-        # Extract video info first to get duration
-        with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
-            info = ydl.extract_info(video_url, download=False)
-            if not info:
+        # Extract video info first
+        with youtube_dl.YoutubeDL({'quiet': True}) as ydl:
+            video_info = ydl.extract_info(video_url, download=False)
+            if not video_info:
                 raise Exception("Could not extract video information")
             
-            # Get video details
-            title = info.get('title', 'video')
-            duration = info.get('duration', 0)
-            
-            if clip_start >= duration or clip_end > duration:
-                raise Exception(f"Clip timestamps ({clip_start}-{clip_end}) exceed video duration ({duration})")
-
-            # Sanitize the title and add clip suffix
+            # Get video details and sanitize title
+            title = video_info.get('title', 'video')
             sanitized_title = sanitize_youtube_title(title)
-            clip_title = f"{sanitized_title}_clip"
             
             # Get unique filename
-            unique_filename = get_unique_filename(final_download_path, clip_title, 'mp4')
-            output_path = os.path.join(final_download_path, unique_filename)
-            logging.info(f"Setting output path to: {output_path}")
+            unique_filename = get_unique_filename(final_download_path, sanitized_title + '_clip', 'mp4')
+            video_file_path = os.path.join(final_download_path, unique_filename)
+            logging.info(f"Setting output path to: {video_file_path}")
 
-            # Download the clip section
-            ydl_opts = {
-                'format': format_string,
-                'outtmpl': {
-                    'default': os.path.join(final_download_path, os.path.splitext(unique_filename)[0] + '.%(ext)s')
-                },
-                'download_ranges': lambda info_dict, ydl: [{'start_time': clip_start, 'end_time': clip_end}],
-                'force_keyframes_at_cuts': True,
-                'ffmpeg_location': os.path.dirname(ffmpeg_path),  # Use the directory of the full path
-                'progress_hooks': [progress_hook],
-                'extractor_args': {'youtube': {'player_client': ['ios', 'mweb']}},
-                'postprocessor_args': {
-                    'ffmpeg': ['-ss', str(clip_start), '-t', str(clip_end - clip_start)]
-                }
-            }
+        # Download the clip using command line arguments
+        command = [
+            sys.executable, '-m', 'yt_dlp',
+            '--download-sections', f'*{clip_start}-{clip_end}',
+            '--force-keyframes-at-cuts',
+            '-f', f'bestvideo[ext=mp4][vcodec^=avc1][height<={resolution}]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            '-o', video_file_path,
+            '--ffmpeg-location', os.path.dirname(ffmpeg_path),
+            '--postprocessor-args', f'ffmpeg:-ss {clip_start} -t {clip_end - clip_start}',
+            '--no-keep-video',
+            video_url
+        ]
+        
+        try:
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            current_download['process'] = process
+            stdout, stderr = process.communicate()
+            
+            if process.returncode != 0 and process.returncode != -15:  # -15 is the signal for termination
+                error_message = f"Error downloading clip: {stderr}"
+                logging.error(error_message)
+                socketio.emit('download-failed', {'message': error_message})
+                return
+            elif process.returncode == -15:  # Download was cancelled
+                if os.path.exists(video_file_path):
+                    os.remove(video_file_path)
+                return
+        except subprocess.CalledProcessError as e:
+            error_message = f"Error downloading clip: {e.stderr}"
+            logging.error(error_message)
+            socketio.emit('download-failed', {'message': error_message})
+            return
+        finally:
+            current_download['process'] = None
 
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([video_url])
+        if os.path.exists(video_file_path):
+            logging.info(f"Clip downloaded: {video_file_path}")
 
-            if os.path.exists(output_path):
-                # Add URL to metadata
-                metadata_command = [
-                    ffmpeg_path,  # Use the full path here
-                    '-i', output_path,
-                    '-metadata', f'comment={video_url}',
-                    '-codec', 'copy',
-                    f'{output_path}_with_metadata.mp4'
-                ]
-                logging.info(f"Running FFmpeg metadata command: {' '.join(metadata_command)}")
+            # Add URL to metadata
+            metadata_command = [
+                ffmpeg_path,
+                '-i', video_file_path,
+                '-metadata', f'comment={video_url}',
+                '-codec', 'copy',
+                f'{video_file_path}_with_metadata.mp4'
+            ]
 
-                try:
-                    subprocess.run(metadata_command, check=True)
-                    os.replace(f'{output_path}_with_metadata.mp4', output_path)
-                    
-                    logging.info(f"Clip downloaded and processed: {output_path}")
-                    socketio.emit('import_video', {'path': output_path})
-                    socketio.emit('download-complete')
-                    
-                    return output_path
-                except subprocess.CalledProcessError as e:
-                    logging.error(f"Error adding metadata: {e}")
-                    logging.error(f"FFmpeg stderr: {e.stderr if hasattr(e, 'stderr') else 'No stderr'}")
-                    socketio.emit('download-failed', {'message': 'Failed to add metadata.'})
-                    return None
-            else:
-                logging.error(f"File not found at expected path: {output_path}")
-                raise Exception(f"Downloaded file not found at {output_path}")
+            try:
+                subprocess.run(metadata_command, check=True)
+                os.replace(f'{video_file_path}_with_metadata.mp4', video_file_path)
+                logging.info(f"Metadata added: {video_file_path}")
+                
+                socketio.emit('import_video', {'path': video_file_path})
+                socketio.emit('download-complete')
+                return video_file_path  # Return the path to the downloaded file
+            except subprocess.CalledProcessError as e:
+                logging.error(f"Error adding metadata: {e}")
+                socketio.emit('download-failed', {'message': 'Failed to add metadata.'})
+                return None
 
     except Exception as e:
         error_message = f"Error downloading clip: {str(e)}"
         logging.error(error_message)
-        logging.error(f"Exception type: {type(e)}")
-        logging.error(f"Exception traceback: {traceback.format_exc()}")
+        logging.error(f"Full error details: {type(e).__name__}")
         socketio.emit('download-failed', {'message': error_message})
         return None
 
@@ -529,6 +514,13 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, settings=Non
         logging.error(f"Exception traceback: {traceback.format_exc()}")
         socketio.emit('download-failed', {'message': error_message})
         return None
+
+def format_timestamp(seconds):
+    """Convert seconds to HH:MM:SS format"""
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    seconds = seconds % 60
+    return f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
 
 # Main execution
 if __name__ == "__main__":

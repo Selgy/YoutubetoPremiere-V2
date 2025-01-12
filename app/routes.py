@@ -77,8 +77,29 @@ def register_routes(app, socketio, settings):
             # Emit start event to all connected clients
             socketio.emit('download_started', {'url': video_url})
             
-            # Process the video
-            result = handle_video_url(video_url, download_type, current_download, socketio)
+            # For clip downloads, get the current time and settings
+            if download_type == 'clip':
+                current_time = data.get('currentTime', 0)
+                current_settings = load_settings()
+                seconds_before = float(current_settings.get('secondsBefore', 15))
+                seconds_after = float(current_settings.get('secondsAfter', 15))
+                
+                # Calculate clip start and end times
+                clip_start = max(0, current_time - seconds_before)
+                clip_end = current_time + seconds_after
+                
+                # Process the video with clip parameters
+                result = handle_video_url(
+                    video_url, 
+                    download_type, 
+                    current_download, 
+                    socketio,
+                    clip_start=clip_start,
+                    clip_end=clip_end
+                )
+            else:
+                # Process the video normally for other types
+                result = handle_video_url(video_url, download_type, current_download, socketio)
             
             if result.get('error'):
                 error_msg = result['error']
