@@ -118,74 +118,65 @@ def validate_license(license_key):
 
     return False
 
-def handle_video_url(request, settings, socketio, current_download):
-    # Check FFmpeg availability first
-    if not check_ffmpeg(settings, socketio):
-        return jsonify(error="FFmpeg not available"), 400
-
-    # Check license validity
-    license_key = get_license_key()
-    if not validate_license(license_key):
-        error_message = "No valid license found. Please enter a valid license key."
-        logging.error(error_message)
-        socketio.emit('download-failed', {'error': error_message})
-        return jsonify(error=error_message), 403
-
-    data = request.get_json()
-    logging.info(f"Received data: {data}")
-    logging.info(f"Request headers: {dict(request.headers)}")
-    logging.info(f"Request method: {request.method}")
-    logging.info(f"Request content type: {request.content_type}")
-
-    if not data:
-        logging.error("No data received in request.")
-        return jsonify(error="No data provided"), 400
-
-    video_url = data.get('videoUrl')
-    logging.info(f"Video URL: {video_url}, Type: {type(video_url)}")
-    if not video_url:
-        logging.error("No video URL provided")
-        return jsonify(error="No video URL provided"), 400
-
-    current_time = data.get('currentTime')
-    download_type = data.get('downloadType')
-    download_path = data.get('downloadPath', settings.get('downloadPath', '')).strip()
-
-    # If download_path is empty, get it from the project
-    if not download_path:
-        download_path = get_default_download_path(socketio)
-        if download_path is None:
-            return jsonify(error="No active Premiere Pro project found."), 400
-
+def handle_video_url(video_url, download_type, current_download, socketio):
     try:
-        seconds_before = int(data.get('secondsBefore', settings['secondsBefore']))
-        seconds_after = int(data.get('secondsAfter', settings['secondsAfter']))
-    except (ValueError, TypeError):
-        logging.error("Invalid secondsBefore or secondsAfter values.")
-        return jsonify(error="Invalid time settings"), 400
+        # Get the download path
+        download_path = get_default_download_path()
+        if not download_path:
+            return {'error': 'Download path not set'}
 
-    if download_type not in ['clip', 'full', 'audio']:
-        logging.error(f"Invalid download type: {download_type}")
-        return jsonify(error="Invalid download type"), 400
+        # Get ffmpeg path
+        ffmpeg_path = get_ffmpeg_path()
+        if not ffmpeg_path:
+            return {'error': 'FFmpeg not found'}
 
-    resolution = settings.get('resolution')
-    download_mp3 = settings.get('downloadMP3')
-
-    if not is_premiere_running():
-        return jsonify(error="Adobe Premiere Pro is not running"), 400
-
-    if download_type == 'clip':
-        clip_start = max(0, current_time - seconds_before)
-        clip_end = current_time + seconds_after
-        download_and_process_clip(video_url, resolution, download_path, clip_start, clip_end, download_mp3, settings['ffmpeg_path'], socketio, settings, current_download)
-    elif download_type == 'full':
-        download_video(video_url, resolution, download_path, download_mp3, settings['ffmpeg_path'], socketio, settings, current_download)
-    elif download_type == 'audio':
-        download_audio(video_url, download_path, settings['ffmpeg_path'], socketio, settings, current_download)
-
-    return jsonify(success=True), 200
-
-
+        # Process based on download type
+        if download_type == 'audio':
+            result = download_audio(video_url, download_path, ffmpeg_path, socketio, current_download=current_download)
+        elif download_type == 'clip':
+            # For clips, we need additional parameters
+            result = download_and_process_clip(
+                video_url=video_url,
+                resolution='1080p',
+                download_path=download_path,
+                clip_start=0,  # Default to start of video
+                clip_end=None,  # Default to end of video
+                download_mp3=False,
+                ffmpeg_path=ffmpeg_path,
+                socketio=socketio,
+                settings={},
+                current_download=current_download
+            )
+        else:  # full video
+            result = download_video(
+                video_url=video_url,
+                resolution='1080p',
+                download_path=download_path,
+                download_mp3=False,
+                ffmpeg_path=ffmpeg_path,
+                socketio=socketio,
+                settings={},
+                current_download=current_download
+            )
+            
+        # Handle the result
+        if isinstance(result, str):
+            # If result is a path string, emit success events
+            socketio.emit('import_video', {'path': result})
+            socketio.emit('download_complete')
+            return {'success': True, 'path': result}
+        elif isinstance(result, dict):
+            # If result is a dict with a path, emit success events
+            if result.get('path'):
+                socketio.emit('import_video', {'path': result['path']})
+                socketio.emit('download_complete')
+            return result
+        else:
+            return {'error': 'Unknown error occurred'}
+                
+    except Exception as e:
+        logging.error(f"Error in handle_video_url: {str(e)}")
+        return {'error': str(e)}
 
 def download_and_process_clip(video_url, resolution, download_path, clip_start, clip_end, download_mp3, ffmpeg_path, socketio, settings, current_download):
     if not check_ffmpeg(settings, socketio):

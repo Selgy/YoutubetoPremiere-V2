@@ -10,19 +10,21 @@ import socket
 
 def register_routes(app, socketio, settings):
     current_download = {'process': None}
+    connected_clients = set()
 
-    @socketio.on('cancel-download')
-    def handle_cancel_download(data):
-        try:
-            if current_download['process']:
-                logging.info('Cancelling download process')
-                current_download['process'].kill()
-                current_download['process'] = None
-                socketio.emit('download-cancelled')
-                logging.info('Download cancelled successfully')
-        except Exception as e:
-            logging.error(f"Error cancelling download: {e}")
-            socketio.emit('download-failed', {'message': str(e)})
+    @socketio.on('connect')
+    def handle_connect():
+        client_id = request.sid
+        connected_clients.add(client_id)
+        logging.info(f'Client connected: {client_id}')
+        socketio.emit('connection_status', {'status': 'connected'}, room=client_id)
+
+    @socketio.on('disconnect')
+    def handle_disconnect():
+        client_id = request.sid
+        if client_id in connected_clients:
+            connected_clients.remove(client_id)
+        logging.info(f'Client disconnected: {client_id}')
 
     @app.route('/')
     def root():
@@ -61,45 +63,40 @@ def register_routes(app, socketio, settings):
     @app.route('/handle-video-url', methods=['POST'])
     def handle_video_url_route():
         try:
-            # Check license validity first
-            license_key = get_license_key()
-            if not license_key:
-                socketio.emit('download-failed', {'error': 'No license key found'})
-                return jsonify(success=False, error='No license key found'), 403
+            data = request.get_json()
+            if not data:
+                return jsonify({'error': 'No data provided'}), 400
 
-            # Try Gumroad validation
-            gumroad_response = requests.post('https://api.gumroad.com/v2/licenses/verify', {
-                'product_id': '9yYJT15dJO3wB4Z74N-EUg==',
-                'license_key': license_key
-            })
+            # Accept both 'url' and 'videoUrl' parameters for backward compatibility
+            video_url = data.get('url') or data.get('videoUrl')
+            if not video_url:
+                return jsonify({'error': 'No URL provided'}), 400
 
-            if not (gumroad_response.ok and gumroad_response.json().get('success')):
-                # Try Shopify validation
-                api_token = 'eHyU10yFizUV5qUJaFS8koE1nIx2UCDFNSoPVdDRJDI7xtunUK6ZWe40vfwp'
-                shopify_response = requests.post(
-                    f'https://app-easy-product-downloads.fr/api/get-license-key',
-                    params={'license_key': license_key, 'api_token': api_token}
-                )
-
-                if not (shopify_response.ok and shopify_response.json().get('status') == 'success'):
-                    socketio.emit('download-failed', {'error': 'Invalid license key'})
-                    return jsonify(success=False, error='Invalid license key'), 403
-
-            # If we get here, license is valid, proceed with video download
-            try:
-                result = handle_video_url(request, settings, socketio, current_download)
-                return result
-            except Exception as e:
-                error_message = str(e)
-                logging.error(f"Error in video processing: {error_message}")
-                socketio.emit('download-failed', {'error': error_message})
-                return jsonify(success=False, error=error_message), 500
-
+            download_type = data.get('downloadType', 'video')
+            
+            # Emit start event to all connected clients
+            socketio.emit('download_started', {'url': video_url})
+            
+            # Process the video
+            result = handle_video_url(video_url, download_type, current_download, socketio)
+            
+            if result.get('error'):
+                error_msg = result['error']
+                socketio.emit('download_error', {'error': error_msg})
+                return jsonify({'error': error_msg}), 500
+                
+            # If successful, return the result
+            if result.get('path'):
+                # Note: The download_complete and import_video events are now emitted by handle_video_url
+                return jsonify(result), 200
+            
+            return jsonify({'error': 'Unknown error occurred'}), 500
+            
         except Exception as e:
-            error_message = str(e)
-            logging.error(f"Error handling video URL: {error_message}")
-            socketio.emit('download-failed', {'error': error_message})
-            return jsonify(success=False, error=error_message), 500
+            error_msg = f"Error processing video URL: {str(e)}"
+            logging.error(error_msg)
+            socketio.emit('download_error', {'error': error_msg})
+            return jsonify({'error': error_msg}), 500
 
     @app.route('/update-sound-settings', methods=['POST'])
     def update_sound_settings():

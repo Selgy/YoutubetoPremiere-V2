@@ -5,7 +5,15 @@
     - No After Effects-specific calls (like new ImportOptions)
 */
 (function() {
+    // Initialize the ExtendScript environment
+    if (typeof $ === 'undefined') {
+        throw new Error('ExtendScript environment not initialized');
+    }
+
+    $.writeln("[DEBUG] Starting importVideo.jsx initialization");
+    
     if (typeof $._ext === 'undefined') {
+        $.writeln("[DEBUG] Creating $._ext namespace");
         $._ext = {};
     }
 
@@ -14,16 +22,20 @@
         $.writeln("[DEBUG] " + message);
     };
 
+    $._ext.debug("Initializing importVideoToSource function");
+
     // Main function to import a file and open it in the Source Monitor
     $._ext.importVideoToSource = function(videoPath) {
         try {
             $._ext.debug("Starting import for: " + videoPath);
 
+            // Verify Premiere Pro environment
+            if (typeof app === 'undefined' || !app.project) {
+                throw new Error("Premiere Pro project not available");
+            }
+
             // Get the active Premiere project
             var project = app.project;
-            if (!project) {
-                throw new Error("No active Premiere project found.");
-            }
             $._ext.debug("Project found.");
 
             // Import the file using Premiere's project.importFiles()
@@ -47,7 +59,6 @@
                 $._ext.debug("Trying sourceMonitor access...");
                 if (app && app.sourceMonitor) {
                     // Premiere's sourceMonitor is available
-                    var sourceMonitor = app.sourceMonitor;
                     importedFile[0].openInSourceMonitor();
                     success = true;
                     $._ext.debug("Opened in Source Monitor via imported item.");
@@ -76,11 +87,13 @@
             }
 
             $._ext.debug("Import and Source Monitor open complete.");
-            return "true";
+            return { success: true };
         } catch(e) {
             var errorMsg = "Error: " + e.toString();
             $._ext.debug(errorMsg);
-            return errorMsg;
+            return { success: false, error: errorMsg };
         }
     };
-}());
+
+    $._ext.debug("importVideo.jsx initialization complete");
+})();

@@ -222,18 +222,35 @@ const buttonStates = {
 let socket = null;
 
 function initializeSocket() {
-    if (socket) {
-        socket.disconnect();
-    }
-    
-    socket = io.connect('http://localhost:3001', {
+    const socket = io('http://localhost:3001', {
         reconnection: true,
+        reconnectionAttempts: 5,
         reconnectionDelay: 1000,
         reconnectionDelayMax: 5000,
-        reconnectionAttempts: 5,
-        transports: ['polling', 'websocket'],
-        upgrade: true,
-        query: { client_type: 'chrome' },
+        timeout: 20000
+    });
+
+    socket.on('connect', () => {
+        console.log('Connected to server');
+        showNotification('Connected to Premiere Pro server', 'success');
+    });
+
+    socket.on('connect_error', (error) => {
+        console.error('Connection error:', error);
+        showNotification('Connection to server failed. Please check if the application is running.', 'error');
+    });
+
+    socket.on('reconnect_attempt', (attemptNumber) => {
+        console.log(`Attempting to reconnect... (${attemptNumber})`);
+    });
+
+    socket.on('disconnect', (reason) => {
+        console.log('Disconnected:', reason);
+        if (reason === 'io server disconnect') {
+            // Server initiated disconnect, try to reconnect
+            socket.connect();
+        }
+        showNotification('Disconnected from server. Attempting to reconnect...', 'warning');
     });
 
     // Clean up existing listeners
@@ -528,7 +545,7 @@ function sendURL(downloadType, additionalData = {}) {
             const currentVideoUrl = `https://youtu.be/${videoId}`;
             const serverUrl = 'http://localhost:3001/handle-video-url';
             const requestData = {
-                videoUrl: currentVideoUrl,
+                url: currentVideoUrl,
                 downloadType: downloadType,
                 ...additionalData
             };
@@ -551,7 +568,6 @@ function sendURL(downloadType, additionalData = {}) {
                 console.error('Error:', error);
                 button.classList.remove('downloading', 'loading');
                 button.classList.add('failure');
-                // Show the server connection error only when a button is pressed
                 if (error.message === 'Failed to fetch') {
                     showNotification('Please make sure Adobe Premiere Pro is open and YoutubetoPremiere is running.', 'error');
                 } else {
