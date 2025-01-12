@@ -11,7 +11,6 @@ const Settings = ({ onBack }: SettingsProps) => {
     notificationVolume: 30,
     notificationSound: 'notification_sound',
     resolution: '1080',
-    downloadPath: '',
     downloadMP3: false,
     secondsBefore: '15',
     secondsAfter: '15',
@@ -19,11 +18,19 @@ const Settings = ({ onBack }: SettingsProps) => {
   });
   const [isTestPlaying, setIsTestPlaying] = useState(false);
   const [availableSounds, setAvailableSounds] = useState<string[]>([]);
+  const [serverIP, setServerIP] = useState('localhost');
+
+  useEffect(() => {
+    const storedIP = localStorage.getItem('serverIP');
+    if (storedIP) {
+      setServerIP(storedIP);
+    }
+  }, []);
 
   const saveSettings = async (newSettings: typeof settings) => {
     try {
       // First get current settings from server
-      const response = await fetch('http://localhost:3001/settings');
+      const response = await fetch(`http://${serverIP}:3001/settings`);
       let settingsToSave = newSettings;
       
       if (response.ok) {
@@ -36,7 +43,7 @@ const Settings = ({ onBack }: SettingsProps) => {
       setSettings(settingsToSave);
       localStorage.setItem('settings', JSON.stringify(settingsToSave));
 
-      const saveResponse = await fetch('http://localhost:3001/settings', {
+      const saveResponse = await fetch(`http://${serverIP}:3001/settings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -49,6 +56,9 @@ const Settings = ({ onBack }: SettingsProps) => {
       }
     } catch (error) {
       console.error('Error saving settings:', error);
+      // On error, keep the local state but don't throw
+      setSettings(newSettings);
+      localStorage.setItem('settings', JSON.stringify(newSettings));
     }
   };
 

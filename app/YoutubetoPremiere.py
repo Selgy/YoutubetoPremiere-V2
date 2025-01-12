@@ -168,32 +168,29 @@ def handle_connect():
     
     # Validate client type
     if client_type not in ['chrome', 'premiere']:
-        logging.warning(f'Rejecting connection with invalid client type: {client_type}')
-        return False
+        client_type = 'unknown'
+        logging.warning(f'Connection with unspecified client type from {client_ip}')
     
     # Check if this IP already has a connection of this type
     existing_sid = connected_clients[client_type].get(client_ip)
     if existing_sid:
-        # If the existing connection is still active, reject the new one
+        # If the existing connection is still active, update it
         if socketio.server.manager.is_connected(existing_sid):
-            logging.warning(f'Rejecting duplicate connection from {client_ip} for {client_type}')
-            return False
-        # If the existing connection is dead, remove it
-        else:
+            logging.info(f'Updating existing connection for {client_ip} ({client_type})')
             del connected_clients[client_type][client_ip]
+        else:
+            logging.info(f'Replacing dead connection for {client_ip} ({client_type})')
     
     # Add new connection
     connected_clients[client_type][client_ip] = sid
     
     logging.info(f'Client connected - Type: {client_type}, SID: {sid}, IP: {client_ip}')
-    try:
-        emit_to_client_type('connection_established', {'status': 'connected'}, client_type)
-    except Exception as e:
-        logging.error(f'Error in handle_connect: {str(e)}')
+    socketio.emit('connection_status', {'status': 'connected'}, room=sid)
 
 @socketio.on('disconnect')
-def handle_disconnect():
-    sid = request.sid
+def handle_disconnect(sid=None):
+    """Handle client disconnection"""
+    sid = sid or request.sid
     client_ip = request.remote_addr
     
     # Remove from appropriate client list
@@ -266,23 +263,22 @@ def handle_import_complete(data):
     """Handle import completion events"""
     success = data.get('success', False)
     path = data.get('path', '')
+    
     if success:
         logging.info(f'Successfully imported video: {path}')
+        # Play notification sound
         settings = load_settings()
         volume = settings.get('notificationVolume', 30) / 100
         sound_type = settings.get('notificationSound', 'default')
         play_notification_sound(volume=volume, sound_type=sound_type)
-        # Notify Premiere extension of import status
-        emit_to_client_type('import_status', {'success': True, 'message': 'Video imported successfully'}, 'premiere')
-        # Notify Chrome extension to update UI
-        emit_to_client_type('import_success', {'path': path}, 'chrome')
+        
+        # Forward the complete event to all clients
+        socketio.emit('import_complete', data)
     else:
         error = data.get('error', 'Unknown error')
         logging.error(f'Failed to import video: {path}. Error: {error}')
-        # Notify Premiere extension of import status
-        emit_to_client_type('import_status', {'success': False, 'message': f'Import failed: {error}'}, 'premiere')
-        # Notify Chrome extension of failure
-        emit_to_client_type('import_failed', {'path': path, 'error': error}, 'chrome')
+        # Forward the error to all clients
+        socketio.emit('import_failed', {'path': path, 'error': error})
 
 @socketio.on('get_project_path')
 def handle_get_project_path():

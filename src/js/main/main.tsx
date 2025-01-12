@@ -2,6 +2,13 @@ import { useEffect, useState } from 'react';
 import './styles.css';
 import Settings from './Settings';
 import io from 'socket.io-client';
+import CSInterface from '../lib/cep/csinterface';
+import { SystemPath } from '../lib/cep/csinterface';
+
+declare const window: Window & {
+  cep: any;
+  __adobe_cep__: any;
+};
 
 // Get the local IP address from the server
 const getLocalIP = async () => {
@@ -54,6 +61,21 @@ const Main = () => {
   const currentVersion = '3.0.0'; // Get this from your package.json
   const [currentPage, setCurrentPage] = useState('main');
   const [serverIP, setServerIP] = useState('localhost');
+  const [isCEPEnvironment, setIsCEPEnvironment] = useState(false);
+
+  useEffect(() => {
+    const checkCEPEnvironment = () => {
+      const isCEP = !!(window.cep && window.__adobe_cep__);
+      console.log('CEP Environment check:', isCEP);
+      setIsCEPEnvironment(isCEP);
+      
+      if (!isCEP) {
+        console.error('Not running in CEP environment - some features will be disabled');
+      }
+    };
+    
+    checkCEPEnvironment();
+  }, []);
 
   useEffect(() => {
     const initializeConnection = async () => {
@@ -284,6 +306,55 @@ const Main = () => {
     saveSettings({ ...settings, downloadPath: path });
   };
 
+  const handleFolderSelect = () => {
+    console.log('Browse button clicked');
+    console.log('CEP Environment:', isCEPEnvironment);
+    
+    if (!isCEPEnvironment) {
+      console.error('Cannot use folder dialog - not in CEP environment');
+      return;
+    }
+
+    try {
+      const result = window.cep.fs.showOpenDialogEx(false, true, "Select Download Folder", null);
+      console.log('Dialog result:', result);
+      
+      if (result.err === 0 && result.data?.[0]) {
+        const selectedPath = result.data[0];
+        console.log('Selected path:', selectedPath);
+        handlePathChange(selectedPath);
+      } else {
+        console.log('No folder selected or dialog cancelled');
+      }
+    } catch (error) {
+      console.error("Error showing folder dialog:", error);
+    }
+  };
+
+  const handleDownloadPathChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newPath = e.target.value;
+    const newSettings = { ...settings, downloadPath: newPath };
+    setSettings(newSettings);
+    
+    try {
+      const response = await fetch(`http://${serverIP}:3001/settings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(newSettings),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to save settings');
+      }
+      
+      localStorage.setItem('settings', JSON.stringify(newSettings));
+    } catch (error) {
+      console.error('Error saving download path:', error);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-4 sm:p-6">
@@ -351,44 +422,26 @@ const Main = () => {
             </select>
           </div>
 
-          <div className="bg-background-panel rounded-lg p-4 sm:p-6">
-            <label htmlFor="download-path" className="block text-white font-medium mb-2">
+          <div className="mb-6">
+            <label className="block text-white font-medium mb-2">
               Download Path:
             </label>
-            <div className="relative">
+            <div className="flex gap-2">
               <input
                 type="text"
-                id="download-path"
                 value={settings.downloadPath}
-                onChange={(e) => handlePathChange(e.target.value)}
-                placeholder="Enter path here"
-                className="input-base pr-12"
+                onChange={handleDownloadPathChange}
+                placeholder="If left empty, the video will be saved in a folder next to the currently open Premiere Pro project."
+                className="input-base flex-1"
               />
-              <button 
-                className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center bg-primary rounded-md hover:bg-primary-hover transition-colors"
-                onClick={() => setShowDropdown(!showDropdown)}
+              <button
+                onClick={handleFolderSelect}
+                className="bg-primary hover:bg-primary/80 text-white font-medium py-2 px-4 rounded-lg transition-colors"
               >
-                <span className="transform transition-transform duration-200" style={{ transform: showDropdown ? 'rotate(180deg)' : 'rotate(0deg)' }}>▼</span>
+                Browse
               </button>
-              
-              {showDropdown && lastPaths.length > 0 && (
-                <ul className="absolute w-full mt-1 bg-background-panel border border-border rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto">
-                  {lastPaths.map((path, index) => (
-                    <li 
-                      key={index}
-                      onClick={() => {
-                        handlePathChange(path);
-                        setShowDropdown(false);
-                      }}
-                      className="px-4 py-2 hover:bg-primary/20 cursor-pointer text-white text-sm sm:text-base"
-                    >
-                      {path}
-                    </li>
-                  ))}
-                </ul>
-              )}
             </div>
-            <p className="text-gray-400 text-xs sm:text-sm mt-2">
+            <p className="text-sm text-gray-400 mt-1">
               If left empty, the video will be saved in a folder next to the currently open Premiere Pro project.
             </p>
           </div>

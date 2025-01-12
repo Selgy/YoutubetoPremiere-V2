@@ -78,13 +78,16 @@ def register_routes(app, socketio, settings):
 
             download_type = data.get('downloadType', 'video')
             
+            # Load current settings
+            current_settings = load_settings()
+            logging.info(f"Current settings for download: {current_settings}")
+            
             # Emit start event to all connected clients
             socketio.emit('download_started', {'url': video_url})
             
             # For clip downloads, get the current time and settings
             if download_type == 'clip':
                 current_time = data.get('currentTime', 0)
-                current_settings = load_settings()
                 seconds_before = float(current_settings.get('secondsBefore', 15))
                 seconds_after = float(current_settings.get('secondsAfter', 15))
                 
@@ -94,34 +97,32 @@ def register_routes(app, socketio, settings):
                 
                 # Process the video with clip parameters
                 result = handle_video_url(
-                    video_url, 
-                    download_type, 
-                    current_download, 
-                    socketio,
+                    video_url=video_url, 
+                    download_type=download_type, 
+                    current_download=current_download, 
+                    socketio=socketio,
                     clip_start=clip_start,
-                    clip_end=clip_end
+                    clip_end=clip_end,
+                    settings=current_settings
                 )
             else:
-                # Process the video normally for other types
-                result = handle_video_url(video_url, download_type, current_download, socketio)
-            
-            if result.get('error'):
-                error_msg = result['error']
-                socketio.emit('download_error', {'error': error_msg})
-                return jsonify({'error': error_msg}), 500
+                # Process the full video with current settings
+                result = handle_video_url(
+                    video_url=video_url, 
+                    download_type=download_type, 
+                    current_download=current_download, 
+                    socketio=socketio,
+                    settings=current_settings
+                )
+
+            if isinstance(result, dict) and result.get('error'):
+                return jsonify(result), 400
                 
-            # If successful, return the result
-            if result.get('path'):
-                # Note: The download_complete and import_video events are now emitted by handle_video_url
-                return jsonify(result), 200
-            
-            return jsonify({'error': 'Unknown error occurred'}), 500
+            return jsonify(result or {'success': True}), 200
             
         except Exception as e:
-            error_msg = f"Error processing video URL: {str(e)}"
-            logging.error(error_msg)
-            socketio.emit('download_error', {'error': error_msg})
-            return jsonify({'error': error_msg}), 500
+            logging.error(f"Error handling video URL: {str(e)}")
+            return jsonify({'error': str(e)}), 500
 
     @app.route('/update-sound-settings', methods=['POST'])
     def update_sound_settings():

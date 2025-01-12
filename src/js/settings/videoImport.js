@@ -139,10 +139,41 @@ export function setupVideoImportHandler(csInterface) {
 
         socket.on('import_video', async (data) => {
             console.log('Received import request for:', data.path);
+            if (!data.path) {
+                console.error('No path provided for import');
+                return;
+            }
+
+            // Normalize path for Windows
+            let normalizedPath = data.path.replace(/\//g, '\\');
+            console.log('Normalized path for import:', normalizedPath);
+
             try {
-                await importVideo(data.path);
+                // Wait a bit to ensure the file is fully written
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                // Verify file exists before import
+                const fs = window.cep_node.require('fs');
+                if (!fs.existsSync(normalizedPath)) {
+                    console.error('File does not exist at path:', normalizedPath);
+                    socket.emit('import_complete', {
+                        success: false,
+                        error: 'File not found',
+                        path: normalizedPath
+                    });
+                    return;
+                }
+
+                console.log('Starting import for file:', normalizedPath);
+                const result = await importVideo(normalizedPath);
+                console.log('Import result:', result);
             } catch (error) {
                 console.error('Error during import:', error);
+                socket.emit('import_complete', {
+                    success: false,
+                    error: error.message,
+                    path: normalizedPath
+                });
             }
         });
 
