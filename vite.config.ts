@@ -103,6 +103,40 @@ const copyAppFiles = () => ({
           console.log('Skipping Python build as SKIP_PYTHON_BUILD is set');
         }
 
+        // Copy js folder
+        const jsSrc = path.resolve(__dirname, 'src/js');
+        const jsDest = path.resolve(__dirname, 'dist/cep/js');
+        if (fs.existsSync(jsSrc)) {
+          await fs.copy(jsSrc, jsDest);
+          console.log('JS folder copied to dist/cep/js');
+        }
+
+        // Copy jsx folder
+        const jsxSrc = path.resolve(__dirname, 'src/jsx');
+        const jsxDest = path.resolve(__dirname, 'dist/cep/jsx');
+        if (fs.existsSync(jsxSrc)) {
+          await fs.copy(jsxSrc, jsxDest);
+          console.log('JSX folder copied to dist/cep/jsx');
+        }
+
+        // Copy exec folder
+        const execSrc = path.resolve(__dirname, 'src/exec');
+        const execDest = path.resolve(__dirname, 'dist/cep/exec');
+        if (fs.existsSync(execSrc)) {
+          await fs.copy(execSrc, execDest);
+          console.log('Exec folder copied to dist/cep/exec');
+        }
+
+        // Copy FFmpeg from app directory
+        const ffmpegSrc = path.resolve(__dirname, 'app/ffmpeg.exe');
+        const ffmpegDest = path.resolve(__dirname, 'dist/cep/exec/ffmpeg.exe');
+        if (fs.existsSync(ffmpegSrc)) {
+          await fs.copy(ffmpegSrc, ffmpegDest);
+          console.log('FFmpeg copied to dist/cep/exec');
+        } else {
+          console.warn('FFmpeg not found in app directory');
+        }
+
         // Copy sounds folder if it exists
         const soundsSrc = path.resolve(__dirname, 'src/exec/sounds');
         const soundsDest = path.resolve(__dirname, 'dist/cep/exec/sounds');
@@ -112,20 +146,22 @@ const copyAppFiles = () => ({
         }
 
         // Copy executables from build directory to CEP package
-        const buildDir = path.resolve(__dirname, 'build/executables');
+        const buildDir = path.resolve(__dirname, 'build/YoutubetoPremiere');
         const execDir = path.resolve(__dirname, 'dist/cep/exec');
         await fs.ensureDir(execDir);
 
         // Copy all executables from build directory
-        const files = await fs.readdir(buildDir);
-        for (const file of files) {
-          // Only copy executables and ffmpeg
-          if (file.match(/^(ffmpeg|YoutubetoPremiere)(\.exe)?$/)) {
-            await fs.copy(
-              path.join(buildDir, file),
-              path.join(execDir, file)
-            );
-            console.log(`Copied ${file} to CEP exec directory`);
+        if (fs.existsSync(buildDir)) {
+          const files = await fs.readdir(buildDir);
+          for (const file of files) {
+            // Only copy executables and ffmpeg
+            if (file.match(/^(YoutubetoPremiere)(\.exe)?$/)) {
+              await fs.copy(
+                path.join(buildDir, file),
+                path.join(execDir, file)
+              );
+              console.log(`Copied ${file} to CEP exec directory`);
+            }
           }
         }
       } catch (error) {

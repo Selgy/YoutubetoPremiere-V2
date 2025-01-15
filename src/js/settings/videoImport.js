@@ -1,23 +1,60 @@
 import { io } from 'socket.io-client';
 import { evalTS, evalFile } from '../lib/utils/bolt';
 
-export function setupVideoImportHandler(csInterface) {
+const getServerIP = async () => {
+    const possibleAddresses = ['localhost', '127.0.0.1', '192.168.56.1'];
+    
+    for (const address of possibleAddresses) {
+        try {
+            const response = await fetch(`http://${address}:3001/get-ip`);
+            if (response.ok) {
+                const data = await response.json();
+                console.log('Successfully connected to server at:', address);
+                return data.ip;
+            }
+        } catch (error) {
+            console.log(`Failed to connect to ${address}:`, error);
+        }
+    }
+    
+    // If we get here, try to use the last known working IP
+    const lastKnownIP = localStorage.getItem('serverIP');
+    if (lastKnownIP) {
+        console.log('Using last known IP:', lastKnownIP);
+        return lastKnownIP;
+    }
+    
+    console.error('Could not determine server IP, falling back to localhost');
+    return 'localhost';
+};
+
+export async function setupVideoImportHandler(csInterface) {
     let socket = null;
     let reconnectInterval = null;
     const MAX_RECONNECT_ATTEMPTS = 5;
     let reconnectAttempts = 0;
 
-    function connectSocket() {
+    const serverIP = await getServerIP();
+
+    async function connectSocket() {
         if (socket) {
             socket.close();
         }
 
-        socket = io('http://localhost:3001', {
+        socket = io(`http://${serverIP}:3001`, {
+            transports: ['polling', 'websocket'],
             reconnection: true,
             reconnectionAttempts: MAX_RECONNECT_ATTEMPTS,
             reconnectionDelay: 1000,
             reconnectionDelayMax: 5000,
-            timeout: 20000
+            timeout: 20000,
+            forceNew: true,
+            upgrade: true,
+            rememberUpgrade: true,
+            rejectUnauthorized: false,
+            autoConnect: true,
+            withCredentials: true,
+            query: { client_type: 'premiere' }
         });
 
         let pendingImports = new Map();
