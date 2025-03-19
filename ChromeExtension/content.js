@@ -224,7 +224,7 @@ let socket = null;
 function initializeSocket() {
     const socket = io('http://localhost:3001', {
         reconnection: true,
-        reconnectionAttempts: 5,
+        reconnectionAttempts: Infinity,
         reconnectionDelay: 1000,
         reconnectionDelayMax: 5000,
         timeout: 20000
@@ -239,7 +239,7 @@ function initializeSocket() {
     });
 
     socket.on('reconnect_attempt', (attemptNumber) => {
-        console.log(`Attempting to reconnect... (${attemptNumber})`);
+        console.log(`Attempting to reconnect... (attempt ${attemptNumber})`);
     });
 
     socket.on('disconnect', (reason) => {
@@ -293,7 +293,9 @@ function initializeSocket() {
         }
     });
 
-    socket.on('download-complete', () => {
+    socket.on('download-complete', (data = {}) => {
+        console.log('Download completed event received:', data);
+        
         const buttons = {
             premiere: document.getElementById('send-to-premiere-button'),
             clip: document.getElementById('clip-button'),

@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
-from PyInstaller.building.build_main import Analysis, PYZ, EXE, TOC
+from PyInstaller.building.build_main import Analysis, PYZ, EXE, TOC, COLLECT
 from PyInstaller.utils.hooks import collect_submodules
 import sys
 
@@ -89,7 +89,10 @@ a = Analysis(
         'pygame.surfarray',
         'pygame.fastevent',
         'pygame.imageext',
-        'pygame.pkgdata'
+        'pygame.pkgdata',
+        'webbrowser',  # Add browser support
+        'flask.helpers', # Ensure flask helpers are included
+        'requests',     # Ensure requests is included
     ],
     hookspath=[],
     hooksconfig={},
@@ -120,33 +123,61 @@ if is_macos:
         'LSMinimumSystemVersion': '10.13',
         'NSHighResolutionCapable': True,
     }
+    
+    # Create a macOS app bundle
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name='YoutubetoPremiere',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        console=True,
+        target_arch=target_arch,
+        codesign_identity=codesign_identity,
+        entitlements_file=entitlements_file,
+        info_plist=info_plist,
+    )
+    
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        strip=False,
+        upx=False,
+        upx_exclude=[],
+        name='YoutubetoPremiere'
+    )
 else:
+    # Windows build
     target_arch = None
     codesign_identity = None
     entitlements_file = None
     info_plist = None
     bundle_identifier = None
-
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    [],
-    name='YoutubetoPremiere',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=not is_macos,  # Use console for Windows, GUI for macOS
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=target_arch,
-    codesign_identity=codesign_identity,
-    entitlements_file=entitlements_file,
-    info_plist=info_plist,
-    bundle_identifier=bundle_identifier
-)
+    
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        [],
+        name='YoutubetoPremiere',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        upx_exclude=[],
+        runtime_tmpdir=None,
+        console=True,  # Use console on Windows
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=target_arch,
+        codesign_identity=codesign_identity,
+        entitlements_file=entitlements_file,
+    )

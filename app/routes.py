@@ -2,15 +2,41 @@ from flask import request, jsonify
 import logging
 import json
 from video_processing import handle_video_url
-from utils import play_notification_sound, save_license_key, get_license_key, load_settings, save_settings
+from utils import play_notification_sound, save_license_key, get_license_key, load_settings, save_settings, save_download_path
 import os
 import sys
 import requests
 import socket
 
 def register_routes(app, socketio, settings):
-    current_download = {'process': None}
     connected_clients = set()
+    current_download = {'process': None, 'ydl': None, 'cancel_callback': None}
+    
+    def validate_youtube_url(url):
+        """Validate that the URL is from a YouTube domain"""
+        if not url:
+            return False
+            
+        youtube_domains = [
+            'youtube.com', 
+            'youtu.be', 
+            'www.youtube.com', 
+            'm.youtube.com',
+            'youtube-nocookie.com', 
+            'www.youtube-nocookie.com'
+        ]
+        
+        try:
+            # Simple regex to extract domain
+            import re
+            domain_match = re.search(r'https?://([^/]+)', url)
+            if domain_match:
+                domain = domain_match.group(1)
+                return any(domain.endswith(yt_domain) for yt_domain in youtube_domains)
+        except:
+            pass
+            
+        return False
 
     @socketio.on('connect')
     def handle_connect():
@@ -20,7 +46,7 @@ def register_routes(app, socketio, settings):
         socketio.emit('connection_status', {'status': 'connected'}, room=client_id)
 
     @socketio.on('disconnect')
-    def handle_disconnect():
+    def handle_route_disconnect():
         client_id = request.sid
         if client_id in connected_clients:
             connected_clients.remove(client_id)
@@ -67,16 +93,16 @@ def register_routes(app, socketio, settings):
     @app.route('/handle-video-url', methods=['POST'])
     def handle_video_url_route():
         try:
-            data = request.get_json()
-            if not data:
-                return jsonify({'error': 'No data provided'}), 400
-
-            # Accept both 'url' and 'videoUrl' parameters for backward compatibility
-            video_url = data.get('url') or data.get('videoUrl')
+            data = request.json
+            video_url = data.get('url')
+            download_type = data.get('type', 'video')
+            
             if not video_url:
                 return jsonify({'error': 'No URL provided'}), 400
-
-            download_type = data.get('downloadType', 'video')
+                
+            # Validate the URL is from YouTube
+            if not validate_youtube_url(video_url):
+                return jsonify({'error': 'Invalid YouTube URL'}), 400
             
             # Load current settings
             current_settings = load_settings()
@@ -85,9 +111,17 @@ def register_routes(app, socketio, settings):
             # Emit start event to all connected clients
             socketio.emit('download_started', {'url': video_url})
             
-            # For clip downloads, get the current time and settings
-            if download_type == 'clip':
-                current_time = data.get('currentTime', 0)
+            # Check for clip parameters regardless of passed download_type
+            current_time = data.get('currentTime')
+            
+            # If currentTime is provided, treat as clip download
+            if current_time is not None:
+                # Ensure download_type is set to 'clip'
+                download_type = 'clip'
+                logging.info(f"Handling as clip download for time: {current_time}")
+                
+                # Convert to float and use settings for before/after times
+                current_time = float(current_time)
                 seconds_before = float(current_settings.get('secondsBefore', 15))
                 seconds_after = float(current_settings.get('secondsAfter', 15))
                 
@@ -95,10 +129,12 @@ def register_routes(app, socketio, settings):
                 clip_start = max(0, current_time - seconds_before)
                 clip_end = current_time + seconds_after
                 
+                logging.info(f"Clip parameters: start={clip_start}, end={clip_end}, duration={clip_end-clip_start}")
+                
                 # Process the video with clip parameters
                 result = handle_video_url(
                     video_url=video_url, 
-                    download_type=download_type, 
+                    download_type='clip',  # Explicit clip type
                     current_download=current_download, 
                     socketio=socketio,
                     clip_start=clip_start,
@@ -106,7 +142,8 @@ def register_routes(app, socketio, settings):
                     settings=current_settings
                 )
             else:
-                # Process the full video with current settings
+                # No clip parameters, process as regular video
+                logging.info(f"Handling as regular {download_type} download")
                 result = handle_video_url(
                     video_url=video_url, 
                     download_type=download_type, 
@@ -114,15 +151,15 @@ def register_routes(app, socketio, settings):
                     socketio=socketio,
                     settings=current_settings
                 )
-
-            if isinstance(result, dict) and result.get('error'):
-                return jsonify(result), 400
-                
-            return jsonify(result or {'success': True}), 200
             
+            if 'error' in result:
+                return jsonify({'error': result['error']}), 400
+                
+            return jsonify({'success': True}), 200
         except Exception as e:
-            logging.error(f"Error handling video URL: {str(e)}")
-            return jsonify({'error': str(e)}), 500
+            error_message = f"Error handling video URL: {str(e)}"
+            logging.error(error_message)
+            return jsonify({'error': error_message}), 500
 
     @app.route('/update-sound-settings', methods=['POST'])
     def update_sound_settings():
@@ -284,3 +321,29 @@ def register_routes(app, socketio, settings):
         except Exception as e:
             logging.error(f'Error getting IP address: {e}')
             return jsonify({'ip': 'localhost', 'error': str(e)})
+
+    # Process the request to get a download folder
+    @socketio.on('project_path_response')
+    def handle_project_path_response(data):
+        try:
+            project_path = data.get('path')
+            if project_path:
+                logging.info(f"Received project path from Premiere: {project_path}")
+                
+                # Create a download folder next to the project
+                download_path = os.path.join(os.path.dirname(project_path), 'YoutubeToPremiere_download')
+                try:
+                    os.makedirs(download_path, exist_ok=True)
+                    logging.info(f"Created download folder: {download_path}")
+                    # Store the path in settings for future use
+                    save_download_path(download_path)
+                    return {'success': True, 'path': download_path}
+                except Exception as e:
+                    logging.error(f"Error creating download folder: {str(e)}")
+                    return {'error': f"Could not create download folder: {str(e)}"}
+            else:
+                logging.warning("Received empty project path from Premiere")
+                return {'error': 'Empty project path received'}
+        except Exception as e:
+            logging.error(f"Error handling project path response: {str(e)}")
+            return {'error': str(e)}

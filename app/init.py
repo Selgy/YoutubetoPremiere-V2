@@ -22,7 +22,7 @@ def create_app():
         transports=['polling', 'websocket'],  # Start with polling as default
         always_connect=True,
         reconnection=True,
-        reconnection_attempts=10,
+        reconnection_attempts=-1,  # Use -1 for unlimited reconnection attempts
         reconnection_delay=1000,
         reconnection_delay_max=5000,
         logger=True,

@@ -121,6 +121,7 @@ def monitor_premiere_and_shutdown():
 
 def get_default_download_path(socketio=None):
     try:
+        # First try to get path from Premiere Pro project if socketio is available
         if socketio:
             # Create an event to wait for the response
             response_event = threading.Event()
@@ -140,15 +141,34 @@ def get_default_download_path(socketio=None):
             if response_event.wait(timeout=5):
                 project_path = project_path_response['path']
                 if project_path:
+                    # Create YoutubeToPremiere_download folder next to the project
                     download_path = os.path.join(os.path.dirname(project_path), 'YoutubeToPremiere_download')
                     os.makedirs(download_path, exist_ok=True)
+                    logging.info(f"Using project-related download path: {download_path}")
                     return download_path
         
-        # Fallback to Documents path if no project path received
+        # If we couldn't get a path from the Premiere project, use fallback paths
+        download_folder_name = 'YoutubeToPremiere_download'
+        fallback_path = None
+        
+        # Try to use Documents folder as fallback
         documents_path = os.path.expanduser('~/Documents')
-        fallback_path = os.path.join(documents_path, 'YoutubeToPremiere_download')
-        os.makedirs(fallback_path, exist_ok=True)
-        return fallback_path
+        fallback_path = os.path.join(documents_path, download_folder_name)
+            
+        # Create directory if it doesn't exist
+        try:
+            os.makedirs(fallback_path, exist_ok=True)
+            logging.info(f"Using fallback download path: {fallback_path}")
+            return fallback_path
+        except Exception as folder_error:
+            logging.error(f"Error creating fallback folder: {folder_error}")
+        
+        # Last resort - if we can't create the folder in user directory, use temp
+        temp_dir = os.environ.get('TEMP' if sys.platform == 'win32' else 'TMPDIR', '/tmp')
+        last_resort_path = os.path.join(temp_dir, download_folder_name)
+        os.makedirs(last_resort_path, exist_ok=True)
+        logging.warning(f"Using temporary directory as fallback: {last_resort_path}")
+        return last_resort_path
         
     except Exception as e:
         logging.error(f'Error getting download path: {e}')
@@ -399,3 +419,9 @@ def find_ffmpeg():
             return path
             
     raise Exception("FFmpeg not found in any of the expected locations")
+
+def save_download_path(download_path):
+    """Save the download path to settings"""
+    settings = load_settings()
+    settings['downloadPath'] = download_path
+    return save_settings(settings)

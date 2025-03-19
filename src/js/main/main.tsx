@@ -122,7 +122,7 @@ const Main = () => {
 
     const socket = io(`http://${serverIP}:3001`, {
       transports: ['polling', 'websocket'],
-      reconnectionAttempts: 10,
+      reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
       timeout: 60000,
@@ -136,7 +136,7 @@ const Main = () => {
     });
 
     let retryCount = 0;
-    const maxRetries = 5;
+    const maxRetries = Infinity;
 
     socket.on('connect', () => {
       console.log('Connected to server');
@@ -147,12 +147,10 @@ const Main = () => {
       console.error('Connection error:', error);
       retryCount++;
       
-      if (retryCount <= maxRetries) {
-        console.log(`Retrying connection (${retryCount}/${maxRetries})`);
-        setTimeout(() => {
-          socket.connect();
-        }, Math.min(1000 * Math.pow(2, retryCount), 10000));
-      }
+      console.log(`Retrying connection (attempt ${retryCount})`);
+      setTimeout(() => {
+        socket.connect();
+      }, Math.min(1000 * Math.pow(2, retryCount % 10), 10000));
     });
 
     socket.on('disconnect', (reason) => {
@@ -167,12 +165,10 @@ const Main = () => {
 
     socket.on('error', (error) => {
       console.error('Socket error:', error);
-      if (retryCount <= maxRetries) {
-        setTimeout(() => {
-          console.log(`Retrying after error (${retryCount}/${maxRetries})`);
-          socket.connect();
-        }, Math.min(1000 * Math.pow(2, retryCount), 10000));
-      }
+      setTimeout(() => {
+        console.log(`Retrying after error (attempt ${retryCount})`);
+        socket.connect();
+      }, Math.min(1000 * Math.pow(2, retryCount % 10), 10000));
     });
 
     // Force initial connection

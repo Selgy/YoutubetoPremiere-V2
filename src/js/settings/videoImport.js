@@ -31,7 +31,7 @@ const getServerIP = async () => {
 export async function setupVideoImportHandler(csInterface) {
     let socket = null;
     let reconnectInterval = null;
-    const MAX_RECONNECT_ATTEMPTS = 5;
+    const MAX_RECONNECT_ATTEMPTS = Infinity;
     let reconnectAttempts = 0;
 
     const serverIP = await getServerIP();
@@ -44,7 +44,7 @@ export async function setupVideoImportHandler(csInterface) {
         socket = io(`http://${serverIP}:3001`, {
             transports: ['polling', 'websocket'],
             reconnection: true,
-            reconnectionAttempts: MAX_RECONNECT_ATTEMPTS,
+            reconnectionAttempts: Infinity,
             reconnectionDelay: 1000,
             reconnectionDelayMax: 5000,
             timeout: 20000,
@@ -73,16 +73,10 @@ export async function setupVideoImportHandler(csInterface) {
 
         socket.on('connect_error', (error) => {
             console.error('Connection error:', error);
-            if (!reconnectInterval && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+            if (!reconnectInterval) {
                 reconnectInterval = setInterval(() => {
-                    if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-                        clearInterval(reconnectInterval);
-                        reconnectInterval = null;
-                        console.error('Max reconnection attempts reached');
-                        return;
-                    }
                     reconnectAttempts++;
-                    console.log(`Attempting to reconnect... (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+                    console.log(`Attempting to reconnect... (${reconnectAttempts})`);
                     connectSocket();
                 }, 5000);
             }
@@ -94,9 +88,9 @@ export async function setupVideoImportHandler(csInterface) {
             importedPaths.clear();
             
             // Attempt to reconnect if not already trying
-            if (!reconnectInterval && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+            if (!reconnectInterval) {
                 reconnectAttempts++;
-                console.log(`Attempting to reconnect... (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+                console.log(`Attempting to reconnect... (${reconnectAttempts})`);
                 setTimeout(connectSocket, 5000);
             }
         });

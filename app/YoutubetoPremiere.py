@@ -4,13 +4,13 @@ import logging
 import threading
 import platform
 import sys
+import socket
 from flask_cors import CORS
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO
 from routes import register_routes
 from utils import load_settings, monitor_premiere_and_shutdown, play_notification_sound
 import re
-import socket
 
 # Configure logging with more detailed format
 logging.basicConfig(
@@ -18,7 +18,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(os.path.join(os.environ.get('TEMP', ''), 'YoutubetoPremiere.log'))
+        logging.FileHandler(os.path.join(os.environ.get('TEMP' if sys.platform == 'win32' else 'TMPDIR', '/tmp'), 'YoutubetoPremiere.log'))
     ]
 )
 
@@ -29,13 +29,37 @@ connected_clients = {
     'unknown': {}    # Unidentified clients: {ip: sid}
 }
 
+def is_port_in_use(port, host='localhost'):
+    """Check if a port is already in use"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind((host, port))
+            return False
+        except socket.error:
+            return True
+
+def check_server_running(port=3001):
+    """Check if server is already running by testing if the port is in use and if API responds"""
+    # First check if port is in use
+    if not is_port_in_use(port):
+        return False
+        
+    # Then try to connect to health endpoint
+    try:
+        import requests
+        response = requests.get(f'http://localhost:{port}/health', timeout=1)
+        return response.status_code == 200
+    except:
+        # If request fails, port might be used by another application
+        return False
+
 def get_app_paths():
     """Get all relevant application paths and log them for debugging"""
     paths = {
         'executable': sys.executable,
         'script_dir': os.path.dirname(os.path.abspath(__file__)),
         'working_dir': os.getcwd(),
-        'temp_dir': os.environ.get('TEMP', ''),
+        'temp_dir': os.environ.get('TEMP' if sys.platform == 'win32' else 'TMPDIR', '/tmp'),
         'extension_root': os.environ.get('EXTENSION_ROOT', '')
     }
     
@@ -67,6 +91,15 @@ possible_ffmpeg_locations = [
     os.path.join(os.path.dirname(os.path.dirname(script_dir)), 'exec'),  # Parent's exec subdirectory
 ]
 
+# Add macOS specific paths
+if sys.platform == 'darwin':
+    possible_ffmpeg_locations.extend([
+        '/usr/local/bin',
+        '/opt/homebrew/bin',
+        '/usr/bin',
+        os.path.expanduser('~/bin')
+    ])
+
 # Add extension root path if available
 extension_root = os.environ.get('EXTENSION_ROOT', '')
 if extension_root:
@@ -76,8 +109,9 @@ if extension_root:
     ])
 
 ffmpeg_found = False
+ffmpeg_binary = 'ffmpeg.exe' if sys.platform == 'win32' else 'ffmpeg'
 for ffmpeg_dir in possible_ffmpeg_locations:
-    if os.path.exists(os.path.join(ffmpeg_dir, 'ffmpeg.exe' if sys.platform == 'win32' else 'ffmpeg')):
+    if os.path.exists(os.path.join(ffmpeg_dir, ffmpeg_binary)):
         os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
         logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
         ffmpeg_found = True
@@ -85,6 +119,16 @@ for ffmpeg_dir in possible_ffmpeg_locations:
 
 if not ffmpeg_found:
     logging.error("FFmpeg not found in any of the expected locations")
+
+# Check if the server is already running before starting
+if check_server_running(3001):
+    logging.info("Server already running on port 3001. Exiting.")
+    print("YoutubetoPremiere server is already running.")
+    # Don't exit immediately if running in development mode
+    if not getattr(sys, 'frozen', False):
+        print("Running in development mode, press Ctrl+C to exit.")
+    else:
+        sys.exit(0)
 
 try:
     app = Flask(__name__)
@@ -106,7 +150,7 @@ try:
         engineio_logger=True,
         always_connect=True,
         reconnection=True,
-        reconnection_attempts=10,
+        reconnection_attempts=-1,  # Use -1 for unlimited reconnection attempts
         reconnection_delay=1000,
         reconnection_delay_max=5000,
         allow_upgrades=True,
@@ -188,9 +232,9 @@ def handle_connect():
     socketio.emit('connection_status', {'status': 'connected'}, room=sid)
 
 @socketio.on('disconnect')
-def handle_disconnect(sid=None):
+def handle_disconnect():
     """Handle client disconnection"""
-    sid = sid or request.sid
+    sid = request.sid
     client_ip = request.remote_addr
     
     # Remove from appropriate client list
@@ -306,6 +350,13 @@ def run_server():
         use_reloader=False
     ))
     server_thread.start()
+    
+    # Open browser on macOS if running as standalone
+    if sys.platform == 'darwin' and getattr(sys, 'frozen', False):
+        try:
+            open_url_in_browser(f'http://localhost:3001/health')
+        except:
+            pass
 
     premiere_monitor_thread = threading.Thread(target=monitor_premiere_and_shutdown_wrapper)
     premiere_monitor_thread.start()
@@ -315,6 +366,19 @@ def run_server():
 
     logging.info("Shutting down the application.")
     os._exit(0)
+
+def open_url_in_browser(url):
+    """Open a URL in the default browser"""
+    import webbrowser
+    import time
+    
+    # Delay slightly to ensure the server is fully started
+    time.sleep(2)
+    try:
+        webbrowser.open(url)
+        logging.info(f"Opened {url} in browser")
+    except Exception as e:
+        logging.error(f"Failed to open URL in browser: {e}")
 
 def monitor_premiere_and_shutdown_wrapper():
     global should_shutdown

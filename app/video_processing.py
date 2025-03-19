@@ -1,7 +1,7 @@
 import os
 import subprocess
 import logging
-import yt_dlp as youtube_dl
+import yt_dlp  # Import yt_dlp directly
 import re
 from flask import jsonify
 import sys
@@ -19,6 +19,8 @@ from utils import (
 )
 import traceback
 import glob
+import json
+import tempfile
 
 def get_ffmpeg_path():
     """Get the path to ffmpeg executable"""
@@ -40,11 +42,36 @@ def get_ffmpeg_path():
         os.path.join(os.path.dirname(os.getcwd()), 'exec'),
     ])
     
+    # Add macOS specific paths
+    if sys.platform == 'darwin':
+        possible_locations.extend([
+            '/usr/local/bin',
+            '/opt/homebrew/bin',
+            '/usr/bin',
+            os.path.expanduser('~/bin'),
+            # Add common homebrew installation paths
+            '/opt/homebrew/Cellar/ffmpeg',
+            '/usr/local/Cellar/ffmpeg'
+        ])
+        
+        # Try to find installed ffmpeg via 'which' command
+        try:
+            which_result = subprocess.run(['which', 'ffmpeg'], 
+                                           stdout=subprocess.PIPE, 
+                                           stderr=subprocess.PIPE, 
+                                           text=True)
+            if which_result.returncode == 0 and which_result.stdout.strip():
+                possible_locations.append(os.path.dirname(which_result.stdout.strip()))
+                logging.info(f"Found ffmpeg via 'which' at: {which_result.stdout.strip()}")
+        except:
+            pass
+    
     # Filter out empty paths and remove duplicates while preserving order
     possible_locations = list(dict.fromkeys(filter(None, possible_locations)))
     
     ffmpeg_name = 'ffmpeg.exe' if sys.platform == 'win32' else 'ffmpeg'
     
+    # First try direct paths
     for location in possible_locations:
         ffmpeg_path = os.path.join(location, ffmpeg_name)
         if os.path.exists(ffmpeg_path):
@@ -68,6 +95,20 @@ def get_ffmpeg_path():
             except Exception as e:
                 logging.warning(f"Error verifying ffmpeg at {ffmpeg_path}: {str(e)}")
                 continue
+    
+    # If not found in standard paths, try looking for ffmpeg in PATH
+    if sys.platform == 'darwin':
+        try:
+            # On macOS, try running ffmpeg directly as it might be in PATH
+            result = subprocess.run(['ffmpeg', '-version'], 
+                                 stdout=subprocess.PIPE, 
+                                 stderr=subprocess.PIPE,
+                                 timeout=5)
+            if result.returncode == 0:
+                logging.info("Found ffmpeg in PATH")
+                return 'ffmpeg'  # Return just 'ffmpeg' to use PATH resolution
+        except Exception as e:
+            logging.warning(f"Error checking ffmpeg in PATH: {str(e)}")
 
     logging.error("FFmpeg not found in any of the expected locations")
     logging.error(f"Searched locations: {possible_locations}")
@@ -121,19 +162,28 @@ def validate_license(license_key):
 
 def handle_video_url(video_url, download_type, current_download, socketio, settings, clip_start=None, clip_end=None):
     try:
-        # Get the download path from config or extension
-        download_path = settings.get('downloadPath') or get_default_download_path(socketio)
+        # Get the download path from settings or Premiere Pro project
+        download_path = None
+        if settings and settings.get('downloadPath') and settings['downloadPath'].strip():
+            # Use settings path if specified
+            download_path = settings.get('downloadPath')
+            logging.info(f"Using settings download path: {download_path}")
+        else:
+            # Get default path next to current Premiere Pro project
+            download_path = get_default_download_path(socketio)
+            logging.info(f"Using project-related download path: {download_path}")
+            
+        # Request project path if not found
         if not download_path:
-            # Request project path from extension
+            # Couldn't determine download path, request from Premiere Pro extension
             socketio.emit('request_project_path')
-            # Note: The path will be received asynchronously and stored by the extension
-            # We'll use the path from get_default_download_path in the download functions
             logging.info("Requested project path from extension")
+            return {'error': 'Could not determine download path. Waiting for open project.'}
 
         # Get ffmpeg path
         ffmpeg_path = get_ffmpeg_path()
         if not ffmpeg_path:
-            return {'error': 'FFmpeg not found'}
+            return {'error': 'FFmpeg not found. Please install FFmpeg or check its path in settings.'}
 
         # Process based on download type
         if download_type == 'audio':
@@ -143,7 +193,7 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             result = download_and_process_clip(
                 video_url=video_url,
                 resolution=settings.get('resolution', '1080p'),
-                download_path=download_path,  # Pass the download_path here
+                download_path=download_path,
                 clip_start=clip_start,
                 clip_end=clip_end,
                 download_mp3=False,
@@ -156,7 +206,7 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             result = download_video(
                 video_url=video_url,
                 resolution=settings.get('resolution', '1080p'),
-                download_path=download_path,  # Pass the download_path here
+                download_path=download_path,
                 download_mp3=False,
                 ffmpeg_path=ffmpeg_path,
                 socketio=socketio,
@@ -187,87 +237,258 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
     clip_duration = clip_end - clip_start
     logging.info(f"Received clip parameters: clip_start={clip_start}, clip_end={clip_end}, clip_duration={clip_duration}")
 
-    final_download_path = download_path if download_path else get_default_download_path(socketio)
-    if final_download_path is None:
-        logging.error("No active Premiere Pro project found.")
-        socketio.emit('download-failed', {'message': 'No active Premiere Pro project found.'})
-        return
+    # Check if download path exists or try to get default path
+    if not download_path:
+        download_path = get_default_download_path(socketio)
+        if not download_path:
+            error_msg = "Could not determine download path. Please open a Premiere Pro project."
+            logging.error(error_msg)
+            socketio.emit('download-failed', {'message': error_msg})
+            return None
+            
+    logging.info(f"Using download path: {download_path}")
+
+    # Ensure the path exists
+    try:
+        os.makedirs(download_path, exist_ok=True)
+        logging.info(f"Ensured download directory exists: {download_path}")
+    except Exception as e:
+        error_msg = f"Could not create download directory: {str(e)}"
+        logging.error(error_msg)
+        socketio.emit('download-failed', {'message': error_msg})
+        return None
 
     try:
-        # Extract video info first
-        with youtube_dl.YoutubeDL({'quiet': True}) as ydl:
-            video_info = ydl.extract_info(video_url, download=False)
-            if not video_info:
-                raise Exception("Could not extract video information")
+        # Ensure ffmpeg path is valid
+        if not os.path.exists(ffmpeg_path):
+            logging.error(f"FFmpeg not found at path: {ffmpeg_path}")
+            socketio.emit('download-failed', {'message': 'FFmpeg not found. Please check settings.'})
+            return None
             
-            # Get video details and sanitize title
-            title = video_info.get('title', 'video')
-            sanitized_title = sanitize_youtube_title(title)
-            
-            # Get unique filename
-            unique_filename = get_unique_filename(final_download_path, sanitized_title + '_clip', 'mp4')
-            video_file_path = os.path.join(final_download_path, unique_filename)
-            logging.info(f"Setting output path to: {video_file_path}")
-
-        # Download the clip using command line arguments
-        command = [
-            sys.executable, '-m', 'yt_dlp',
-            '--download-sections', f'*{clip_start}-{clip_end}',
-            '--force-keyframes-at-cuts',
-            '-f', f'bestvideo[ext=mp4][vcodec^=avc1][height<={resolution}]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-            '-o', video_file_path,
-            '--ffmpeg-location', os.path.dirname(ffmpeg_path),
-            '--postprocessor-args', f'ffmpeg:-ss {clip_start} -t {clip_end - clip_start}',
-            '--no-keep-video',
-            video_url
-        ]
+        # Define progress hook for updates
+        def progress_hook(d):
+            if d['status'] == 'downloading':
+                if 'downloaded_bytes' in d and 'total_bytes' in d and d['total_bytes'] > 0:
+                    percentage = (d['downloaded_bytes'] / d['total_bytes']) * 100
+                    socketio.emit('percentage', {'percentage': percentage})
+                elif 'downloaded_bytes' in d and 'total_bytes_estimate' in d and d['total_bytes_estimate'] > 0:
+                    percentage = (d['downloaded_bytes'] / d['total_bytes_estimate']) * 100
+                    socketio.emit('percentage', {'percentage': percentage})
+            elif d['status'] == 'error':
+                logging.error(f"Error in progress_hook: {d.get('error')}")
+                
+        # Handle cancellation
+        is_cancelled = [False]
+        def cancel_callback():
+            is_cancelled[0] = True
+            return is_cancelled[0]
         
+        current_download['cancel_callback'] = cancel_callback
+                
+        # Get sanitized title for the output file
+        sanitized_title = ''
         try:
-            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            current_download['process'] = process
-            stdout, stderr = process.communicate()
+            with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+                video_info = ydl.extract_info(video_url, download=False)
+                if video_info:
+                    sanitized_title = sanitize_youtube_title(video_info.get('title', 'video'))
+                else:
+                    sanitized_title = 'clip_' + str(int(time.time()))
+        except Exception as e:
+            logging.error(f"Error extracting video info: {str(e)}")
+            sanitized_title = 'clip_' + str(int(time.time()))
             
-            if process.returncode != 0 and process.returncode != -15:  # -15 is the signal for termination
-                error_message = f"Error downloading clip: {stderr}"
-                logging.error(error_message)
-                socketio.emit('download-failed', {'message': error_message})
-                return
-            elif process.returncode == -15:  # Download was cancelled
-                if os.path.exists(video_file_path):
-                    os.remove(video_file_path)
-                return
-        except subprocess.CalledProcessError as e:
-            error_message = f"Error downloading clip: {e.stderr}"
-            logging.error(error_message)
-            socketio.emit('download-failed', {'message': error_message})
-            return
-        finally:
-            current_download['process'] = None
+        # Get unique filename
+        unique_filename = get_unique_filename(download_path, sanitized_title + '_clip', 'mp4')
+        video_file_path = os.path.join(download_path, unique_filename)
+        logging.info(f"Setting output path to: {video_file_path}")
 
+        # Try direct yt-dlp command line approach for better section download control
+        try:
+            # Build a command line call to yt-dlp specifically for section downloading
+            python_exec = sys.executable
+            
+            # On macOS, we might need to explicitly use the python3 command
+            if sys.platform == 'darwin' and not os.path.exists(python_exec):
+                python_exec = 'python3'
+            
+            # Create a proper format string for the desired quality
+            format_str = f'bestvideo[height<={int(resolution.replace("p", ""))}][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+            
+            # Build the command with proper escaping for all arguments
+            command = [
+                python_exec, '-m', 'yt_dlp',
+                # The key part - specify the exact time range to download
+                '--download-sections', f'*{clip_start:.2f}-{clip_end:.2f}',
+                # Force keyframes at cuts for better accuracy
+                '--force-keyframes-at-cuts',
+                # Specify format selection
+                '-f', format_str,
+                # Output filename
+                '-o', video_file_path,
+                # Specify ffmpeg location
+                '--ffmpeg-location', os.path.dirname(ffmpeg_path),
+                # Additional options for better clip extraction
+                '--no-check-certificate',
+                '--no-part',  # Don't use .part files
+                '--quiet',    # Less output noise
+                # The actual URL
+                video_url
+            ]
+            
+            logging.info(f"Running clip download command: {' '.join(str(c) for c in command)}")
+            
+            # Create a process with pipe for monitoring progress
+            process = subprocess.Popen(
+                command, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE, 
+                text=True,
+                bufsize=1,
+                universal_newlines=True
+            )
+            
+            current_download['process'] = process
+            
+            # Collect output for error logging
+            stdout_data = []
+            stderr_data = []
+            
+            # Track download progress
+            for line in iter(process.stdout.readline, ''):
+                stdout_data.append(line)
+                
+                # Look for download progress
+                if '[download]' in line and '%' in line:
+                    try:
+                        # Parse percentage
+                        percentage_match = re.search(r'(\d+\.\d+)%', line)
+                        if percentage_match:
+                            percentage = float(percentage_match.group(1))
+                            socketio.emit('percentage', {'percentage': percentage})
+                            logging.debug(f"Progress: {percentage}%")
+                    except Exception as e:
+                        logging.error(f"Error parsing progress output: {e}")
+                
+                # Check for cancellation
+                if is_cancelled[0]:
+                    process.terminate()
+                    if os.path.exists(video_file_path):
+                        os.remove(video_file_path)
+                    socketio.emit('download-cancelled')
+                    return None
+            
+            # Get stderr output as well
+            for line in iter(process.stderr.readline, ''):
+                stderr_data.append(line)
+                
+            # Wait for process to complete
+            process.wait()
+            
+            # Check return code
+            if process.returncode != 0:
+                error_output = '\n'.join(stderr_data)
+                logging.error(f"yt-dlp command failed with code {process.returncode}: {error_output}")
+                raise Exception(f"yt-dlp error: {error_output}")
+            
+            # Reset current download references
+            current_download['process'] = None
+            
+            # Check if file was created
+            if not os.path.exists(video_file_path):
+                # Try alternative filename if the original one wasn't used
+                alt_paths = glob.glob(os.path.join(download_path, f"{sanitized_title}*clip*.mp4"))
+                if alt_paths:
+                    video_file_path = alt_paths[0]
+                    logging.info(f"Found alternative output file: {video_file_path}")
+                else:
+                    logging.error("Output file not found after download")
+                    raise Exception("Clip download failed - output file not found")
+            
+            logging.info(f"Clip download succeeded: {video_file_path}")
+                
+        except Exception as e:
+            logging.error(f"Command-line download failed: {str(e)}")
+            logging.info("Trying alternative method with yt-dlp API...")
+            
+            # Fall back to using the yt-dlp Python API
+            ydl_opts = {
+                'format': f'bestvideo[height<={int(resolution.replace("p", ""))}][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                'outtmpl': video_file_path,
+                'ffmpeg_location': os.path.dirname(ffmpeg_path),
+                'force_keyframes_at_cuts': True,
+                'download_sections': [f'*{clip_start:.2f}-{clip_end:.2f}'],  # Specify section as a list
+                'quiet': False,
+                'progress_hooks': [progress_hook],
+                'no_warnings': False,
+                'ignoreerrors': False,
+                'verbose': True,  # Enable verbose output for debugging
+                'no_part': True,  # Don't use .part files
+            }
+            
+            logging.info(f"Fallback download options: {ydl_opts}")
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                try:
+                    current_download['ydl'] = ydl
+                    ydl.download([video_url])
+                except KeyboardInterrupt:
+                    logging.info("Download cancelled by user")
+                    if os.path.exists(video_file_path):
+                        try:
+                            os.remove(video_file_path)
+                        except:
+                            pass
+                    socketio.emit('download-cancelled')
+                    return None
+                except Exception as inner_e:
+                    error_message = f"Error downloading clip with fallback method: {str(inner_e)}"
+                    logging.error(error_message)
+                    socketio.emit('download-failed', {'message': error_message})
+                    return None
+                finally:
+                    current_download['ydl'] = None
+                    current_download['cancel_callback'] = None
+
+        # Add metadata to the video file
         if os.path.exists(video_file_path):
-            logging.info(f"Clip downloaded: {video_file_path}")
+            logging.info(f"Clip downloaded successfully: {video_file_path}")
 
             # Add URL to metadata
             metadata_command = [
                 ffmpeg_path,
                 '-i', video_file_path,
                 '-metadata', f'comment={video_url}',
+                '-metadata', f'clip_start={clip_start}',
+                '-metadata', f'clip_end={clip_end}',
                 '-codec', 'copy',
                 f'{video_file_path}_with_metadata.mp4'
             ]
 
             try:
-                subprocess.run(metadata_command, check=True)
+                subprocess.run(metadata_command, check=True, capture_output=True, text=True)
                 os.replace(f'{video_file_path}_with_metadata.mp4', video_file_path)
                 logging.info(f"Metadata added: {video_file_path}")
                 
+                # Emit events in the format the Chrome extension expects
                 socketio.emit('import_video', {'path': video_file_path})
-                socketio.emit('download-complete')
-                return video_file_path  # Return the path to the downloaded file
+                # Emit both formats to ensure compatibility
+                socketio.emit('download-complete', {'url': video_url, 'path': video_file_path})  # Hyphenated format for Chrome extension
+                socketio.emit('download_complete')  # Underscore format for other clients
+                return video_file_path
             except subprocess.CalledProcessError as e:
-                logging.error(f"Error adding metadata: {e}")
-                socketio.emit('download-failed', {'message': 'Failed to add metadata.'})
-                return None
+                logging.error(f"Error adding metadata: {e.stderr}")
+                # Continue anyway, as the clip itself is fine
+                socketio.emit('import_video', {'path': video_file_path})
+                # Emit both formats to ensure compatibility
+                socketio.emit('download-complete', {'url': video_url, 'path': video_file_path})  # Hyphenated format for Chrome extension
+                socketio.emit('download_complete')  # Underscore format for other clients
+                return video_file_path
+        else:
+            error_message = "Clip download failed - output file not found"
+            logging.error(error_message)
+            socketio.emit('download-failed', {'message': error_message})
+            return None
 
     except Exception as e:
         error_message = f"Error downloading clip: {str(e)}"
@@ -322,49 +543,25 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         format_string = f'bestvideo[vcodec^=avc1][ext=mp4][height<={resolution}]+bestaudio[ext=m4a]/best[ext=mp4]'
         logging.info(f"Using format string: {format_string}")
 
-        # Determine the download path
-        final_download_path = None
-        
-        # First priority: settings path if it exists and is not empty
-        if settings and settings.get('downloadPath') and settings['downloadPath'].strip():
-            path = os.path.normpath(settings['downloadPath'])
-            logging.info(f"Trying settings path: {path}")
-            try:
-                os.makedirs(path, exist_ok=True)
-                final_download_path = path
-                logging.info(f"Using settings download path: {final_download_path}")
-            except Exception as e:
-                logging.error(f"Error creating settings directory {path}: {str(e)}")
-        
-        # Second priority: provided download_path
-        if not final_download_path and download_path:
-            try:
-                os.makedirs(download_path, exist_ok=True)
-                final_download_path = download_path
-                logging.info(f"Using provided download path: {final_download_path}")
-            except Exception as e:
-                logging.error(f"Error creating provided directory {download_path}: {str(e)}")
-        
-        # Last resort: default path next to Premiere project
-        if not final_download_path:
-            final_download_path = get_default_download_path(socketio)
-            logging.info(f"Using default download path: {final_download_path}")
+        # Check if download path exists or try to get default path
+        if not download_path:
+            download_path = get_default_download_path(socketio)
+            if not download_path:
+                error_msg = "Could not determine download path. Please open a Premiere Pro project."
+                logging.error(error_msg)
+                socketio.emit('download-failed', {'message': error_msg})
+                return None
+            
+        logging.info(f"Using download path: {download_path}")
 
-        if not final_download_path:
-            error_msg = "Could not determine a valid download location"
+        # Ensure the path exists
+        try:
+            os.makedirs(download_path, exist_ok=True)
+            logging.info(f"Ensured download directory exists: {download_path}")
+        except Exception as e:
+            error_msg = f"Could not create download directory: {str(e)}"
             logging.error(error_msg)
             socketio.emit('download-failed', {'message': error_msg})
-            return None
-
-        logging.info(f"Final download path: {final_download_path}")
-
-        # Ensure the final path exists
-        try:
-            os.makedirs(final_download_path, exist_ok=True)
-            logging.info(f"Ensured download directory exists: {final_download_path}")
-        except Exception as e:
-            logging.error(f"Error creating download directory {final_download_path}: {str(e)}")
-            socketio.emit('download-failed', {'message': f'Could not create download directory: {str(e)}'})
             return None
 
         # Extract video info first
@@ -389,8 +586,8 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             logging.info(f"Sanitized title: {sanitized_title}")
             
             # Get unique filename
-            unique_filename = get_unique_filename(final_download_path, sanitized_title, 'mp4')
-            output_path = os.path.join(final_download_path, unique_filename)
+            unique_filename = get_unique_filename(download_path, sanitized_title, 'mp4')
+            output_path = os.path.join(download_path, unique_filename)
             logging.info(f"Setting output path to: {output_path}")
 
             # Configure download options
@@ -402,7 +599,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 'postprocessor_hooks': [lambda d: socketio.emit('percentage', {'percentage': '100%'}) if d['status'] == 'finished' else None],
                 'verbose': True,
                 'outtmpl': {
-                    'default': os.path.join(final_download_path, os.path.splitext(unique_filename)[0] + '.%(ext)s')
+                    'default': os.path.join(download_path, os.path.splitext(unique_filename)[0] + '.%(ext)s')
                 }
             }
 
@@ -433,7 +630,9 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     
                     logging.info(f"Video downloaded and processed: {final_path}")
                     socketio.emit('import_video', {'path': final_path})
-                    socketio.emit('download-complete')
+                    # Emit both formats to ensure compatibility
+                    socketio.emit('download-complete', {'url': video_url, 'path': final_path})  # Hyphenated format for Chrome extension
+                    socketio.emit('download_complete')  # Underscore format for other clients
                     
                     return final_path
                 except subprocess.CalledProcessError as e:
@@ -458,6 +657,27 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
         return None
 
     try:
+        # Check if download path exists or try to get default path
+        if not download_path:
+            download_path = get_default_download_path(socketio)
+            if not download_path:
+                error_msg = "Could not determine download path. Please open a Premiere Pro project."
+                logging.error(error_msg)
+                socketio.emit('download-failed', {'message': error_msg})
+                return None
+                
+        logging.info(f"Using download path for audio: {download_path}")
+        
+        # Ensure the path exists
+        try:
+            os.makedirs(download_path, exist_ok=True)
+            logging.info(f"Ensured download directory exists: {download_path}")
+        except Exception as e:
+            error_msg = f"Could not create download directory: {str(e)}"
+            logging.error(error_msg)
+            socketio.emit('download-failed', {'message': error_msg})
+            return None
+
         # Define progress hook function
         def progress_hook(d):
             if d['status'] == 'downloading':
@@ -494,7 +714,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
             ],
         }
 
-        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
                 # Extract info first to verify URL is valid and get title
                 info = ydl.extract_info(video_url, download=False)
@@ -521,7 +741,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                 ydl_opts['outtmpl'] = os.path.join(download_path, f'temp_{sanitized_title}')
                 
                 # Create new YoutubeDL instance with updated options
-                with youtube_dl.YoutubeDL(ydl_opts) as ydl_download:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl_download:
                     # Download using the already extracted info
                     ydl_download.process_ie_result(info, download=True)
 
@@ -563,6 +783,13 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                         os.remove(temp_output)
                     except:
                         pass
+
+                # Emit both completion events before returning
+                if socketio:
+                    socketio.emit('import_video', {'path': output_path})
+                    # Emit both formats to ensure compatibility
+                    socketio.emit('download-complete', {'url': video_url, 'path': output_path})  # Hyphenated format for Chrome extension
+                    socketio.emit('download_complete')  # Underscore format for other clients
 
                 return output_path
 
