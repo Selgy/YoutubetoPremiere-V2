@@ -6,3 +6,5 @@ app/ffmpeg.exe
 build/
 .venv
 .vscode
+app/__pycache__
+node_modules
