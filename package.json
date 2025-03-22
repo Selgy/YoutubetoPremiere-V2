@@ -11,7 +11,7 @@
     "build-mac": "yarn clean && tsc -p \"tsconfig-build.json\" && yarn build-python-mac && vite build --force",
     "build": "yarn clean && tsc -p \"tsconfig-build.json\" && yarn build-python && vite build --force",
     "build-cross-platform": "cross-env BUILD_FOR_MAC=true yarn build",
-    "dev": "yarn clean && tsc -p \"tsconfig.json\" --watch & vite --force",
+    "dev": "vite",
     "watch": "yarn clean && tsc -p \"tsconfig.json\" && vite build --force --watch",
     "zxp": "yarn clean && tsc -p \"tsconfig-build.json\" && yarn build-python && cross-env ZXP_PACKAGE=true vite build --force",
     "zip": "yarn clean && tsc -p \"tsconfig-build.json\" && yarn build-python && cross-env ZIP_PACKAGE=true vite build --force",
