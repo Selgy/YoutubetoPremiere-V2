@@ -223,11 +223,62 @@ jobs:
           name: ffmpeg-macos-13
           path: build/executables
 
+      # Ensure executables are in the right place
+      - name: Copy artifacts to dist directory
+        shell: pwsh
+        run: |
+          # Create dist directory
+          New-Item -ItemType Directory -Force -Path "dist/cep/exec"
+          
+          # Copy Windows executable and ffmpeg
+          if (Test-Path "build/executables/YoutubetoPremiere.exe") {
+            Copy-Item -Path "build/executables/YoutubetoPremiere.exe" -Destination "dist/cep/exec/YoutubetoPremiere.exe" -Force
+            Write-Host "Copied Windows executable"
+          }
+          
+          if (Test-Path "build/executables/ffmpeg.exe") {
+            Copy-Item -Path "build/executables/ffmpeg.exe" -Destination "dist/cep/exec/ffmpeg.exe" -Force
+            Write-Host "Copied Windows ffmpeg"
+          }
+          
+          # Copy macOS executable and ffmpeg
+          if (Test-Path "build/executables/YoutubetoPremiere") {
+            Copy-Item -Path "build/executables/YoutubetoPremiere" -Destination "dist/cep/exec/YoutubetoPremiere" -Force
+            Write-Host "Copied macOS executable"
+          }
+          
+          if (Test-Path "build/executables/ffmpeg") {
+            Copy-Item -Path "build/executables/ffmpeg" -Destination "dist/cep/exec/ffmpeg" -Force
+            Write-Host "Copied macOS ffmpeg"
+          }
+          
+          # Copy Python files
+          Get-ChildItem -Path "app/*.py" | ForEach-Object {
+            Copy-Item -Path $_.FullName -Destination "dist/cep/exec/$($_.Name)" -Force
+            Write-Host "Copied $($_.Name)"
+          }
+          
+          # Copy sounds directory
+          $soundsDir = "dist/cep/exec/sounds"
+          if (-not (Test-Path $soundsDir)) {
+            New-Item -ItemType Directory -Force -Path $soundsDir | Out-Null
+            Write-Host "Created directory: $soundsDir"
+          }
+          
+          if (Test-Path "app/sounds") {
+            Copy-Item -Path "app/sounds/*" -Destination "$soundsDir/" -Force -Recurse
+            Write-Host "Copied sound files"
+          }
+          
+          # List the contents of the directory
+          Write-Host "Contents of dist/cep/exec:"
+          Get-ChildItem -Path "dist/cep/exec" -Recurse
+
       - name: List contents to verify
         shell: pwsh
         run: |
           Write-Host "Contents of dist/cep/exec:"
-          Get-ChildItem -Path dist/cep/exec
+          Get-ChildItem -Path dist/cep/exec -Recurse
 
       - name: Package ZXP
         env:

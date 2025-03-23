@@ -5,6 +5,58 @@ if (-not (Test-Path $execDir)) {
     Write-Host "Created directory: $execDir"
 }
 
+# Check if we should skip Python build
+$skipPythonBuild = $env:SKIP_PYTHON_BUILD -eq "true" -or $env:NO_PYTHON -eq "true"
+if ($skipPythonBuild) {
+    Write-Host "Skipping Python build as SKIP_PYTHON_BUILD or NO_PYTHON is set to true"
+    
+    # Check if we have executables in build/executables (used in GitHub Actions)
+    if (Test-Path "build\executables\YoutubetoPremiere.exe") {
+        Write-Host "Found pre-built executable in build\executables, copying..."
+        Copy-Item -Path "build\executables\YoutubetoPremiere.exe" -Destination "$execDir\YoutubetoPremiere.exe" -Force
+        Write-Host "Copied Windows executable"
+    }
+    
+    if (Test-Path "build\executables\YoutubetoPremiere") {
+        Write-Host "Found pre-built macOS executable, copying..."
+        Copy-Item -Path "build\executables\YoutubetoPremiere" -Destination "$execDir\YoutubetoPremiere" -Force
+        Write-Host "Copied macOS executable"
+    }
+    
+    if (Test-Path "build\executables\ffmpeg.exe") {
+        Write-Host "Copying ffmpeg.exe from build\executables..."
+        Copy-Item -Path "build\executables\ffmpeg.exe" -Destination "$execDir\ffmpeg.exe" -Force
+        Write-Host "Copied Windows ffmpeg"
+    }
+    
+    if (Test-Path "build\executables\ffmpeg") {
+        Write-Host "Copying ffmpeg from build\executables..."
+        Copy-Item -Path "build\executables\ffmpeg" -Destination "$execDir\ffmpeg" -Force
+        Write-Host "Copied macOS ffmpeg"
+    }
+    
+    # Step 4: Copy Python files
+    Write-Host "Copying Python source files..."
+    Get-ChildItem -Path "app\*.py" | ForEach-Object {
+        Copy-Item -Path $_.FullName -Destination "$execDir\$($_.Name)" -Force
+    }
+    
+    # Step 5: Create sounds directory and copy sounds
+    $soundsDir = "$execDir\sounds"
+    if (-not (Test-Path $soundsDir)) {
+        New-Item -ItemType Directory -Force -Path $soundsDir | Out-Null
+        Write-Host "Created directory: $soundsDir"
+    }
+    
+    if (Test-Path "app\sounds") {
+        Write-Host "Copying sound files..."
+        Copy-Item -Path "app\sounds\*" -Destination "$soundsDir\" -Force -Recurse
+    }
+    
+    Write-Host "Build completed successfully (skipped Python build)!" -ForegroundColor Green
+    exit 0
+}
+
 # For macOS compatibility
 # This script will be used on Windows only, but we'll detect
 # if we should prepare for cross-platform compatibility
