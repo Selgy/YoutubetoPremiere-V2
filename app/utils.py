@@ -221,46 +221,111 @@ def import_video_to_premiere(video_path):
         # Prepare the path for ExtendScript
         video_path_escaped = video_path.replace('\\', '\\\\')
         
-        # Create the ExtendScript with debug alerts
+        # Create the ExtendScript without debug alerts
         script = f"""
         var result = "false";
         try {{
             if (app.project) {{
-                var importedFile = app.project.importFiles(["{video_path_escaped}"], 
+                // Helper function to get all nodeIds from the root bin
+                function getAllNodeIds(container) {{
+                    var ids = [];
+                    if (container && container.children && container.children.numItems > 0) {{
+                        for (var i = 0; i < container.children.numItems; i++) {{
+                            try {{
+                                var item = container.children[i];
+                                if (item && item.nodeId) {{
+                                    ids.push(item.nodeId);
+                                }}
+                            }} catch (e) {{
+                                // Ignore errors
+                            }}
+                        }}
+                    }}
+                    return ids;
+                }}
+                
+                // Get root bin
+                var rootItem = app.project.rootItem;
+                
+                // Get IDs before import
+                var beforeNodeIds = getAllNodeIds(rootItem);
+                
+                // Import the file
+                var importedFiles = app.project.importFiles(["{video_path_escaped}"], 
                     false, 
-                    app.project.rootItem, 
+                    rootItem, 
                     false
                 );
                 
-                if (importedFile && importedFile.length > 0) {{
-                    // Try using QE DOM first
-                    if (typeof qe !== 'undefined' && qe.project) {{
-                        var qeProject = qe.project;
-                        var importedItem = null;
+                if (importedFiles && importedFiles.length > 0) {{
+                    // Wait for project to update
+                    $.sleep(2000);
+                    
+                    // Get IDs after import
+                    var afterNodeIds = getAllNodeIds(rootItem);
+                    
+                    // Find the new items
+                    var newItems = [];
+                    
+                    for (var i = 0; i < rootItem.children.numItems; i++) {{
+                        var item = rootItem.children[i];
+                        var found = false;
                         
-                        for (var i = 0; i < qeProject.numItems; i++) {{
-                            var item = qeProject.getItemAt(i);
-                            if (item && item.filePath === "{video_path_escaped}") {{
-                                importedItem = item;
+                        // Skip bins
+                        if (item.type === 2) {{ // BIN type
+                            continue;
+                        }}
+                        
+                        // Check if item's nodeId was in the before list
+                        for (var j = 0; j < beforeNodeIds.length; j++) {{
+                            if (item.nodeId === beforeNodeIds[j]) {{
+                                found = true;
                                 break;
                             }}
                         }}
                         
-                        if (importedItem) {{
-                            importedItem.openInSource();
-                            result = "true";
-                        }} else {{
-                            importedFile[0].openInSource();
-                            result = "true";
+                        // If not found in the before list, it's new
+                        if (!found) {{
+                            newItems.push(item);
                         }}
-                    }} else {{
-                        importedFile[0].openInSource();
-                        result = "true";
                     }}
+                    
+                    // Choose the item to open
+                    var importedItem = null;
+                    
+                    if (newItems.length > 0) {{
+                        importedItem = newItems[0];
+                    }} else {{
+                        importedItem = importedFiles[0];
+                    }}
+                    
+                    // Try to open in source monitor
+                    if (app.sourceMonitor) {{
+                        try {{
+                            // First close any open clips
+                            app.sourceMonitor.closeAllClips();
+                        }} catch(e) {{
+                            // Ignore errors when closing clips
+                        }}
+                        
+                        // Wait for source monitor to be ready
+                        $.sleep(2000);
+                        
+                        // Open the imported item using the proper API method
+                        var openResult = app.sourceMonitor.openProjectItem(importedItem);
+                        result = "true";
+                    }} else {{
+                        // No source monitor, but import successful
+                        result = "true_no_monitor";
+                    }}
+                }} else {{
+                    result = "import_failed";
                 }}
+            }} else {{
+                result = "no_project";
             }}
         }} catch(e) {{
-            result = "Error: " + e.toString();
+            result = "error: " + e.toString();
         }}
 
         // Write the result to file
@@ -293,8 +358,10 @@ def import_video_to_premiere(video_path):
         except:
             pass
 
-        if result == "true":
-            logging.info('Video imported and opened in source monitor successfully')
+        if result.startswith("true"):
+            logging.info('Video imported successfully')
+            if result == "true_no_monitor":
+                logging.warning("Source monitor not available")
             return True
         else:
             logging.error(f'Failed to import video: {result}')

@@ -34,6 +34,24 @@
         return f.exists;
     };
 
+    // Helper to get all item nodeIds from a bin
+    $._ext.getAllNodeIds = function(container) {
+        var ids = [];
+        if (container && container.children && container.children.numItems > 0) {
+            for (var i = 0; i < container.children.numItems; i++) {
+                try {
+                    var item = container.children[i];
+                    if (item && item.nodeId) {
+                        ids.push(item.nodeId);
+                    }
+                } catch (e) {
+                    $._ext.debug("Error getting nodeId: " + e.toString());
+                }
+            }
+        }
+        return ids;
+    };
+
     $._ext.debug("Initializing importVideoToSource function");
 
     // Main function to import a file and open it in the Source Monitor
@@ -71,59 +89,139 @@
 
             // Get the active Premiere project
             var project = app.project;
-            $._ext.debug("Project found.");
+            var rootItem = project.rootItem;
+            $._ext.debug("Project found");
 
-            // Import the file using Premiere's project.importFiles()
+            // Get the node IDs before import
+            var beforeNodeIds = $._ext.getAllNodeIds(rootItem);
+            $._ext.debug("Before import: " + beforeNodeIds.length + " items");
+
+            // Import the file
             $._ext.debug("Importing file...");
-            var importedFile = project.importFiles([normalizedPath], 
+            var importedFiles = project.importFiles([normalizedPath], 
                 false,             // suppressUI
-                project.rootItem,  // parentBin
-                false             // importAsNumberedStills
+                rootItem,          // parentBin
+                false              // importAsNumberedStills
             );
             
             // Check if the import actually returned a valid item
-            if (!importedFile || importedFile.length === 0) {
+            if (!importedFiles || importedFiles.length === 0) {
+                $._ext.debug("Import failed - returned null or empty array");
                 return { 
                     success: false, 
                     error: "Import returned null or empty array",
                     path: videoPath
                 };
             }
-            $._ext.debug("File imported successfully");
-
-            // Get the project item ID
+            
+            $._ext.debug("File imported successfully, waiting for project update...");
+            
+            // Wait briefly to ensure the items are updated in the project
+            $.sleep(2000);
+            
+            // Get the node IDs after import
+            var afterNodeIds = $._ext.getAllNodeIds(rootItem);
+            $._ext.debug("After import: " + afterNodeIds.length + " items");
+            
+            // Find the new item(s)
+            var newItems = [];
+            var newItemIds = [];
+            
+            for (var i = 0; i < rootItem.children.numItems; i++) {
+                var item = rootItem.children[i];
+                var found = false;
+                
+                // Skip bins
+                if (item.type === 2) { // BIN type
+                    continue;
+                }
+                
+                // Check if the item's nodeId is in the before list
+                for (var j = 0; j < beforeNodeIds.length; j++) {
+                    if (item.nodeId === beforeNodeIds[j]) {
+                        found = true;
+                        break;
+                    }
+                }
+                
+                // If not found in the before list, it's new
+                if (!found) {
+                    newItems.push(item);
+                    newItemIds.push(item.nodeId);
+                }
+            }
+            
+            $._ext.debug("Found " + newItems.length + " new items");
+            
+            // If no new items were found, try to use the first imported item
+            var importedItem = null;
             var projectItemId = null;
+            
+            if (newItems.length > 0) {
+                importedItem = newItems[0];
+                $._ext.debug("Using new item: " + importedItem.name);
+            } else {
+                importedItem = importedFiles[0];
+                $._ext.debug("Using imported file reference: " + importedItem.name);
+            }
+            
+            // Get the project item ID
             try {
-                projectItemId = importedFile[0].nodeId;
+                projectItemId = importedItem.nodeId;
                 $._ext.debug("Project item ID: " + projectItemId);
             } catch(e) {
                 $._ext.debug("Could not get project item ID: " + e.toString());
             }
 
-            // Attempt to open the newly imported item in the Source Monitor
+            // Now try to open in source monitor
             try {
-                $._ext.debug("Trying sourceMonitor access...");
-                if (app.sourceMonitor) {
-                    importedFile[0].openInSourceMonitor();
-                    $._ext.debug("Opened in Source Monitor via imported item");
+                $._ext.debug("Opening in Source Monitor...");
+                
+                // Make sure we have a source monitor
+                if (!app.sourceMonitor) {
+                    $._ext.debug("Source monitor not available");
+                    return { 
+                        success: true, // Import succeeded even if we can't open in source monitor
+                        path: normalizedPath,
+                        projectItem: projectItemId,
+                        sourceMonitorError: "Source monitor not available"
+                    };
                 }
-            } catch(e1) {
-                $._ext.debug("Primary method failed: " + e1.toString());
+                
+                // First make sure the current clip is closed
                 try {
-                    $._ext.debug("Trying fallback method...");
-                    app.sourceMonitor.openFilePath(normalizedPath);
-                    $._ext.debug("Opened in Source Monitor via fallback method");
-                } catch(e2) {
-                    $._ext.debug("Fallback method failed: " + e2.toString());
+                    $._ext.debug("Closing any open clips in source monitor...");
+                    app.sourceMonitor.closeAllClips();
+                } catch(e) {
+                    // Ignore errors when closing clip
+                    $._ext.debug("Error closing clips: " + e.toString());
                 }
+                
+                // Wait for source monitor to be ready
+                $.sleep(2000);
+                
+                // Use the documented method app.sourceMonitor.openProjectItem()
+                $._ext.debug("Opening project item in source monitor...");
+                var result = app.sourceMonitor.openProjectItem(importedItem);
+                $._ext.debug("openProjectItem result: " + result);
+                
+                // Done
+                $._ext.debug("Import and source monitor operations complete");
+                return { 
+                    success: true,
+                    path: normalizedPath,
+                    projectItem: projectItemId
+                };
+            } catch(e) {
+                $._ext.debug("Source monitor open failed: " + e.toString());
+                // Return success anyway because the import succeeded
+                return { 
+                    success: true,
+                    path: normalizedPath,
+                    projectItem: projectItemId,
+                    sourceMonitorError: e.toString()
+                };
             }
-
-            $._ext.debug("Import complete");
-            return { 
-                success: true,
-                path: normalizedPath,
-                projectItem: projectItemId
-            };
         } catch(e) {
             var errorMsg = e.toString();
             $._ext.debug("Error: " + errorMsg);
