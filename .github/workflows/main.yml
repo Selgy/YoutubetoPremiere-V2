@@ -105,7 +105,7 @@ jobs:
       - name: Check existing artifact
         id: check_artifact
         continue-on-error: true
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: executable-${{ matrix.os }}
           path: existing-artifact
@@ -200,25 +200,25 @@ jobs:
 
       # Download artifacts
       - name: Download Windows executable
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: executable-windows-latest
           path: build/executables
 
       - name: Download macOS executable
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: executable-macos-13
           path: build/executables
 
       - name: Download Windows FFmpeg
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ffmpeg-windows-latest
           path: build/executables
 
       - name: Download macOS FFmpeg
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ffmpeg-macos-13
           path: build/executables
