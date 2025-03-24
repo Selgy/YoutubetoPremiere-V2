@@ -447,12 +447,37 @@ jobs:
             local description=$3
             
             if [ -f "$source" ]; then
-              cp "$source" "$dest"
-              # Ensure proper permissions for macOS executables
+              # Use cp -p to preserve permissions
+              cp -p "$source" "$dest"
+              
+              # For macOS executables, ensure they have execute permissions
               if [[ "$source" == *"macos"* ]] || [[ "$source" != *".exe" ]]; then
                 chmod +x "$dest/$(basename "$source")"
+                # Verify the permissions were set
+                if [ -x "$dest/$(basename "$source")" ]; then
+                  echo "✓ Set execute permissions for $description"
+                else
+                  echo "✗ WARNING: Failed to set execute permissions for $description"
+                fi
               fi
+              
               echo "✓ Copied $description"
+              
+              # Verify the file exists and has the correct size
+              if [ -f "$dest/$(basename "$source")" ]; then
+                local source_size=$(stat -f%z "$source" 2>/dev/null || stat -c%s "$source")
+                local dest_size=$(stat -f%z "$dest/$(basename "$source")" 2>/dev/null || stat -c%s "$dest/$(basename "$source")")
+                if [ "$source_size" = "$dest_size" ]; then
+                  echo "✓ Verified $description (size: $source_size bytes)"
+                else
+                  echo "✗ WARNING: Size mismatch for $description"
+                  echo "  Source: $source_size bytes"
+                  echo "  Destination: $dest_size bytes"
+                fi
+              else
+                echo "✗ ERROR: Failed to copy $description"
+                return 1
+              fi
             else
               echo "✗ ERROR: $description not found at: $source"
               return 1
@@ -464,10 +489,10 @@ jobs:
           # Create backup of executables
           mkdir -p backup/exec
           
-          # Copy all Python files
+          # Copy all Python files with preserved permissions
           echo "Copying Python files..."
-          cp app/*.py dist/cep/exec/ 2>/dev/null || echo "No Python files found"
-          cp -r app/sounds/* dist/cep/exec/sounds/ 2>/dev/null || echo "No sound files found"
+          cp -p app/*.py dist/cep/exec/ 2>/dev/null || echo "No Python files found"
+          cp -rp app/sounds/* dist/cep/exec/sounds/ 2>/dev/null || echo "No sound files found"
           
           # Copy artifacts efficiently
           echo "Copying executables and FFmpeg..."
@@ -536,17 +561,11 @@ jobs:
         run: |
           Write-Host "===== CREATING FINAL ZXP WITH EXECUTABLES ====="
           
-          # Ensure the directories exist
-          if (-Not (Test-Path "zxp_extract/contents")) {
-            Write-Error "Contents directory not found! Packaging failed."
-            exit 1
-          }
-          
-          # Verify all executables exist
-          $winExePath = "zxp_extract/contents/exec/YoutubetoPremiere.exe"
-          $macExePath = "zxp_extract/contents/exec/YoutubetoPremiere"
-          $winFfmpegPath = "zxp_extract/contents/exec/ffmpeg.exe"
-          $macFfmpegPath = "zxp_extract/contents/exec/ffmpeg"
+          # Verify all executables exist in dist/cep/exec
+          $winExePath = "dist/cep/exec/YoutubetoPremiere.exe"
+          $macExePath = "dist/cep/exec/YoutubetoPremiere"
+          $winFfmpegPath = "dist/cep/exec/ffmpeg.exe"
+          $macFfmpegPath = "dist/cep/exec/ffmpeg"
           
           # Check Windows executables
           if (Test-Path $winExePath) {
@@ -574,25 +593,13 @@ jobs:
             Write-Host "✗ WARNING: macOS FFmpeg not found!"
           }
           
-          # Install 7-Zip using Chocolatey
-          Write-Host "Installing 7-Zip..."
-          choco install 7zip.install -y
-          
-          # Make sure the destination directory exists
-          if (-Not (Test-Path "dist/zxp")) {
-            New-Item -Path "dist/zxp" -ItemType Directory
-          }
-          
-          # Remove existing ZXP if it exists
-          if (Test-Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp") {
-            Remove-Item "dist/zxp/com.youtubetoPremiereV2.cep.zxp" -Force
-          }
-          
-          # Create new ZXP using 7-Zip
+          # Create the ZXP package directly from the dist/cep directory
           Write-Host "Creating ZXP file..."
           $currentLocation = Get-Location
-          Set-Location "zxp_extract/contents"
-          & "C:\Program Files\7-Zip\7z.exe" a -tzip -mx=9 "$currentLocation\dist\zxp\com.youtubetoPremiereV2.cep.zxp" *
+          Set-Location "dist/cep"
+          
+          # Create new ZXP using 7-Zip with maximum compression
+          & "C:\Program Files\7-Zip\7z.exe" a -tzip -mx=9 -mfb=258 -mpass=15 "../zxp/com.youtubetoPremiereV2.cep.zxp" *
           Set-Location $currentLocation
           
           # Verify the ZXP was created
@@ -622,6 +629,17 @@ jobs:
               }
             } else {
               Write-Host "✗ WARNING: No executables found in ZXP!"
+            }
+            
+            # Additional verification for macOS executables
+            $macExecutablesFound = $foundExecutables | Where-Object { $_ -notmatch '\.exe$' }
+            if ($macExecutablesFound.Count -gt 0) {
+              Write-Host "✓ Found macOS executables:"
+              foreach ($exec in $macExecutablesFound) {
+                Write-Host "  - $exec"
+              }
+            } else {
+              Write-Host "✗ WARNING: No macOS executables found in ZXP!"
             }
           } else {
             Write-Error "Failed to create ZXP package!"
