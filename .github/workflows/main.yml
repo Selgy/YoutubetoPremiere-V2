@@ -139,19 +139,56 @@ jobs:
             $versionParts += "0"
           }
           
-          # Extract specific version parts
-          $part0 = $versionParts[0]
-          $part1 = $versionParts[1]
-          $part2 = $versionParts[2]
-          $part3 = $versionParts[3]
+          # Extract specific version parts - ensure they're treated as integers
+          $part0 = [int]$versionParts[0]
+          $part1 = [int]$versionParts[1]
+          $part2 = [int]$versionParts[2]
+          $part3 = [int]$versionParts[3]
           
           Write-Host "Creating PyInstaller version file with version: $VERSION ($part0.$part1.$part2.$part3)"
           
-          # Create simple Python script to generate version file correctly
-          $pythonScript = "import sys`nwith open('version.txt', 'w') as f:`n    f.write('VSVersionInfo(ffi=FixedFileInfo(filevers=($part0, $part1, $part2, $part3),prodvers=($part0, $part1, $part2, $part3),mask=0x3f,flags=0x0,OS=0x40004,fileType=0x1,subtype=0x0,date=(0, 0)),kids=[StringFileInfo([StringTable(u`'040904B0`',[StringStruct(u`'CompanyName`', u`'YoutubetoPremiere`'),StringStruct(u`'FileDescription`', u`'YouTube to Premiere Pro Extension`'),StringStruct(u`'FileVersion`', u`'$VERSION`'),StringStruct(u`'InternalName`', u`'YoutubetoPremiere`'),StringStruct(u`'LegalCopyright`', u`'(c) 2024 YoutubetoPremiere`'),StringStruct(u`'OriginalFilename`', u`'YoutubetoPremiere.exe`'),StringStruct(u`'ProductName`', u`'YouTube to Premiere Pro`'),StringStruct(u`'ProductVersion`', u`'$VERSION`')])])]),VarFileInfo([VarStruct(u`'Translation`', [1033, 1200])])])')"
+          # Create a Python script using standard PowerShell strings
+          $scriptContent = "import sys`n"
+          $scriptContent += "`n"
+          $scriptContent += "# Define version information`n"
+          $scriptContent += "filevers = ($part0, $part1, $part2, $part3)`n"
+          $scriptContent += "prodvers = ($part0, $part1, $part2, $part3)`n"
+          $scriptContent += "version_str = '$VERSION'`n"
+          $scriptContent += "`n"
+          $scriptContent += "# Write version file in PyInstaller format`n"
+          $scriptContent += "with open('version.txt', 'w') as f:`n"
+          $scriptContent += "    f.write(f'''VSVersionInfo(`n"
+          $scriptContent += "  ffi=FixedFileInfo(`n"
+          $scriptContent += "    filevers=filevers,`n"
+          $scriptContent += "    prodvers=prodvers,`n"
+          $scriptContent += "    mask=0x3f,`n"
+          $scriptContent += "    flags=0x0,`n"
+          $scriptContent += "    OS=0x40004,`n"
+          $scriptContent += "    fileType=0x1,`n"
+          $scriptContent += "    subtype=0x0,`n"
+          $scriptContent += "    date=(0, 0)`n"
+          $scriptContent += "  ),`n"
+          $scriptContent += "  kids=[`n"
+          $scriptContent += "    StringFileInfo(`n"
+          $scriptContent += "      [`n"
+          $scriptContent += "        StringTable(`n"
+          $scriptContent += "          u\'040904B0\',`n"
+          $scriptContent += "          [StringStruct(u\'CompanyName\', u\'YoutubetoPremiere\'),`n"
+          $scriptContent += "           StringStruct(u\'FileDescription\', u\'YouTube to Premiere Pro Extension\'),`n"
+          $scriptContent += "           StringStruct(u\'FileVersion\', version_str),`n"
+          $scriptContent += "           StringStruct(u\'InternalName\', u\'YoutubetoPremiere\'),`n"
+          $scriptContent += "           StringStruct(u\'LegalCopyright\', u\'(c) 2024 YoutubetoPremiere\'),`n"
+          $scriptContent += "           StringStruct(u\'OriginalFilename\', u\'YoutubetoPremiere.exe\'),`n"
+          $scriptContent += "           StringStruct(u\'ProductName\', u\'YouTube to Premiere Pro\'),`n"
+          $scriptContent += "           StringStruct(u\'ProductVersion\', version_str)])`n"
+          $scriptContent += "      ]`n"
+          $scriptContent += "    ),`n"
+          $scriptContent += "    VarFileInfo([VarStruct(u\'Translation\', [1033, 1200])])`n"
+          $scriptContent += "  ]`n"
+          $scriptContent += ")''')"
           
           # Save Python script
-          Set-Content -Path "create_version.py" -Value $pythonScript
+          Set-Content -Path "create_version.py" -Value $scriptContent
           
           # Execute Python script to create version file
           python create_version.py
@@ -159,6 +196,7 @@ jobs:
           # Verify the version file was created
           if (Test-Path "version.txt") {
             Write-Host "Version file successfully created with size: $(Get-Item -Path version.txt | Select-Object -ExpandProperty Length) bytes"
+            Get-Content -Path "version.txt" | Out-String | Write-Host
           } else {
             Write-Error "Failed to create version.txt file"
             exit 1
