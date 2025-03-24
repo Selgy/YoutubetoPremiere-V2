@@ -14,43 +14,60 @@ Write-Host "macOS universal executable source: $macExeUniversalSource"
 Write-Host "Windows FFmpeg source: $winFfmpegSource"
 Write-Host "macOS FFmpeg source: $macFfmpegSource" 
 
-# Create directory structure
-$zxpOutputDir = Join-Path $workspacePath "zxp_output"
-if (Test-Path $zxpOutputDir) {
-  Remove-Item -Path $zxpOutputDir -Recurse -Force
+# First, ensure the ZXP directory exists
+$zxpDir = Join-Path $workspacePath "dist/zxp"
+if (-not (Test-Path $zxpDir)) {
+  New-Item -ItemType Directory -Path $zxpDir -Force | Out-Null
+  Write-Host "Created ZXP directory: $zxpDir"
 }
-New-Item -ItemType Directory -Path $zxpOutputDir -Force | Out-Null
-Write-Host "Created output directory: $zxpOutputDir"
 
-# First let's ensure the dist/cep directory exists and has the right structure
-Write-Host "Checking dist/cep directory structure..."
+# Define the final ZXP path
+$zxpPath = Join-Path $zxpDir "com.youtubetoPremiereV2.cep.zxp"
+
+# Create temporary directory to build our package
+$tempPackageDir = Join-Path $workspacePath "temp_package"
+if (Test-Path $tempPackageDir) {
+  Remove-Item -Path $tempPackageDir -Recurse -Force
+}
+New-Item -ItemType Directory -Path $tempPackageDir -Force | Out-Null
+Write-Host "Created temporary package directory: $tempPackageDir"
+
+# Check if we have a built CEP package already
 $cepDir = Join-Path $workspacePath "dist/cep"
-if (-not (Test-Path $cepDir)) {
-  Write-Host "dist/cep directory not found, creating it"
-  New-Item -ItemType Directory -Path $cepDir -Force | Out-Null
+if (Test-Path $cepDir) {
+  Write-Host "Found existing CEP package, copying to temporary directory..."
+  Copy-Item -Path "$cepDir/*" -Destination $tempPackageDir -Recurse -Force
+} else {
+  Write-Host "⚠️ No existing CEP package found at $cepDir"
+  # Create basic structure
+  New-Item -ItemType Directory -Path (Join-Path $tempPackageDir "CSXS") -Force | Out-Null
+  New-Item -ItemType Directory -Path (Join-Path $tempPackageDir "js") -Force | Out-Null
+  New-Item -ItemType Directory -Path (Join-Path $tempPackageDir "jsx") -Force | Out-Null
 }
 
-# Create exec directory in dist/cep if it doesn't exist
-$execDir = Join-Path $cepDir "exec"
+# Ensure the exec directory exists in our temporary package
+$execDir = Join-Path $tempPackageDir "exec"
 if (-not (Test-Path $execDir)) {
-  Write-Host "Creating exec directory in dist/cep"
   New-Item -ItemType Directory -Path $execDir -Force | Out-Null
+  Write-Host "Created exec directory: $execDir"
 }
-
-# Copy files to dist/cep/exec first
-Write-Host "Copying files to dist/cep/exec"
 
 # Create sounds directory
 $soundsDir = Join-Path $execDir "sounds"
 if (-not (Test-Path $soundsDir)) {
   New-Item -ItemType Directory -Path $soundsDir -Force | Out-Null
+  Write-Host "Created sounds directory: $soundsDir"
 }
 
-# Copy Python files
-Write-Host "Copying Python files to exec directory..."
-Get-ChildItem -Path "app/*.py" -ErrorAction SilentlyContinue | ForEach-Object {
-  Copy-Item -Path $_.FullName -Destination $execDir -Force
-  Write-Host "  Copied $($_.Name)"
+# Copy Python files if they exist
+Write-Host "Copying Python files..."
+if (Test-Path "app/*.py") {
+  Get-ChildItem -Path "app/*.py" -ErrorAction SilentlyContinue | ForEach-Object {
+    Copy-Item -Path $_.FullName -Destination $execDir -Force
+    Write-Host "  Copied $($_.Name)"
+  }
+} else {
+  Write-Host "  No Python files found in app directory"
 }
 
 # Copy sounds if they exist
@@ -60,10 +77,12 @@ if (Test-Path "app/sounds") {
     Copy-Item -Path $_.FullName -Destination $soundsDir -Force
     Write-Host "  Copied sound: $($_.Name)"
   }
+} else {
+  Write-Host "  No sound files found in app directory"
 }
 
 # Copy executables
-Write-Host "Copying executables to exec directory..."
+Write-Host "Copying executables..."
 
 # Windows executable
 if (Test-Path $winExeSource) {
@@ -112,104 +131,144 @@ echo "Permissions fixed for macOS executables"
 "@
 Set-Content -Path (Join-Path $execDir "fix-permissions.sh") -Value $permissionScriptContent -NoNewline
 
-# Make sure all files are in place
-Write-Host "Verifying files in dist/cep/exec..."
-$execFiles = Get-ChildItem -Path $execDir
-foreach ($file in $execFiles) {
-  Write-Host "  $($file.Name) ($($file.Length) bytes)"
+# List content of exec directory
+Write-Host "Content of exec directory before packaging:"
+Get-ChildItem -Path $execDir -Recurse -Force | ForEach-Object {
+  Write-Host "  $($_.Name) ($($_.Length) bytes)"
 }
 
-# Check if yarn zxp is available, and if not, create our own ZXP package
-$canRunYarnZxp = $false
+# Check if the manifest.xml exists, if not create a minimal one
+$manifestDir = Join-Path $tempPackageDir "CSXS"
+$manifestPath = Join-Path $manifestDir "manifest.xml"
+if (-not (Test-Path $manifestPath)) {
+  Write-Host "Creating minimal manifest.xml file..."
+  
+  $manifestContent = @"
+<?xml version="1.0" encoding="UTF-8"?>
+<ExtensionManifest Version="6.0" ExtensionBundleId="com.youtubetoPremiereV2.cep" ExtensionBundleVersion="1.0.0">
+  <ExtensionList>
+    <Extension Id="com.youtubetoPremiereV2.cep.main" Version="1.0.0" />
+  </ExtensionList>
+  <ExecutionEnvironment>
+    <HostList>
+      <Host Name="PPRO" Version="[15.0,99.9]" />
+    </HostList>
+    <LocaleList>
+      <Locale Code="All" />
+    </LocaleList>
+    <RequiredRuntimeList>
+      <RequiredRuntime Name="CSXS" Version="9.0" />
+    </RequiredRuntimeList>
+  </ExecutionEnvironment>
+  <DispatchInfoList>
+    <Extension Id="com.youtubetoPremiereV2.cep.main">
+      <DispatchInfo>
+        <Resources>
+          <MainPath>./index.html</MainPath>
+          <ScriptPath>./jsx/index.js</ScriptPath>
+        </Resources>
+        <Lifecycle>
+          <AutoVisible>true</AutoVisible>
+        </Lifecycle>
+        <UI>
+          <Type>Panel</Type>
+          <Menu>YouTube to Premiere V2</Menu>
+          <Geometry>
+            <Size>
+              <Height>600</Height>
+              <Width>400</Width>
+            </Size>
+          </Geometry>
+        </UI>
+      </DispatchInfo>
+    </Extension>
+  </DispatchInfoList>
+</ExtensionManifest>
+"@
+  
+  if (-not (Test-Path $manifestDir)) {
+    New-Item -ItemType Directory -Path $manifestDir -Force | Out-Null
+  }
+  
+  Set-Content -Path $manifestPath -Value $manifestContent
+  Write-Host "  ✅ Created minimal manifest.xml"
+}
+
+# Check if we have a simple HTML file, if not create it
+$indexPath = Join-Path $tempPackageDir "index.html"
+if (-not (Test-Path $indexPath)) {
+  Write-Host "Creating minimal index.html file..."
+  
+  $indexContent = @"
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>YouTube to Premiere V2</title>
+</head>
+<body>
+  <h1>YouTube to Premiere V2</h1>
+  <p>Extension is loading...</p>
+</body>
+</html>
+"@
+  
+  Set-Content -Path $indexPath -Value $indexContent
+  Write-Host "  ✅ Created minimal index.html"
+}
+
+# Create the ZXP package
+Write-Host "Creating ZXP package..."
+
+# Delete old ZXP if it exists
+if (Test-Path $zxpPath) {
+  Remove-Item -Path $zxpPath -Force
+  Write-Host "  Removed existing ZXP file"
+}
+
+# Create the ZXP package using PowerShell's Compress-Archive
 try {
-  $yamlExists = Test-Path "package.json"
-  if ($yamlExists) {
-    $canRunYarnZxp = $true
-    Write-Host "Found package.json, will try running yarn zxp"
-  }
-} catch {
-  Write-Host "Error checking for package.json: $_"
-}
+  # PowerShell's Compress-Archive
+  Push-Location $tempPackageDir
+  # Get all items to include in the archive
+  $allFiles = Get-ChildItem -Path "." -Recurse -Force
 
-# Try to run yarn zxp
-$yarnZxpSuccess = $false
-if ($canRunYarnZxp) {
-  try {
-    Write-Host "Running yarn zxp command..."
-    yarn zxp
-    $zxpPath = Join-Path $workspacePath "dist/zxp/com.youtubetoPremiereV2.cep.zxp"
-    if (Test-Path $zxpPath) {
-      $yarnZxpSuccess = $true
-      Write-Host "  ✅ yarn zxp command successful"
-    } else {
-      Write-Host "  ❌ yarn zxp did not create a ZXP file"
-    }
-  } catch {
-    Write-Host "  ❌ Error running yarn zxp: $_"
-  }
-}
-
-# If yarn zxp failed or couldn't be run, create our own package
-if (-not $yarnZxpSuccess) {
-  Write-Host "Creating ZXP package manually..."
-  
-  # Ensure the directory exists
-  $zxpDir = Join-Path $workspacePath "dist/zxp"
-  if (-not (Test-Path $zxpDir)) {
-    New-Item -ItemType Directory -Path $zxpDir -Force | Out-Null
-  }
-  
-  $zxpPath = Join-Path $zxpDir "com.youtubetoPremiereV2.cep.zxp"
-  
-  # If the ZXP file exists from a previous run, we'll delete it
-  if (Test-Path $zxpPath) {
-    Remove-Item -Path $zxpPath -Force
-  }
-  
-  # First, copy all content from dist/cep to zxp_output
-  Write-Host "Copying dist/cep contents to temporary directory..."
-  Copy-Item -Path (Join-Path $cepDir "*") -Destination $zxpOutputDir -Recurse -Force
-
-  # For Windows, use Compress-Archive
-  try {
-    Write-Host "Creating ZIP archive of contents..."
-    Push-Location $zxpOutputDir
+  if ($allFiles.Count -gt 0) {
     Compress-Archive -Path "*" -DestinationPath $zxpPath -Force
     if (Test-Path $zxpPath) {
-      Write-Host "  ✅ Successfully created ZXP package using Compress-Archive"
+      Write-Host "  ✅ Created ZXP package using PowerShell Compress-Archive"
+      Write-Host "  ✅ ZXP package created: $zxpPath"
+      Write-Host "  ZXP file size: $((Get-Item $zxpPath).Length) bytes"
     } else {
-      Write-Host "  ❌ Failed to create ZXP package using Compress-Archive"
+      Write-Host "  ❌ Failed to create ZXP package using PowerShell Compress-Archive"
     }
-    Pop-Location
-  } catch {
-    Write-Host "  ❌ Error creating archive: $_"
+  } else {
+    Write-Host "  ❌ No files found in the package directory to compress"
   }
+  Pop-Location
+} catch {
+  Write-Host "  ❌ Error creating ZXP package: $_"
 }
 
-# Verify the ZXP was created
+# Verify the ZXP package
 if (Test-Path $zxpPath) {
-  Write-Host "ZXP package created successfully at: $zxpPath"
-  Write-Host "ZXP file size: $((Get-Item $zxpPath).Length) bytes"
+  Write-Host "Verifying ZXP package..."
   
-  # Verify contents
-  $tempDir = Join-Path $workspacePath "verify_zxp"
-  if (Test-Path $tempDir) {
-    Remove-Item -Path $tempDir -Recurse -Force
+  # Create temp extraction directory
+  $extractDir = Join-Path $workspacePath "temp_extract"
+  if (Test-Path $extractDir) {
+    Remove-Item -Path $extractDir -Recurse -Force
   }
-  New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+  New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
   
-  # Extract and verify
-  $tempZipPath = Join-Path $tempDir "package.zip"
-  $tempExtractPath = Join-Path $tempDir "contents"
-  New-Item -ItemType Directory -Path $tempExtractPath -Force | Out-Null
+  # Copy the ZXP to a zip file
+  $zipPath = Join-Path $extractDir "package.zip"
+  Copy-Item -Path $zxpPath -Destination $zipPath -Force
   
-  # Copy the ZXP (which is a ZIP) to our temporary location
-  Copy-Item -Path $zxpPath -Destination $tempZipPath -Force
-  
+  # Extract the ZIP
   try {
-    # Extract using Expand-Archive
-    Expand-Archive -Path $tempZipPath -DestinationPath $tempExtractPath -Force
-    Write-Host "Extracted ZXP for verification"
+    Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+    Write-Host "  ✅ Extracted ZXP package for verification"
     
     # Check for critical files
     $criticalFiles = @(
@@ -221,93 +280,146 @@ if (Test-Path $zxpPath) {
     
     $missingFiles = @()
     foreach ($file in $criticalFiles) {
-      $filePath = Join-Path $tempExtractPath $file.Path
+      $filePath = Join-Path $extractDir $file.Path
       if (Test-Path $filePath) {
-        Write-Host "  ✅ Found $($file.Name) in ZXP"
+        $fileSize = (Get-Item $filePath).Length
+        Write-Host "  ✅ Found $($file.Name) in ZXP (size: $fileSize bytes)"
       } else {
         Write-Host "  ❌ $($file.Name) is MISSING from ZXP"
         $missingFiles += $file
       }
     }
     
-    # If we're missing files, let's try a direct approach
+    # If files are missing, create a fixed ZXP
     if ($missingFiles.Count -gt 0) {
-      Write-Host "Some critical files are missing. Recreating ZXP with direct inclusion..."
+      Write-Host "Found $($missingFiles.Count) missing files in ZXP package, creating a fixed version..."
       
-      # Add the missing files directly
+      # Create a fixed directory
+      $fixedDir = Join-Path $workspacePath "fixed_package"
+      if (Test-Path $fixedDir) {
+        Remove-Item -Path $fixedDir -Recurse -Force
+      }
+      
+      # Copy extracted content to fixed directory
+      Copy-Item -Path "$extractDir/*" -Destination $fixedDir -Recurse -Force
+      
+      # Ensure exec directory exists
+      $fixedExecDir = Join-Path $fixedDir "exec"
+      if (-not (Test-Path $fixedExecDir)) {
+        New-Item -ItemType Directory -Path $fixedExecDir -Force | Out-Null
+      }
+      
+      # Copy missing files
       foreach ($file in $missingFiles) {
         if ($file.Path -eq "exec/YoutubetoPremiere.exe" -and (Test-Path $winExeSource)) {
-          $destPath = Join-Path $tempExtractPath "exec"
-          if (-not (Test-Path $destPath)) {
-            New-Item -ItemType Directory -Path $destPath -Force | Out-Null
-          }
-          Copy-Item -Path $winExeSource -Destination (Join-Path $destPath "YoutubetoPremiere.exe") -Force
-          Write-Host "  ✅ Added Windows executable directly"
+          Copy-Item -Path $winExeSource -Destination (Join-Path $fixedDir "exec/YoutubetoPremiere.exe") -Force
+          Write-Host "  ✅ Added Windows executable to fixed package"
         }
         elseif ($file.Path -eq "exec/YoutubetoPremiere") {
           if (Test-Path $macExeUniversalSource) {
-            $destPath = Join-Path $tempExtractPath "exec"
-            if (-not (Test-Path $destPath)) {
-              New-Item -ItemType Directory -Path $destPath -Force | Out-Null
-            }
-            Copy-Item -Path $macExeUniversalSource -Destination (Join-Path $destPath "YoutubetoPremiere") -Force
-            Write-Host "  ✅ Added macOS universal executable directly"
+            Copy-Item -Path $macExeUniversalSource -Destination (Join-Path $fixedDir "exec/YoutubetoPremiere") -Force
+            Write-Host "  ✅ Added macOS universal executable to fixed package"
           }
           elseif (Test-Path $macExeSource) {
-            $destPath = Join-Path $tempExtractPath "exec"
-            if (-not (Test-Path $destPath)) {
-              New-Item -ItemType Directory -Path $destPath -Force | Out-Null
-            }
-            Copy-Item -Path $macExeSource -Destination (Join-Path $destPath "YoutubetoPremiere") -Force
-            Write-Host "  ✅ Added macOS standard executable directly"
+            Copy-Item -Path $macExeSource -Destination (Join-Path $fixedDir "exec/YoutubetoPremiere") -Force
+            Write-Host "  ✅ Added macOS standard executable to fixed package"
           }
         }
         elseif ($file.Path -eq "exec/ffmpeg.exe" -and (Test-Path $winFfmpegSource)) {
-          $destPath = Join-Path $tempExtractPath "exec"
-          if (-not (Test-Path $destPath)) {
-            New-Item -ItemType Directory -Path $destPath -Force | Out-Null
-          }
-          Copy-Item -Path $winFfmpegSource -Destination (Join-Path $destPath "ffmpeg.exe") -Force
-          Write-Host "  ✅ Added Windows FFmpeg directly"
+          Copy-Item -Path $winFfmpegSource -Destination (Join-Path $fixedDir "exec/ffmpeg.exe") -Force
+          Write-Host "  ✅ Added Windows FFmpeg to fixed package"
         }
         elseif ($file.Path -eq "exec/ffmpeg" -and (Test-Path $macFfmpegSource)) {
-          $destPath = Join-Path $tempExtractPath "exec"
-          if (-not (Test-Path $destPath)) {
-            New-Item -ItemType Directory -Path $destPath -Force | Out-Null
-          }
-          Copy-Item -Path $macFfmpegSource -Destination (Join-Path $destPath "ffmpeg") -Force
-          Write-Host "  ✅ Added macOS FFmpeg directly"
+          Copy-Item -Path $macFfmpegSource -Destination (Join-Path $fixedDir "exec/ffmpeg") -Force
+          Write-Host "  ✅ Added macOS FFmpeg to fixed package"
         }
       }
       
-      # Re-create the ZXP package
-      Remove-Item -Path $zxpPath -Force -ErrorAction SilentlyContinue
+      # Copy Python files if they were missing
+      if (-not (Test-Path (Join-Path $fixedDir "exec/*.py"))) {
+        Write-Host "Copying Python files to fixed package..."
+        if (Test-Path "app/*.py") {
+          Get-ChildItem -Path "app/*.py" -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item -Path $_.FullName -Destination $fixedExecDir -Force
+            Write-Host "  Copied $($_.Name) to fixed package"
+          }
+        }
+      }
       
+      # Create permission fix script if it's missing
+      if (-not (Test-Path (Join-Path $fixedDir "exec/fix-permissions.sh"))) {
+        Set-Content -Path (Join-Path $fixedDir "exec/fix-permissions.sh") -Value $permissionScriptContent -NoNewline
+        Write-Host "  ✅ Added permission fix script to fixed package"
+      }
+      
+      # Create the fixed ZXP
       try {
-        Write-Host "Re-creating ZXP package with all files..."
-        Push-Location $tempExtractPath
+        Push-Location $fixedDir
         Compress-Archive -Path "*" -DestinationPath $zxpPath -Force
         Pop-Location
         
         if (Test-Path $zxpPath) {
-          Write-Host "  ✅ Successfully recreated ZXP package with all files"
-          Write-Host "  New ZXP file size: $((Get-Item $zxpPath).Length) bytes"
+          Write-Host "  ✅ Created fixed ZXP package"
+          Write-Host "  Fixed ZXP file size: $((Get-Item $zxpPath).Length) bytes"
         } else {
-          Write-Host "  ❌ Failed to recreate ZXP package"
+          Write-Host "  ❌ Failed to create fixed ZXP package"
         }
       } catch {
-        Write-Host "  ❌ Error recreating ZXP package: $_"
+        Write-Host "  ❌ Error creating fixed ZXP package: $_"
       }
+      
+      # Verify the fixed ZXP
+      if (Test-Path $zxpPath) {
+        $fixedZipPath = Join-Path $extractDir "fixed.zip"
+        Copy-Item -Path $zxpPath -Destination $fixedZipPath -Force
+        
+        $fixedExtractDir = Join-Path $extractDir "fixed"
+        if (-not (Test-Path $fixedExtractDir)) {
+          New-Item -ItemType Directory -Path $fixedExtractDir -Force | Out-Null
+        }
+        
+        try {
+          Expand-Archive -Path $fixedZipPath -DestinationPath $fixedExtractDir -Force
+          Write-Host "  ✅ Extracted fixed ZXP package for verification"
+          
+          $allFixed = $true
+          foreach ($file in $criticalFiles) {
+            $filePath = Join-Path $fixedExtractDir $file.Path
+            if (Test-Path $filePath) {
+              $fileSize = (Get-Item $filePath).Length
+              Write-Host "  ✅ Fixed ZXP contains $($file.Name) (size: $fileSize bytes)"
+            } else {
+              Write-Host "  ❌ Fixed ZXP is still missing $($file.Name)!"
+              $allFixed = $false
+            }
+          }
+          
+          if ($allFixed) {
+            Write-Host "  ✅ All critical files verified in fixed ZXP package"
+          } else {
+            Write-Host "  ❌ Some critical files are still missing from fixed ZXP package"
+          }
+        } catch {
+          Write-Host "  ❌ Error verifying fixed ZXP package: $_"
+        }
+      }
+    } else {
+      Write-Host "  ✅ All critical files are present in the ZXP package"
     }
   } catch {
-    Write-Host "  ❌ Error extracting or verifying ZXP: $_"
+    Write-Host "  ❌ Error extracting or verifying ZXP package: $_"
   }
   
-  # Final check to ensure ZXP exists
+  # Final message
   if (Test-Path $zxpPath) {
-    Write-Host "✅ Final ZXP package is available at: $zxpPath"
+    $finalSize = (Get-Item $zxpPath).Length
+    Write-Host "✅ FINAL ZXP PACKAGE CREATED: $zxpPath (size: $finalSize bytes)"
+    
+    # Copy to distribution location
+    Copy-Item -Path $zxpPath -Destination (Join-Path $zxpDir "YoutubetoPremiere.zxp") -Force
+    Write-Host "✅ Also saved as: $(Join-Path $zxpDir "YoutubetoPremiere.zxp")"
   } else {
-    Write-Host "❌ Final ZXP package was not created successfully"
+    Write-Host "❌ Failed to create final ZXP package"
   }
 } else {
   Write-Host "❌ Failed to create ZXP package"
@@ -315,11 +427,14 @@ if (Test-Path $zxpPath) {
 
 # Clean up
 Write-Host "Cleaning up temporary files..."
-if (Test-Path $zxpOutputDir) {
-  Remove-Item -Path $zxpOutputDir -Recurse -Force -ErrorAction SilentlyContinue
+if (Test-Path $tempPackageDir) {
+  Remove-Item -Path $tempPackageDir -Recurse -Force -ErrorAction SilentlyContinue
 }
-if (Test-Path $tempDir) {
-  Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+if (Test-Path $extractDir) {
+  Remove-Item -Path $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+if (Test-Path $fixedDir) {
+  Remove-Item -Path $fixedDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host "===== FINAL ZXP PACKAGING COMPLETED =====" 
