@@ -7,218 +7,13 @@ on:
         description: 'Version to tag the release with (e.g. 3.0.5)'
         required: true
         default: '3.0.0'
-      force_rebuild:
-        description: 'Force rebuilding all executables'
-        type: boolean
-        default: false
 
 permissions:
   contents: write
   actions: read
   
 jobs:
-  build-ffmpeg:
-    strategy:
-      matrix:
-        os: [windows-latest, macos-13]
-      fail-fast: false
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        
-      # Try to download existing FFmpeg artifact first
-      - name: Try downloading existing FFmpeg
-        id: download_ffmpeg
-        continue-on-error: true
-        uses: dawidd6/action-download-artifact@v2
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          workflow: main.yml
-          workflow_conclusion: success
-          name: ffmpeg-${{ matrix.os }}
-          path: ffmpeg-artifact
-          search_artifacts: true
-          
-      - name: Check for downloaded FFmpeg
-        id: check_ffmpeg
-        run: |
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            FFMPEG_PATH="ffmpeg-artifact/ffmpeg.exe"
-          else
-            FFMPEG_PATH="ffmpeg-artifact/ffmpeg"
-          fi
-          
-          if [[ -f "$FFMPEG_PATH" && "${{ github.event.inputs.force_rebuild }}" != "true" ]]; then
-            echo "ffmpeg_exists=true" >> $GITHUB_OUTPUT
-            echo "✅ Found existing FFmpeg artifact"
-          else
-            echo "ffmpeg_exists=false" >> $GITHUB_OUTPUT
-            echo "⚠️ No existing FFmpeg artifact found or rebuild forced"
-          fi
-        shell: bash
-        
-      # Only build if needed
-      - name: Install FFmpeg through package manager
-        if: steps.check_ffmpeg.outputs.ffmpeg_exists != 'true'
-        run: |
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            choco install ffmpeg -y
-            cp "C:/ProgramData/chocolatey/bin/ffmpeg.exe" ./ffmpeg.exe
-          else
-            brew install ffmpeg
-            cp "$(which ffmpeg)" ./ffmpeg
-          fi
-          echo "FFmpeg installed successfully"
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            ls -la ./ffmpeg.exe || echo "Windows FFmpeg not found"
-          else
-            ls -la ./ffmpeg || echo "macOS FFmpeg not found"
-          fi
-        shell: bash
-      
-      # Copy from artifact if it exists
-      - name: Use existing FFmpeg
-        if: steps.check_ffmpeg.outputs.ffmpeg_exists == 'true'
-        run: |
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            cp "ffmpeg-artifact/ffmpeg.exe" ./ffmpeg.exe
-          else
-            cp "ffmpeg-artifact/ffmpeg" ./ffmpeg
-            chmod +x ./ffmpeg
-          fi
-          echo "✅ Using existing FFmpeg"
-        shell: bash
-      
-      # Upload in either case
-      - name: Upload FFmpeg
-        uses: actions/upload-artifact@v4
-        with:
-          name: ffmpeg-${{ matrix.os }}
-          path: ${{ matrix.os == 'windows-latest' && 'ffmpeg.exe' || 'ffmpeg' }}
-          retention-days: 90
-  
-  build-executables:
-    strategy:
-      matrix:
-        os: [windows-latest, macos-13]
-      fail-fast: false
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      
-      # Try to download existing executable artifact first
-      - name: Try downloading existing executable
-        id: download_executable
-        continue-on-error: true
-        uses: dawidd6/action-download-artifact@v2
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          workflow: main.yml
-          workflow_conclusion: success
-          name: executable-${{ matrix.os }}
-          path: executable-artifact
-          search_artifacts: true
-          
-      - name: Check for downloaded executable
-        id: check_executable
-        run: |
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            EXE_PATH="executable-artifact/YoutubetoPremiere.exe"
-          else
-            EXE_PATH="executable-artifact/YoutubetoPremiere"
-          fi
-          
-          # For macOS, always rebuild to apply signature, or if forced to rebuild
-          if [[ "${{ matrix.os }}" == "macos-13" || "${{ github.event.inputs.force_rebuild }}" == "true" ]]; then
-            echo "executable_exists=false" >> $GITHUB_OUTPUT
-            echo "ℹ️ Will rebuild macOS executable to apply signature or rebuild forced"
-          elif [[ -f "$EXE_PATH" ]]; then
-            echo "executable_exists=true" >> $GITHUB_OUTPUT
-            echo "✅ Found existing executable artifact"
-          else
-            echo "executable_exists=false" >> $GITHUB_OUTPUT
-            echo "⚠️ No existing executable artifact found"
-          fi
-        shell: bash
-      
-      # Setup and build only if needed
-      - name: Setup Python
-        if: steps.check_executable.outputs.executable_exists != 'true'
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.9'
-          cache: 'none'
-      
-      - name: Install Python dependencies
-        if: steps.check_executable.outputs.executable_exists != 'true'
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller python-socketio requests pillow
-          
-      - name: Build executable with PyInstaller
-        if: steps.check_executable.outputs.executable_exists != 'true'
-        run: |
-          cd app
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            pyinstaller --onefile --name YoutubetoPremiere --icon=images/icon.ico server.py
-          else
-            pyinstaller --onefile --name YoutubetoPremiere server.py
-          fi
-          ls -la dist/
-        shell: bash
-      
-      - name: Prepare executable for upload from build
-        if: steps.check_executable.outputs.executable_exists != 'true'
-        run: |
-          mkdir -p ../dist
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            cp app/dist/YoutubetoPremiere.exe ../dist/
-            echo "Windows executable built"
-          else
-            cp app/dist/YoutubetoPremiere ../dist/
-            echo "macOS executable built"
-          fi
-        shell: bash
-        
-      - name: Prepare executable for upload from artifact
-        if: steps.check_executable.outputs.executable_exists == 'true'
-        run: |
-          mkdir -p dist
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            cp executable-artifact/YoutubetoPremiere.exe dist/
-            echo "✅ Using existing Windows executable"
-          else
-            cp executable-artifact/YoutubetoPremiere dist/
-            chmod +x dist/YoutubetoPremiere
-            echo "✅ Using existing macOS executable"
-          fi
-        shell: bash
-      
-      - name: Codesign macOS executable
-        if: matrix.os == 'macos-13' && steps.check_executable.outputs.executable_exists != 'true'
-        run: |
-          # Find identity
-          IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F '"' '{print $2}')
-          if [[ -n "$IDENTITY" ]]; then
-            echo "Found signing identity: $IDENTITY"
-            codesign --force --options runtime --timestamp --sign "$IDENTITY" dist/YoutubetoPremiere
-            echo "Executable signed successfully"
-          else
-            echo "No signing identity found, using unsigned executable"
-          fi
-        shell: bash
-      
-      - name: Upload executable artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: executable-${{ matrix.os }}
-          path: dist/YoutubetoPremiere*
-          retention-days: 90
-
   package-zxp:
-    needs: [build-ffmpeg, build-executables]
     runs-on: windows-latest
     steps:
       - name: Checkout repository
@@ -245,40 +40,184 @@ jobs:
           mkdir -p backup/exec
         shell: bash
       
-      - name: Download artifacts from current workflow
-        uses: actions/download-artifact@v4
+      - name: Download latest artifacts
+        uses: dawidd6/action-download-artifact@v2
         with:
-          path: .
+          github_token: ${{secrets.GITHUB_TOKEN}}
+          workflow: main.yml
+          workflow_conclusion: success
+          name_is_regexp: true
+          name: .*
+          path: artifacts
       
       - name: List downloaded artifacts
         run: |
-          echo "Checking for artifacts in working directory:"
-          find . -maxdepth 2 -type d -name "executable-*" -o -name "ffmpeg-*" | sort
-          
-          echo "Listing files in artifact directories:"
-          find . -name "YoutubetoPremiere*" -o -name "ffmpeg*" | sort
+          ls -la artifacts
         shell: bash
       
-      - name: Create ZXP package
+      - name: Optimize ZXP packaging process
+        shell: bash
+        env:
+          SKIP_PYTHON_BUILD: true
+          NO_PYTHON: true
+          ZXP_PACKAGE: true
         run: |
-          ./.github/scripts/create-zxp.ps1
-        shell: pwsh
+          # Function to copy artifacts with error checking
+          copy_artifact() {
+            local source=$1
+            local dest=$2
+            local description=$3
+            
+            if [ -f "$source" ]; then
+              cp "$source" "$dest"
+              echo "✓ Copied $description"
+            else
+              echo "✗ ERROR: $description not found at: $source"
+              return 1
+            fi
+          }
+          
+          echo "===== PREPARING ZXP PACKAGE ====="
+          
+          # List the contents of the artifacts directory to see what we have
+          echo "Available artifacts:"
+          find artifacts -type f | sort
+          
+          # Create backup of executables
+          mkdir -p backup/exec
+          
+          # Copy all Python files
+          echo "Copying Python files..."
+          cp app/*.py dist/cep/exec/ 2>/dev/null || echo "No Python files found"
+          cp -r app/sounds/* dist/cep/exec/sounds/ 2>/dev/null || echo "No sound files found"
+          
+          # Copy artifacts efficiently - using find to locate the files
+          echo "Copying executables and FFmpeg..."
+          
+          # Windows executable
+          WIN_EXE=$(find artifacts -name "YoutubetoPremiere.exe" | head -1)
+          if [ -n "$WIN_EXE" ]; then
+            cp "$WIN_EXE" "dist/cep/exec/" && echo "✓ Copied Windows executable"
+            cp "$WIN_EXE" "backup/exec/" && echo "✓ Copied Windows executable (backup)"
+          else
+            echo "✗ ERROR: Windows executable not found!"
+          fi
+          
+          # Windows FFmpeg
+          WIN_FFMPEG=$(find artifacts -name "ffmpeg.exe" | head -1)
+          if [ -n "$WIN_FFMPEG" ]; then
+            cp "$WIN_FFMPEG" "dist/cep/exec/" && echo "✓ Copied Windows FFmpeg"
+            cp "$WIN_FFMPEG" "backup/exec/" && echo "✓ Copied Windows FFmpeg (backup)"
+          else
+            echo "✗ ERROR: Windows FFmpeg not found!"
+          fi
+          
+          # macOS executable
+          MAC_EXE=$(find artifacts -name "YoutubetoPremiere" | head -1)
+          if [ -n "$MAC_EXE" ]; then
+            cp "$MAC_EXE" "dist/cep/exec/" && echo "✓ Copied macOS executable"
+            cp "$MAC_EXE" "backup/exec/" && echo "✓ Copied macOS executable (backup)"
+          else
+            echo "✗ ERROR: macOS executable not found!"
+          fi
+          
+          # macOS FFmpeg
+          MAC_FFMPEG=$(find artifacts -name "ffmpeg" -not -name "*.exe" | head -1)
+          if [ -n "$MAC_FFMPEG" ]; then
+            cp "$MAC_FFMPEG" "dist/cep/exec/" && echo "✓ Copied macOS FFmpeg"
+            cp "$MAC_FFMPEG" "backup/exec/" && echo "✓ Copied macOS FFmpeg (backup)"
+          else
+            echo "✗ ERROR: macOS FFmpeg not found!"
+          fi
+          
+          # Verify files are in place
+          echo "Verifying files in dist/cep/exec before yarn zxp:"
+          ls -la dist/cep/exec
+          
+          # Build TypeScript
+          echo "Building TypeScript..."
+          yarn tsc -p "tsconfig-build.json"
+          
+          # We'll use a simpler approach - use yarn zxp to create the package, then modify it
+          echo "Running initial yarn zxp..."
+          yarn zxp
+          
+          # Verify the ZXP exists
+          if [ ! -f "dist/zxp/com.youtubetoPremiereV2.cep.zxp" ]; then
+            echo "ERROR: yarn zxp did not create the ZXP package"
+            exit 1
+          fi
+          
+          echo "Extracting the ZXP package..."
+          mkdir -p zxp_extract
+          cp dist/zxp/com.youtubetoPremiereV2.cep.zxp zxp_extract/
+          cd zxp_extract
+          unzip -q com.youtubetoPremiereV2.cep.zxp -d contents || echo "Could not extract ZXP"
+          cd ..
+          
+          echo "Creating exec directory in the extracted package..."
+          mkdir -p zxp_extract/contents/exec
+          
+          echo "Copying executables to the extracted package..."
+          cp backup/exec/* zxp_extract/contents/exec/ 2>/dev/null || echo "No executables found in backup"
+          cp app/*.py zxp_extract/contents/exec/ 2>/dev/null || echo "No Python files found"
+          mkdir -p zxp_extract/contents/exec/sounds
+          cp -r app/sounds/* zxp_extract/contents/exec/sounds/ 2>/dev/null || echo "No sound files found"
+          
+          echo "Verifying executables are in the extracted package:"
+          ls -la zxp_extract/contents/exec
+          
+          echo "Recreating the ZXP with executables included..."
+          cd zxp_extract/contents
+          zip -r ../../dist/zxp/com.youtubetoPremiereV2.cep.zxp ./* || echo "Failed to create ZIP file"
+          cd ../..
+          
+          # Verify ZXP was recreated
+          if [ -f "dist/zxp/com.youtubetoPremiereV2.cep.zxp" ]; then
+            echo "✓ ZXP package recreated successfully at: dist/zxp/com.youtubetoPremiereV2.cep.zxp"
+            echo "  Size: $(du -h dist/zxp/com.youtubetoPremiereV2.cep.zxp | cut -f1)"
+            
+            # Examine ZXP contents to verify executables are included
+            echo "Examining ZXP contents to verify executables are included..."
+            mkdir -p zxp_verification
+            cp dist/zxp/com.youtubetoPremiereV2.cep.zxp zxp_verification/
+            cd zxp_verification
+            unzip -l com.youtubetoPremiereV2.cep.zxp | grep -i "exec/" || echo "WARNING: No exec files found in ZXP!"
+            unzip -l com.youtubetoPremiereV2.cep.zxp | grep -i ".exe" || echo "WARNING: No .exe files found in ZXP!"
+            unzip -l com.youtubetoPremiereV2.cep.zxp | grep -i "ffmpeg" || echo "WARNING: No ffmpeg files found in ZXP!"
+            cd ..
+          else
+            echo "✗ ERROR: ZXP package was not recreated!"
+            exit 1
+          fi
+          
+          echo "===== ZXP PACKAGING COMPLETED ====="
       
-      - name: Upload ZXP package
-        uses: actions/upload-artifact@v4
-        with:
-          name: YoutubetoPremiere-ZXP
-          path: dist/zxp/*.zxp
-          retention-days: 30
+      - name: Verify and Rename ZXP Package
+        shell: pwsh
+        run: |
+          $version = "${{ github.event.inputs.version }}"
+          
+          if (Test-Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp") {
+            # Rename the ZXP file to include the version
+            $newName = "YoutubetoPremiere-v$version.zxp"
+            Copy-Item -Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp" -Destination "dist/zxp/$newName" -Force
+            Write-Host "Renamed ZXP package to: $newName"
+            
+            # Remove the original file
+            Remove-Item -Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp" -Force
+            
+            # List the files
+            Get-ChildItem -Path dist/zxp
+          } else {
+            Write-Error "ZXP package was not found!"
+            exit 1
+          }
       
       - name: Create Release
-        if: github.event.inputs.version != ''
         uses: softprops/action-gh-release@v1
         with:
+          files: ./dist/zxp/YoutubetoPremiere-v${{ github.event.inputs.version }}.zxp
+          name: YoutubetoPremiere v${{ github.event.inputs.version }}
           tag_name: v${{ github.event.inputs.version }}
-          name: Release v${{ github.event.inputs.version }}
-          draft: true
-          files: |
-            dist/zxp/*.zxp
-            dist/YoutubetoPremiere.exe
-            dist/YoutubetoPremiere 
+          generate_release_notes: true 

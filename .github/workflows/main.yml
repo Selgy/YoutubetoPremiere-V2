@@ -124,9 +124,7 @@ jobs:
         shell: bash
       
       - name: Download existing artifact
-        id: download_artifact
         if: steps.check_artifacts.outputs.artifact_exists == 'true'
-        continue-on-error: true
         uses: dawidd6/action-download-artifact@v2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -134,17 +132,6 @@ jobs:
           workflow_conclusion: success
           name: ${{ matrix.os == 'windows-latest' && 'ffmpeg-windows-latest' || 'ffmpeg-macos-13' }}
           path: existing-artifact
-          check_artifacts: true
-          if_no_artifact_found: warn
-          branch: ${{ github.ref_name }}
-          search_artifacts: true
-
-      - name: Reset artifact status if download failed
-        if: steps.check_artifacts.outputs.artifact_exists == 'true' && steps.download_artifact.outcome == 'failure'
-        run: |
-          echo "Download failed, will build from scratch"
-          echo "artifact_exists=false" >> $GITHUB_OUTPUT
-        shell: bash
       
       - name: Verify downloaded artifact
         if: steps.check_artifacts.outputs.artifact_exists == 'true'
@@ -283,9 +270,7 @@ jobs:
         shell: bash
       
       - name: Download existing artifact
-        id: download_executable
         if: steps.check_artifacts.outputs.artifact_exists == 'true'
-        continue-on-error: true
         uses: dawidd6/action-download-artifact@v2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -293,18 +278,7 @@ jobs:
           workflow_conclusion: success
           name: ${{ matrix.os == 'windows-latest' && 'executable-windows-latest' || 'executable-macos-13' }}
           path: existing-artifact
-          check_artifacts: true
-          if_no_artifact_found: warn
-          branch: ${{ github.ref_name }}
-          search_artifacts: true
 
-      - name: Reset artifact status if download failed
-        if: steps.check_artifacts.outputs.artifact_exists == 'true' && steps.download_executable.outcome == 'failure'
-        run: |
-          echo "Download failed, will build from scratch"
-          echo "artifact_exists=false" >> $GITHUB_OUTPUT
-        shell: bash
-      
       - name: Verify downloaded artifact
         if: steps.check_artifacts.outputs.artifact_exists == 'true'
         id: verify_artifact
@@ -332,7 +306,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.9'
-          cache: 'none'
+          cache: 'pip'
       
       - name: Install Python dependencies
         if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
@@ -363,6 +337,13 @@ jobs:
           fi
         shell: bash
       
+      - name: Clean Python caches on Windows
+        if: ${{ steps.platform.outputs.is_windows == 'true' && (steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true') }}
+        run: |
+          Remove-Item -Path $env:LOCALAPPDATA\pip\Cache -Recurse -Force -ErrorAction SilentlyContinue
+          Write-Host "Cleared pip cache"
+        shell: pwsh
+
       - name: Build executable with PyInstaller
         if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
         run: |
@@ -543,27 +524,8 @@ jobs:
           mkdir -p finalized
           cp YoutubetoPremiere finalized/
           cd finalized
-          
-          # Set the file attributes explicitly to make it recognize as an application
-          echo "Setting file type flags to make sure it's recognized as an application..."
-          if command -v SetFile >/dev/null 2>&1; then
-            SetFile -t APPL YoutubetoPremiere
-            echo "Set file type with SetFile"
-          fi
-          
-          # Package with ditto to preserve all attributes and metadata
-          if command -v ditto >/dev/null 2>&1; then
-            mkdir -p app_package
-            ditto -c -k --keepParent YoutubetoPremiere app_package/YoutubetoPremiere.zip
-            mv app_package/YoutubetoPremiere.zip ../YoutubetoPremiere-notarized.zip
-            echo "Created archive with ditto to preserve all attributes"
-          else
-            # Fallback to tar which preserves executable permissions
-            tar -czf YoutubetoPremiere-notarized.tar.gz YoutubetoPremiere
-            cp YoutubetoPremiere-notarized.tar.gz ../
-            echo "Created fallback archive with tar"
-          fi
-          
+          tar -czf YoutubetoPremiere-notarized.tar.gz YoutubetoPremiere
+          cp YoutubetoPremiere-notarized.tar.gz ../
           cd ..
           
           # Cleanup
@@ -639,9 +601,7 @@ jobs:
         uses: actions/download-artifact@v4
         
       - name: Download artifacts from previous workflow
-        id: download_previous_artifacts
         if: ${{ github.event.inputs.package_only == 'true' }}
-        continue-on-error: true
         uses: dawidd6/action-download-artifact@v2
         with:
           github_token: ${{secrets.GITHUB_TOKEN}}
@@ -650,24 +610,7 @@ jobs:
           name_is_regexp: true
           name: .*
           path: artifacts
-          check_artifacts: true
-          if_no_artifact_found: warn
-          search_artifacts: true
       
-      - name: Check previous artifacts download result
-        if: ${{ github.event.inputs.package_only == 'true' && steps.download_previous_artifacts.outcome == 'failure' }}
-        run: |
-          echo "Failed to download previous artifacts. Will try with current build artifacts."
-          echo "DOWNLOAD_FAILED=true" >> $GITHUB_ENV
-        shell: bash
-      
-      - name: Force build if artifacts not found
-        if: ${{ env.DOWNLOAD_FAILED == 'true' }}
-        run: |
-          echo "Running full build since artifacts were not found"
-          # Call the build workflow or logic here
-        shell: bash
-
       - name: List downloaded artifacts
         run: |
           if [[ "${{ github.event.inputs.package_only }}" == "true" ]]; then
@@ -846,7 +789,6 @@ jobs:
           $macExeSource = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere"
           $winFfmpegSource = Join-Path $workspacePath "ffmpeg-windows-latest/ffmpeg.exe"
           $macFfmpegSource = Join-Path $workspacePath "ffmpeg-macos-13/ffmpeg"
-          $tempNotarizedDir = Join-Path $workspacePath "temp_notarized"
           
           Write-Host "Windows FFmpeg source: $winFfmpegSource"
           Write-Host "macOS FFmpeg source: $macFfmpegSource" 
@@ -883,6 +825,36 @@ jobs:
             Write-Host "Copied Python files to $execDir"
           }
           
+          # Copy unblock script - No longer needed as we now use notarized executables
+          # We've removed the step that creates unblock.sh
+
+          # Check if executable-macos-13 contains a YoutubetoPremiere.zip file (notarized version)
+          $notarizedZipPath = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere.zip"
+          $tempNotarizedDir = Join-Path $workspacePath "temp_notarized"
+          
+          if (Test-Path $notarizedZipPath) {
+            Write-Host "Found notarized macOS executable ZIP. Extracting it..."
+            New-Item -ItemType Directory -Path $tempNotarizedDir -Force | Out-Null
+            Expand-Archive -Path $notarizedZipPath -DestinationPath $tempNotarizedDir -Force
+            
+            if (Test-Path "$tempNotarizedDir/YoutubetoPremiere") {
+              Write-Host "Using notarized macOS executable from ZIP"
+              Copy-Item -Path "$tempNotarizedDir/YoutubetoPremiere" -Destination "$execDir/YoutubetoPremiere" -Force
+              
+              # Set permissions explicitly
+              & "bash" "-c" "chmod +x \"$execDir/YoutubetoPremiere\" 2>/dev/null || true"
+              
+              # Verify the file is correctly copied
+              if (Test-Path "$execDir/YoutubetoPremiere") {
+                Write-Host "✅ Notarized macOS executable successfully copied to ZXP package"
+              } else {
+                Write-Host "❌ Failed to copy notarized macOS executable"
+              }
+            }
+          } else {
+            Write-Host "No notarized ZIP found - using regular macOS executable"
+          }
+          
           # Copy executables (Windows and the rest)
           Write-Host "Copying executables..."
           if (Test-Path $winExeSource) {
@@ -892,40 +864,10 @@ jobs:
             Write-Host "WARNING: Windows executable not found at $winExeSource"
           }
           
-          # Check for notarized ZIP first (highest priority)
-          $notarizedZipPath = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere-notarized.zip"
-          if (Test-Path $notarizedZipPath) {
-            Write-Host "Found ditto-prepared macOS executable ZIP. Extracting it..."
-            New-Item -ItemType Directory -Path $tempNotarizedDir -Force | Out-Null
-            
-            # Use unzip to preserve all attributes from ditto
-            & "bash" "-c" "unzip -o \"$notarizedZipPath\" -d \"$execDir\" || echo 'unzip failed'"
-            
-            # Verify the file is correctly extracted
-            if (Test-Path "$execDir/YoutubetoPremiere") {
-              Write-Host "✅ Notarized macOS executable from ditto archive successfully extracted"
-              & "bash" "-c" "ls -la \"$execDir/YoutubetoPremiere\" || echo 'ls command failed'"
-            } else {
-              Write-Host "❌ Failed to extract from ditto archive - falling back to other methods"
-            }
-          }
-          
-          # If notarized ZIP not found or extraction failed, check regular ZIP
-          if (-not (Test-Path "$execDir/YoutubetoPremiere") -and (Test-Path $notarizedZipPath)) {
-            Write-Host "Using standard notarized macOS executable ZIP..."
-            New-Item -ItemType Directory -Path $tempNotarizedDir -Force | Out-Null
-            Expand-Archive -Path $notarizedZipPath -DestinationPath $tempNotarizedDir -Force
-            
-            if (Test-Path "$tempNotarizedDir/YoutubetoPremiere") {
-              Write-Host "Using notarized macOS executable from ZIP"
-              Copy-Item -Path "$tempNotarizedDir/YoutubetoPremiere" -Destination "$execDir/YoutubetoPremiere" -Force
-            }
-          }
-          
           # Only copy macOS executable if we didn't extract it from the notarized ZIP
           if (-not (Test-Path "$execDir/YoutubetoPremiere") -and (Test-Path $macExeSource)) {
             Copy-Item -Path $macExeSource -Destination "$execDir/YoutubetoPremiere" -Force
-            Write-Host "Copied macOS executable (fallback)"
+            Write-Host "Copied macOS executable"
           }
           
           if (Test-Path $winFfmpegSource) {
@@ -973,23 +915,16 @@ jobs:
           
           # Create a .zip file with platform-specific tools to preserve attributes
           if ($IsWindows -or $env:OS -like "*Windows*") {
-            Write-Host "Running on Windows - using bash zip for ZXP creation"
+            Write-Host "Running on Windows - using .NET for ZIP creation"
             
-            # Use bash zip with options to preserve attributes even on Windows
-            & "bash" "-c" "cd \"$outputDir\" && zip -r -X -9 --symlinks \"$zxpPath\" * || echo 'Zip command failed'"
+            # Use standard .NET ZIP with no compression to preserve attributes
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            [System.IO.Compression.CompressionLevel]$compressionLevel = [System.IO.Compression.CompressionLevel]::NoCompression
+            [System.IO.Compression.ZipFile]::CreateFromDirectory($outputDir, $zxpPath, $compressionLevel, $false)
           } else {
-            # On macOS runner, use ditto if available, otherwise zip
-            Write-Host "Running on macOS - using ditto for ZXP creation if available"
-            $tempZipPath = Join-Path $workspacePath "temp_zxp.zip"
-            
-            $dittoCmdExists = & "bash" "-c" "command -v ditto >/dev/null 2>&1 && echo 'true' || echo 'false'"
-            if ($dittoCmdExists -eq "true") {
-              & "bash" "-c" "ditto -c -k --keepParent \"$outputDir\" \"$tempZipPath\" && mv \"$tempZipPath\" \"$zxpPath\" || echo 'Ditto failed'"
-              Write-Host "Created ZXP package using ditto (preserves all file attributes)"
-            } else {
-              & "bash" "-c" "cd \"$outputDir\" && zip -r -y -X \"$zxpPath\" * || echo 'Zip command failed'"
-              Write-Host "Created ZXP package using zip with attributes preserved"
-            }
+            # On other platforms (like macOS runner), use zip command directly
+            Write-Host "Running on non-Windows - using zip command"
+            & "bash" "-c" "cd \"$outputDir\" && zip -r -0 -X \"$zxpPath\" * || echo 'Zip command failed'"
           }
           
           Write-Host "Created ZXP package at: $zxpPath"
@@ -1051,53 +986,21 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ needs.check-changes.outputs.tag_version }}"
-          Write-Host "Using version: $version"
           
-          # First check for ZXP location
-          $zxpPath = "dist/zxp/com.youtubetoPremiereV2.cep.zxp"
-          
-          # Check directory contents if file is not found
-          if (-not (Test-Path $zxpPath)) {
-            Write-Host "ZXP not found at expected location. Checking all files in dist/zxp:"
-            Get-ChildItem -Path "dist/zxp" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $_" }
-            
-            # Look for any ZXP files in the directory
-            $zxpFiles = Get-ChildItem -Path "dist/zxp" -Filter "*.zxp" -ErrorAction SilentlyContinue
-            if ($zxpFiles.Count -gt 0) {
-              Write-Host "Found alternative ZXP files. Using first one found:"
-              $zxpPath = $zxpFiles[0].FullName
-              Write-Host "Using ZXP file: $zxpPath"
-            } else {
-              Write-Error "No ZXP package was found in dist/zxp directory!"
-              # Check the parent directory
-              Write-Host "Checking parent directory for ZXP files:"
-              Get-ChildItem -Path "dist" -Recurse -Filter "*.zxp" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $_" }
-              exit 1
-            }
-          }
-          
-          # Rename the ZXP file to include the version
-          $newName = "YoutubetoPremiere-v$version.zxp"
-          $newPath = "dist/zxp/$newName"
-          
-          Write-Host "Renaming ZXP package from '$zxpPath' to '$newPath'"
-          Copy-Item -Path $zxpPath -Destination $newPath -Force
-          
-          if (Test-Path $newPath) {
-            Write-Host "✅ Successfully renamed ZXP package to: $newName"
-            # Get file size
-            $fileInfo = Get-Item $newPath
-            Write-Host "File details: Size: $($fileInfo.Length) bytes, Last Modified: $($fileInfo.LastWriteTime)"
+          if (Test-Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp") {
+            # Rename the ZXP file to include the version
+            $newName = "YoutubetoPremiere-v$version.zxp"
+            Copy-Item -Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp" -Destination "dist/zxp/$newName" -Force
+            Write-Host "Renamed ZXP package to: $newName"
             
             # Remove the original file
-            Remove-Item -Path $zxpPath -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp" -Force
             
-            # List the files in the directory
-            Write-Host "Final ZXP directory contents:"
-          Get-ChildItem -Path dist/zxp
+            # List the files
+            Get-ChildItem -Path dist/zxp
           } else {
-            Write-Error "Failed to rename ZXP package! Check permissions and disk space."
-            exit 1
+            Write-Error "ZXP package was not found!"
+              exit 1
           }
 
       - name: Create Release

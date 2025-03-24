@@ -3,7 +3,6 @@ import CSInterface from '../lib/cep/csinterface';
 import { SystemPath } from '../lib/cep/csinterface';
 import { setupVideoImportHandler } from './videoImport';
 import { initBolt, evalFile, evalES } from '../lib/utils/bolt';
-const macPermissions = require('../lib/macPermissions');
 
 let PythonServerProcess = null;
 let csInterface = null;
@@ -316,40 +315,11 @@ async function startPythonServer() {
         // Pass csInterface to setupVideoImportHandler
         setupVideoImportHandler(csInterface);
 
-        // Sur macOS, on prépare FFmpeg avant de lancer l'exécutable
-        if (macPermissions.isMacOS()) {
-            // Rechercher et préparer FFmpeg sur le système
-            console.log("Finding and preparing FFmpeg on macOS...");
-            const ffmpegPath = await macPermissions.findAndPrepareFfmpeg();
-            
-            if (ffmpegPath) {
-                console.log(`FFmpeg ready at: ${ffmpegPath}`);
-                // Ajouter le chemin au process.env pour que le serveur Python puisse le trouver
-                process.env.FFMPEG_PATH = ffmpegPath;
-            } else {
-                console.warn("FFmpeg not found. Video processing may not work correctly.");
-            }
-        }
-
         let PythonExecutablePath;
-        
-        // Sur macOS, on utilise notre utilitaire pour préparer l'exécutable
-        if (macPermissions.isMacOS()) {
-            console.log("Running on macOS, fixing executable permissions...");
-            
-            // Demander à l'utilisateur la permission de déquarantainer les fichiers
-            // et les préparer pour l'exécution
-            const fixedPermissions = await macPermissions.fixAllExecutables();
-            if (!fixedPermissions) {
-                console.warn("Could not fix permissions for macOS executables");
-            }
-            
-            // Obtenir le chemin de l'exécutable préparé (déquarantainé)
-            // On choisit de le copier dans Application Support pour plus de sécurité
-            PythonExecutablePath = await macPermissions.prepareExecutable('YoutubetoPremiere', true);
-            console.log('Using macOS executable with fixed permissions:', PythonExecutablePath);
-        } else if (process.platform === 'win32') {
+        if (process.platform === 'win32') {
             PythonExecutablePath = path.join(extensionRoot, 'exec', 'YoutubetoPremiere.exe');
+        } else if (process.platform === 'darwin') {
+            PythonExecutablePath = path.join(extensionRoot, 'exec', 'YoutubetoPremiere');
         } else {
             console.error(`Unsupported platform: ${process.platform}`);
             return;
@@ -358,26 +328,51 @@ async function startPythonServer() {
         PythonExecutablePath = path.normalize(PythonExecutablePath);
         console.log('Corrected Python executable path:', PythonExecutablePath);
 
+        // For macOS: Handle executable permissions and quarantine automatically
+        if (process.platform === 'darwin') {
+            try {
+                // Create safe directory in Application Support if it doesn't exist
+                const appSupportDir = path.join(os.homedir(), 'Library/Application Support/YoutubetoPremiere');
+                if (!fs.existsSync(appSupportDir)) {
+                    fs.mkdirSync(appSupportDir, { recursive: true });
+                }
+                
+                // Define the safe executable path
+                const safeExecutablePath = path.join(appSupportDir, 'YoutubetoPremiere');
+                
+                // Copy the executable to the safe location
+                console.log(`Copying executable to safe location: ${safeExecutablePath}`);
+                fs.copyFileSync(PythonExecutablePath, safeExecutablePath);
+                
+                // Fix permissions on the safe executable
+                const fixPermissionsCmd = `chmod +x "${safeExecutablePath}" && xattr -d com.apple.quarantine "${safeExecutablePath}" 2>/dev/null || true`;
+                const { error } = await new Promise(resolve => {
+                    const childProcess = require('child_process').exec(fixPermissionsCmd, (error, stdout, stderr) => {
+                        resolve({ error, stdout, stderr });
+                    });
+                });
+                
+                if (error) {
+                    console.warn(`Failed to fix permissions, will try with original executable: ${error.message}`);
+                } else {
+                    console.log('Successfully fixed executable permissions in safe location');
+                    // Use the safe executable path instead
+                    PythonExecutablePath = safeExecutablePath;
+                }
+            } catch (err) {
+                console.error('Error preparing macOS executable:', err);
+                // Continue with original path if preparation fails
+            }
+        }
+
         if (!fs.existsSync(PythonExecutablePath)) {
             console.error(`Python executable not found at ${PythonExecutablePath}`);
             return;
         }
 
-        // Préparer les variables d'environnement pour le processus Python
-        const env = {
-            ...process.env, 
-            Python_BACKTRACE: '1', 
-            EXTENSION_ROOT: extensionRoot
-        };
-        
-        // Si on a trouvé FFmpeg sur macOS, l'ajouter aux variables d'environnement
-        if (process.env.FFMPEG_PATH) {
-            env.FFMPEG_PATH = process.env.FFMPEG_PATH;
-        }
-
         PythonServerProcess = spawn(PythonExecutablePath, [], {
             cwd: path.dirname(PythonExecutablePath),
-            env: env,
+            env: {...process.env, Python_BACKTRACE: '1', EXTENSION_ROOT: extensionRoot},
             stdio: ['inherit', 'pipe', 'pipe'],
             detached: false
         });
@@ -392,39 +387,6 @@ async function startPythonServer() {
 
         PythonServerProcess.on('error', (err) => {
             console.error(`Failed to start Python server: ${err}`);
-            
-            // If we're on macOS and there was an error, try to give more helpful information
-            if (macPermissions.isMacOS()) {
-                console.log("Checking macOS executable status...");
-                
-                // Use path.join here in case PythonExecutablePath was modified
-                const execPath = path.join(path.dirname(PythonExecutablePath), 'YoutubetoPremiere');
-                
-                // Check quarantine status
-                macPermissions.isFileQuarantined(execPath).then(isQuarantined => {
-                    if (isQuarantined) {
-                        console.error("The executable is still quarantined. Trying to remove quarantine again...");
-                        macPermissions.removeQuarantine(execPath).then(() => {
-                            console.log("Attempted to remove quarantine attribute again.");
-                        });
-                    }
-                });
-                
-                // Try running the file command to get more information
-                const { exec } = require('child_process');
-                exec(`file "${execPath}"`, (error, stdout) => {
-                    if (!error) {
-                        console.log(`File info: ${stdout}`);
-                    }
-                });
-                
-                // Check permissions
-                exec(`ls -la "${execPath}"`, (error, stdout) => {
-                    if (!error) {
-                        console.log(`File permissions: ${stdout}`);
-                    }
-                });
-            }
         });
 
         PythonServerProcess.on('close', (code) => {
@@ -453,6 +415,23 @@ function stopPythonServer() {
     }
     if (fsWatcher) {
         fsWatcher.close();
+    }
+    
+    // Clean up macOS safe executable if needed
+    if (process.platform === 'darwin') {
+        try {
+            const os = require('os');
+            const path = require('path');
+            const fs = require('fs');
+            
+            const safeExecutablePath = path.join(os.homedir(), 'Library/Application Support/YoutubetoPremiere', 'YoutubetoPremiere');
+            if (fs.existsSync(safeExecutablePath)) {
+                console.log("Cleaning up safe executable...");
+                fs.unlinkSync(safeExecutablePath);
+            }
+        } catch (err) {
+            console.error("Error cleaning up safe executable:", err);
+        }
     }
 }
 
