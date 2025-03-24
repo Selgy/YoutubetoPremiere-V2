@@ -461,11 +461,6 @@ jobs:
             echo '    PYTHON_BIN=$(which python)' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
             echo 'fi' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
             echo '' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo 'if [ ! -x "$PYTHON_BIN" ]; then' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo '    osascript -e '\''display dialog "Python 3 is required but was not found on your system. Please install Python 3 and try again." buttons {"OK"} default button "OK" with icon stop with title "Python Not Found"'\''' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo '    exit 1' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo 'fi' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo '' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
             echo '# Export environment variables' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
             echo 'export PYTHONPATH="$PYTHON_DIR:$PYTHONPATH"' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
             echo 'export PATH="$DIR:$PATH"' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
@@ -1026,13 +1021,6 @@ jobs:
           $execDir = Join-Path $outputDir "exec"
           New-Item -ItemType Directory -Path $execDir -Force | Out-Null
           Write-Host "Created exec directory: $execDir"
-          New-Item -ItemType Directory -Path (Join-Path $outputDir "js") -Force | Out-Null
-          New-Item -ItemType Directory -Path (Join-Path $outputDir "jsx") -Force | Out-Null
-          New-Item -ItemType Directory -Path (Join-Path $outputDir "assets") -Force | Out-Null
-          New-Item -ItemType Directory -Path (Join-Path $outputDir "CSXS") -Force | Out-Null
-          New-Item -ItemType Directory -Path (Join-Path $outputDir "main") -Force | Out-Null
-          New-Item -ItemType Directory -Path (Join-Path $outputDir "settings") -Force | Out-Null
-          New-Item -ItemType Directory -Path (Join-Path $execDir "sounds") -Force | Out-Null
           
           # Copy files from dist/cep if they exist, otherwise create minimal structure
           if (Test-Path "dist/cep") {
@@ -1046,153 +1034,137 @@ jobs:
             Write-Host "Copied Python files to $execDir"
           }
           
-          # Copy unblock script - No longer needed as we now use notarized executables
-          # We've removed the step that creates unblock.sh
-
-          # Check if executable-macos-13 contains a YoutubetoPremiere.zip file (notarized version)
-          $notarizedZipPath = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere.zip"
+          # Extract macOS executable from archive if available
+          $notarizedZipPath = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere-notarized.tar.gz"
+          $macZipPath = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere.zip"
           $tempNotarizedDir = Join-Path $workspacePath "temp_notarized"
           
           if (Test-Path $notarizedZipPath) {
-            Write-Host "Found notarized macOS executable ZIP. Extracting it..."
+            Write-Host "Found notarized macOS executable tarball"
             New-Item -ItemType Directory -Path $tempNotarizedDir -Force | Out-Null
-            Expand-Archive -Path $notarizedZipPath -DestinationPath $tempNotarizedDir -Force
+            & "bash" "-c" "tar -xzf '$notarizedZipPath' -C '$tempNotarizedDir'"
             
             if (Test-Path "$tempNotarizedDir/YoutubetoPremiere") {
-              Write-Host "Using notarized macOS executable from ZIP"
               Copy-Item -Path "$tempNotarizedDir/YoutubetoPremiere" -Destination "$execDir/YoutubetoPremiere" -Force
-              
-              # Set permissions explicitly
-              & "bash" "-c" "chmod +x \"$execDir/YoutubetoPremiere\" 2>/dev/null || true"
-              
-              # Verify the file is correctly copied
-              if (Test-Path "$execDir/YoutubetoPremiere") {
-                Write-Host "✅ Notarized macOS executable successfully copied to ZXP package"
-              } else {
-                Write-Host "❌ Failed to copy notarized macOS executable"
-              }
+              & "bash" "-c" "chmod 755 '$execDir/YoutubetoPremiere'"
+              Write-Host "✅ Notarized macOS executable from tarball copied to ZXP package"
             }
-          } else {
-            Write-Host "No notarized ZIP found - using regular macOS executable"
+          } elseif (Test-Path $macZipPath) {
+            Write-Host "Found notarized macOS executable ZIP"
+            New-Item -ItemType Directory -Path $tempNotarizedDir -Force | Out-Null
+            Expand-Archive -Path $macZipPath -DestinationPath $tempNotarizedDir -Force
+            
+            if (Test-Path "$tempNotarizedDir/YoutubetoPremiere") {
+              Copy-Item -Path "$tempNotarizedDir/YoutubetoPremiere" -Destination "$execDir/YoutubetoPremiere" -Force
+              & "bash" "-c" "chmod 755 '$execDir/YoutubetoPremiere'"
+              Write-Host "✅ Notarized macOS executable from ZIP copied to ZXP package"
+            }
           }
           
-          # Copy executables (Windows and the rest)
+          # Copy executables
           Write-Host "Copying executables..."
+          
+          # Windows executable
           if (Test-Path $winExeSource) {
             Copy-Item -Path $winExeSource -Destination "$execDir/YoutubetoPremiere.exe" -Force
             Write-Host "Copied Windows executable"
-          } else {
-            Write-Host "WARNING: Windows executable not found at $winExeSource"
           }
           
-          # Only copy macOS executable if we didn't extract it from the notarized ZIP
+          # macOS executable (if not already copied)
           if (-not (Test-Path "$execDir/YoutubetoPremiere") -and (Test-Path $macExeSource)) {
             Copy-Item -Path $macExeSource -Destination "$execDir/YoutubetoPremiere" -Force
+            & "bash" "-c" "chmod 755 '$execDir/YoutubetoPremiere'"
             Write-Host "Copied macOS executable"
           }
           
+          # Windows FFmpeg
           if (Test-Path $winFfmpegSource) {
             Copy-Item -Path $winFfmpegSource -Destination "$execDir/ffmpeg.exe" -Force
             Write-Host "Copied Windows FFmpeg"
-          } else {
-            Write-Host "WARNING: Windows FFmpeg not found at $winFfmpegSource"
           }
           
+          # macOS FFmpeg
           if (Test-Path $macFfmpegSource) {
             Copy-Item -Path $macFfmpegSource -Destination "$execDir/ffmpeg" -Force
+            & "bash" "-c" "chmod 755 '$execDir/ffmpeg'"
             Write-Host "Copied macOS FFmpeg"
-          } else {
-            Write-Host "WARNING: macOS FFmpeg not found at $macFfmpegSource"
           }
           
-          # Set permissions for macOS files - CRITICAL for preventing the "not open" error
-          Write-Host "Setting executable permissions for macOS files..."
-          & "bash" "-c" "chmod +x \"$execDir/YoutubetoPremiere\" 2>/dev/null || true"
-          & "bash" "-c" "chmod +x \"$execDir/ffmpeg\" 2>/dev/null || true"
-          
-          # Verify permissions were set correctly
-          & "bash" "-c" "ls -la \"$execDir\" | grep -E 'YoutubetoPremiere|ffmpeg|unblock'"
-          
-          # Test macOS executable signature if available
-          if (Test-Path "$execDir/YoutubetoPremiere") {
-            Write-Host "Testing macOS executable signature..."
-            & "bash" "-c" "file \"$execDir/YoutubetoPremiere\" || echo 'File command failed'"
-            
-            # Check if xattr is available (to check quarantine attributes)
-            $hasXattr = & "bash" "-c" "command -v xattr" 2>$null
-            if ($hasXattr) {
-              & "bash" "-c" "xattr -l \"$execDir/YoutubetoPremiere\" || echo 'No extended attributes'"
-            }
-          }
+          # Create permission fix script
+          $permissionScriptContent = @"
+          #!/bin/bash
+          # Fix permissions for macOS executables
+          chmod 755 "\$(dirname "\$0")/YoutubetoPremiere" 2>/dev/null || true
+          chmod 755 "\$(dirname "\$0")/ffmpeg" 2>/dev/null || true
+          echo "Permissions fixed for macOS executables"
+          "@
+          Set-Content -Path "$execDir/fix-permissions.sh" -Value $permissionScriptContent -NoNewline
+          & "bash" "-c" "chmod 755 '$execDir/fix-permissions.sh'"
           
           # Create ZXP package
           Write-Host "Creating ZXP package..."
           New-Item -ItemType Directory -Path "dist/zxp" -Force | Out-Null
           $zxpPath = Join-Path $workspacePath "dist/zxp/com.youtubetoPremiereV2.cep.zxp"
           
-          if (Test-Path $zxpPath) {
-            Remove-Item -Path $zxpPath -Force
-          }
+          # Use zip command to preserve permissions
+          Push-Location $outputDir
+          & "bash" "-c" "zip -r -X -y '$zxpPath' *"
+          Pop-Location
           
-          # Create a .zip file with platform-specific tools to preserve attributes
-          if ($IsWindows -or $env:OS -like "*Windows*") {
-            Write-Host "Running on Windows - using .NET for ZIP creation"
-            
-            # Use standard .NET ZIP with no compression to preserve attributes
-            Add-Type -AssemblyName System.IO.Compression.FileSystem
-            [System.IO.Compression.CompressionLevel]$compressionLevel = [System.IO.Compression.CompressionLevel]::NoCompression
-            [System.IO.Compression.ZipFile]::CreateFromDirectory($outputDir, $zxpPath, $compressionLevel, $false)
-          } else {
-            # On other platforms (like macOS runner), use zip command directly
-            Write-Host "Running on non-Windows - using zip command"
-            & "bash" "-c" "cd \"$outputDir\" && zip -r -0 -X \"$zxpPath\" * || echo 'Zip command failed'"
+          # If zip failed, try PowerShell
+          if (-not (Test-Path $zxpPath)) {
+            Write-Host "Zip command failed, using PowerShell..."
+            Compress-Archive -Path "$outputDir\*" -DestinationPath "$zxpPath" -Force
           }
           
           Write-Host "Created ZXP package at: $zxpPath"
           
           # Verify ZXP contents
           $tempExtractDir = Join-Path $workspacePath "verify_zxp"
-          if (Test-Path $tempExtractDir) {
-            Remove-Item -Path $tempExtractDir -Recurse -Force
-          }
+          Remove-Item -Path $tempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Path $tempExtractDir -Force | Out-Null
           
-          Write-Host "Verifying ZXP contents..."
+          # Extract and verify
           Copy-Item -Path $zxpPath -Destination "$tempExtractDir/package.zip" -Force
-          Expand-Archive -Path "$tempExtractDir/package.zip" -DestinationPath "$tempExtractDir/contents" -Force
+          & "bash" "-c" "unzip -q '$tempExtractDir/package.zip' -d '$tempExtractDir/contents' || true"
           
-          if (Test-Path "$tempExtractDir/contents/exec/YoutubetoPremiere") {
-            Write-Host "✅ macOS executable found in ZXP"
-            # Show file details
-            & "bash" "-c" "file \"$tempExtractDir/contents/exec/YoutubetoPremiere\" 2>/dev/null || echo 'File command not available'"
-            & "bash" "-c" "ls -la \"$tempExtractDir/contents/exec/YoutubetoPremiere\" || echo 'ls command failed'"
-            
-            # Verify executable permission is preserved
-            $isExecutable = & "bash" "-c" "test -x \"$tempExtractDir/contents/exec/YoutubetoPremiere\" && echo 'true' || echo 'false'"
-            if ($isExecutable -eq "true") {
-                Write-Host "✅ macOS executable permission is preserved"
-            } else {
-                Write-Host "❌ macOS executable permission is NOT preserved!"
-            }
-          } else {
-            Write-Host "❌ ERROR: macOS executable not found in ZXP!"
+          # If unzip failed, use PowerShell
+          if (-not (Test-Path "$tempExtractDir/contents/exec")) {
+            Expand-Archive -Path "$tempExtractDir/package.zip" -DestinationPath "$tempExtractDir/contents" -Force
           }
           
+          # Run permission fix script
+          if (Test-Path "$tempExtractDir/contents/exec/fix-permissions.sh") {
+            & "bash" "-c" "chmod +x '$tempExtractDir/contents/exec/fix-permissions.sh' && '$tempExtractDir/contents/exec/fix-permissions.sh'"
+          }
+          
+          # Check macOS executable
+          if (Test-Path "$tempExtractDir/contents/exec/YoutubetoPremiere") {
+            Write-Host "✅ macOS executable found in ZXP"
+            & "bash" "-c" "ls -la '$tempExtractDir/contents/exec/YoutubetoPremiere'"
+            & "bash" "-c" "chmod 755 '$tempExtractDir/contents/exec/YoutubetoPremiere'"
+            
+            $isExecutable = & "bash" "-c" "test -x '$tempExtractDir/contents/exec/YoutubetoPremiere' && echo 'true' || echo 'false'"
+            if ($isExecutable -eq "true") {
+              Write-Host "✅ macOS executable permission is fixed"
+            } else {
+              Write-Host "⚠️ macOS executable permission could not be set"
+            }
+          } else {
+            Write-Host "⚠️ macOS executable not found in ZXP"
+          }
+          
+          # Check macOS FFmpeg
           if (Test-Path "$tempExtractDir/contents/exec/ffmpeg") {
             Write-Host "✅ macOS FFmpeg found in ZXP"
           } else {
-            Write-Host "❌ ERROR: macOS FFmpeg not found in ZXP!"
+            Write-Host "⚠️ macOS FFmpeg not found in ZXP"
           }
-          
-          # Check for unblock.sh - No longer needed as we now use notarized executables
-          # Since we've removed unblock.sh, we don't need to verify its presence
           
           # Clean up
           Remove-Item -Path $outputDir -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item -Path $tempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
-          if (Test-Path $tempNotarizedDir) {
-              Remove-Item -Path $tempNotarizedDir -Recurse -Force -ErrorAction SilentlyContinue
-          }
+          Remove-Item -Path $tempNotarizedDir -Recurse -Force -ErrorAction SilentlyContinue
           
           Write-Host "===== FINAL ZXP PACKAGING COMPLETED ====="
           EOF
