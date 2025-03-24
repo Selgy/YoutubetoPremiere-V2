@@ -331,6 +331,10 @@ async function startPythonServer() {
         // For macOS: Handle executable permissions and quarantine automatically
         if (process.platform === 'darwin') {
             try {
+                // Ensure we have the os module
+                const os = window.cep_node.require('os');
+                const { exec } = window.cep_node.require('child_process');
+                
                 // Create safe directory in Application Support if it doesn't exist
                 const appSupportDir = path.join(os.homedir(), 'Library/Application Support/YoutubetoPremiere');
                 if (!fs.existsSync(appSupportDir)) {
@@ -347,13 +351,18 @@ async function startPythonServer() {
                 // Fix permissions on the safe executable
                 const fixPermissionsCmd = `chmod +x "${safeExecutablePath}" && xattr -d com.apple.quarantine "${safeExecutablePath}" 2>/dev/null || true`;
                 const { error } = await new Promise(resolve => {
-                    const childProcess = require('child_process').exec(fixPermissionsCmd, (error, stdout, stderr) => {
+                    exec(fixPermissionsCmd, (error, stdout, stderr) => {
                         resolve({ error, stdout, stderr });
                     });
                 });
                 
                 if (error) {
                     console.warn(`Failed to fix permissions, will try with original executable: ${error.message}`);
+                    // Try to fix permissions on the original executable as a fallback
+                    const fallbackFixCmd = `chmod +x "${PythonExecutablePath}" && xattr -d com.apple.quarantine "${PythonExecutablePath}" 2>/dev/null || true`;
+                    await new Promise(resolve => {
+                        exec(fallbackFixCmd, () => resolve());
+                    });
                 } else {
                     console.log('Successfully fixed executable permissions in safe location');
                     // Use the safe executable path instead
@@ -362,6 +371,17 @@ async function startPythonServer() {
             } catch (err) {
                 console.error('Error preparing macOS executable:', err);
                 // Continue with original path if preparation fails
+                // Try to ensure the original executable has proper permissions
+                try {
+                    const { exec } = window.cep_node.require('child_process');
+                    const fallbackFixCmd = `chmod +x "${PythonExecutablePath}" && xattr -d com.apple.quarantine "${PythonExecutablePath}" 2>/dev/null || true`;
+                    await new Promise(resolve => {
+                        exec(fallbackFixCmd, () => resolve());
+                    });
+                    console.log('Applied permissions to original executable as fallback');
+                } catch (permErr) {
+                    console.error('Failed to fix permissions on original executable:', permErr);
+                }
             }
         }
 
@@ -370,12 +390,34 @@ async function startPythonServer() {
             return;
         }
 
-        PythonServerProcess = spawn(PythonExecutablePath, [], {
-            cwd: path.dirname(PythonExecutablePath),
-            env: {...process.env, Python_BACKTRACE: '1', EXTENSION_ROOT: extensionRoot},
-            stdio: ['inherit', 'pipe', 'pipe'],
-            detached: false
-        });
+        console.log(`Starting Python server from: ${PythonExecutablePath}`);
+        try {
+            PythonServerProcess = spawn(PythonExecutablePath, [], {
+                cwd: path.dirname(PythonExecutablePath),
+                env: {...process.env, Python_BACKTRACE: '1', EXTENSION_ROOT: extensionRoot},
+                stdio: ['inherit', 'pipe', 'pipe'],
+                detached: false
+            });
+        } catch (spawnError) {
+            console.error(`Error spawning Python process: ${spawnError.message}`);
+            // On Mac, try with a shell wrapper if direct spawn fails
+            if (process.platform === 'darwin') {
+                try {
+                    const { exec } = window.cep_node.require('child_process');
+                    console.log('Trying shell execution as fallback...');
+                    PythonServerProcess = exec(`"${PythonExecutablePath}"`, {
+                        cwd: path.dirname(PythonExecutablePath),
+                        env: {...process.env, Python_BACKTRACE: '1', EXTENSION_ROOT: extensionRoot}
+                    });
+                    console.log('Shell execution started successfully');
+                } catch (execError) {
+                    console.error(`Shell execution also failed: ${execError.message}`);
+                    throw execError;
+                }
+            } else {
+                throw spawnError;
+            }
+        }
 
         PythonServerProcess.stdout.on('data', (data) => {
             console.log(`Python server stdout: ${data}`);

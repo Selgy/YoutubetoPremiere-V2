@@ -528,32 +528,61 @@ jobs:
             # Give it execute permissions
             chmod +x notarized/YoutubetoPremiere
             
-            # Staple the notarization ticket directly to the binary
-            echo "Stapling notarization ticket to binary..."
-            xcrun stapler staple notarized/YoutubetoPremiere || echo "Stapling failed, but continuing"
+            # Try stapling multiple times (sometimes it fails on first try)
+            echo "Attempting to staple notarization ticket to binary..."
+            MAX_ATTEMPTS=3
+            STAPLE_SUCCESS=false
             
-            # Check stapled ticket
-            echo "Checking for notarization ticket..."
-            xcrun stapler validate notarized/YoutubetoPremiere || echo "Stapling check failed, but continuing"
+            for ((i=1; i<=MAX_ATTEMPTS; i++)); do
+              echo "Stapling attempt $i of $MAX_ATTEMPTS..."
+              if xcrun stapler staple notarized/YoutubetoPremiere; then
+                STAPLE_SUCCESS=true
+                echo "Stapling successful on attempt $i!"
+                break
+              else
+                echo "Stapling failed on attempt $i, waiting before retry..."
+                sleep 2
+              fi
+            done
+            
+            # Check stapled ticket and binary integrity
+            if [ "$STAPLE_SUCCESS" = true ]; then
+              echo "Verifying stapled ticket..."
+              xcrun stapler validate notarized/YoutubetoPremiere || echo "Stapling verification failed, but continuing"
+            else
+              echo "::warning::All stapling attempts failed. The executable is still notarized but may trigger Gatekeeper warnings."
+            fi
+            
+            # Verify the binary itself
+            echo "Verifying binary integrity..."
+            codesign -vvv --deep --strict notarized/YoutubetoPremiere || echo "Code signing verification failed, but continuing"
             
             # Copy notarized version back to dist folder
             cp notarized/YoutubetoPremiere YoutubetoPremiere
             echo "Replaced executable with notarized version"
+            
+            # Create an alternate version with quarantine attribute removed
+            cp notarized/YoutubetoPremiere YoutubetoPremiere-unquarantined
+            xattr -d com.apple.quarantine YoutubetoPremiere-unquarantined 2>/dev/null || true
+            echo "Created unquarantined version as fallback"
           else
             echo "Could not extract notarized executable, using original"
             cp YoutubetoPremiere.original YoutubetoPremiere
           fi
           
           echo "Executable is signed and ready for distribution"
-          ls -la YoutubetoPremiere
+          ls -la YoutubetoPremiere*
           file YoutubetoPremiere
           
-          # Create a special archive with the notarized executable for distribution
-          echo "Creating a special archive with notarized executable..."
+          # Create a special archive with both versions
+          echo "Creating archives with both normal and unquarantined executables..."
           mkdir -p finalized
           cp YoutubetoPremiere finalized/
+          if [ -f "YoutubetoPremiere-unquarantined" ]; then
+            cp YoutubetoPremiere-unquarantined finalized/
+          fi
           cd finalized
-          tar -czf YoutubetoPremiere-notarized.tar.gz YoutubetoPremiere
+          tar -czf YoutubetoPremiere-notarized.tar.gz YoutubetoPremiere*
           cp YoutubetoPremiere-notarized.tar.gz ../
           cd ..
           
@@ -696,6 +725,12 @@ jobs:
                   echo "✓ Set execute permissions for $description"
                 else
                   echo "✗ WARNING: Failed to set execute permissions for $description"
+                fi
+                
+                # For macOS executables, also try to remove quarantine attribute
+                if [[ "$source" == *"macos"* ]]; then
+                  echo "Attempting to remove quarantine attribute for $description"
+                  xattr -d com.apple.quarantine "$dest/$(basename "$source")" 2>/dev/null || true
                 fi
               fi
               
