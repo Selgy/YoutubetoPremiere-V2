@@ -329,13 +329,13 @@ jobs:
         id: platform
         run: |
           echo "Building for ${{ matrix.os }}"
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+          if [ "${{ matrix.os }}" == "windows-latest" ]; then
             echo "is_windows=true" >> $GITHUB_OUTPUT
           else
             echo "is_windows=false" >> $GITHUB_OUTPUT
             
             # Check if Apple signing certificates are available
-            if [[ -z "${{ secrets.SIGNING_CERTIFICATE }}" || -z "${{ secrets.APPLE_ID }}" || -z "${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}" || -z "${{ secrets.APPLE_TEAM_ID }}" ]]; then
+            if [ -z "${{ secrets.SIGNING_CERTIFICATE }}" ] || [ -z "${{ secrets.APPLE_ID }}" ] || [ -z "${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}" ] || [ -z "${{ secrets.APPLE_TEAM_ID }}" ]; then
               echo "::warning::Missing Apple signing credentials! The macOS executable will not be properly signed and may be blocked by Gatekeeper on macOS."
               echo "::warning::Please configure SIGNING_CERTIFICATE, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID secrets."
               echo "::warning::Users on macOS will need to manually bypass Gatekeeper to run the application."
@@ -362,12 +362,99 @@ jobs:
           ls -la app/
           
           # Create the spec file based on the platform
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            # Windows spec
-            python -m PyInstaller --name YoutubetoPremiere --onefile app/YoutubetoPremiere.py
+          if [ "${{ matrix.os }}" == "windows-latest" ]; then
+            # Windows spec with additional DLLs and hidden imports
+            cat > YoutubetoPremiere.spec << EOF
+            # -*- mode: python ; coding: utf-8 -*-
+            
+            block_cipher = None
+            
+            a = Analysis(['app/YoutubetoPremiere.py'],
+                         pathex=[],
+                         binaries=[],
+                         datas=[('app/sounds', 'sounds')],
+                         hiddenimports=['engineio.async_drivers.threading', 'socketio.async_drivers.threading', 'pkg_resources.py2_warn'],
+                         hookspath=[],
+                         hooksconfig={},
+                         runtime_hooks=[],
+                         excludes=[],
+                         win_no_prefer_redirects=False,
+                         win_private_assemblies=False,
+                         cipher=block_cipher,
+                         noarchive=False)
+            pyz = PYZ(a.pure, a.zipped_data,
+                      cipher=block_cipher)
+            
+            exe = EXE(pyz,
+                     a.scripts,
+                     a.binaries,
+                     a.zipfiles,
+                     a.datas,
+                     [],
+                     name='YoutubetoPremiere',
+                     debug=False,
+                     bootloader_ignore_signals=False,
+                     strip=False,
+                     upx=True,
+                     upx_exclude=[],
+                     runtime_tmpdir=None,
+                     console=True,
+                     disable_windowed_traceback=False,
+                     argv_emulation=False,
+                     target_arch=None,
+                     codesign_identity=None,
+                     entitlements_file=None,
+                     icon=None)
+            EOF
+            
+            # Run pyinstaller with the spec file
+            python -m PyInstaller YoutubetoPremiere.spec
           else
-            # macOS spec
-            python -m PyInstaller --name YoutubetoPremiere --onefile app/YoutubetoPremiere.py
+            # macOS spec with additional hidden imports
+            cat > YoutubetoPremiere.spec << EOF
+            # -*- mode: python ; coding: utf-8 -*-
+            
+            block_cipher = None
+            
+            a = Analysis(['app/YoutubetoPremiere.py'],
+                         pathex=[],
+                         binaries=[],
+                         datas=[('app/sounds', 'sounds')],
+                         hiddenimports=['engineio.async_drivers.threading', 'socketio.async_drivers.threading', 'pkg_resources.py2_warn'],
+                         hookspath=[],
+                         hooksconfig={},
+                         runtime_hooks=[],
+                         excludes=[],
+                         win_no_prefer_redirects=False,
+                         win_private_assemblies=False,
+                         cipher=block_cipher,
+                         noarchive=False)
+            pyz = PYZ(a.pure, a.zipped_data,
+                      cipher=block_cipher)
+            
+            exe = EXE(pyz,
+                     a.scripts,
+                     a.binaries,
+                     a.zipfiles,
+                     a.datas,
+                     [],
+                     name='YoutubetoPremiere',
+                     debug=False,
+                     bootloader_ignore_signals=False,
+                     strip=False,
+                     upx=True,
+                     upx_exclude=[],
+                     runtime_tmpdir=None,
+                     console=True,
+                     disable_windowed_traceback=False,
+                     argv_emulation=False,
+                     target_arch=None,
+                     codesign_identity=None,
+                     entitlements_file=None)
+            EOF
+            
+            # Run pyinstaller with the spec file
+            python -m PyInstaller YoutubetoPremiere.spec
           fi
           
           echo "PyInstaller completed"
