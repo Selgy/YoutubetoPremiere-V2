@@ -448,6 +448,10 @@ jobs:
             
             if [ -f "$source" ]; then
               cp "$source" "$dest"
+              # Ensure proper permissions for macOS executables
+              if [[ "$source" == *"macos"* ]] || [[ "$source" != *".exe" ]]; then
+                chmod +x "$dest/$(basename "$source")"
+              fi
               echo "✓ Copied $description"
             else
               echo "✗ ERROR: $description not found at: $source"
@@ -484,7 +488,7 @@ jobs:
           copy_artifact "ffmpeg-macos-13/ffmpeg" "dist/cep/exec/" "macOS FFmpeg"
           copy_artifact "ffmpeg-macos-13/ffmpeg" "backup/exec/" "macOS FFmpeg (backup)"
           
-          # Verify files are in place
+          # Verify files in place and permissions
           echo "Verifying files in dist/cep/exec before yarn zxp:"
           ls -la dist/cep/exec
           
@@ -492,7 +496,7 @@ jobs:
           echo "Building TypeScript..."
           yarn tsc -p "tsconfig-build.json"
           
-          # We'll use a simpler approach - use yarn zxp to create the package, then modify it
+          # Create initial ZXP
           echo "Running initial yarn zxp..."
           yarn zxp
           
@@ -513,10 +517,14 @@ jobs:
           mkdir -p zxp_extract/contents/exec
           
           echo "Copying executables to the extracted package..."
-          cp backup/exec/* zxp_extract/contents/exec/ 2>/dev/null || echo "No executables found in backup"
-          cp app/*.py zxp_extract/contents/exec/ 2>/dev/null || echo "No Python files found"
+          cp -p backup/exec/* zxp_extract/contents/exec/ 2>/dev/null || echo "No executables found in backup"
+          cp -p app/*.py zxp_extract/contents/exec/ 2>/dev/null || echo "No Python files found"
           mkdir -p zxp_extract/contents/exec/sounds
-          cp -r app/sounds/* zxp_extract/contents/exec/sounds/ 2>/dev/null || echo "No sound files found"
+          cp -rp app/sounds/* zxp_extract/contents/exec/sounds/ 2>/dev/null || echo "No sound files found"
+          
+          # Ensure proper permissions for macOS executables
+          chmod +x zxp_extract/contents/exec/YoutubetoPremiere 2>/dev/null || true
+          chmod +x zxp_extract/contents/exec/ffmpeg 2>/dev/null || true
           
           echo "Verifying executables are in the extracted package:"
           ls -la zxp_extract/contents/exec
@@ -582,7 +590,13 @@ jobs:
           }
           
           # Create new ZXP
-          [System.IO.Compression.ZipFile]::CreateFromDirectory("zxp_extract/contents", "dist/zxp/com.youtubetoPremiereV2.cep.zxp", $compressionLevel, $false)
+          [System.IO.Compression.ZipFile]::CreateFromDirectory(
+            "zxp_extract/contents", 
+            "dist/zxp/com.youtubetoPremiereV2.cep.zxp", 
+            $compressionLevel, 
+            $false,
+            [System.Text.Encoding]::UTF8
+          )
           
           # Verify the ZXP was created
           if (Test-Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp") {
