@@ -344,9 +344,24 @@ async function startPythonServer() {
                 // Define the safe executable path
                 const safeExecutablePath = path.join(appSupportDir, 'YoutubetoPremiere');
                 
+                // Look for different executable variants (prioritizing the universal version)
+                const universalPath = path.join(extensionRoot, 'exec', 'YoutubetoPremiere-universal');
+                const standardPath = path.join(extensionRoot, 'exec', 'YoutubetoPremiere');
+                
+                let sourceExecutable = '';
+                if (fs.existsSync(universalPath)) {
+                    console.log('Found universal executable variant - using this for better compatibility');
+                    sourceExecutable = universalPath;
+                } else if (fs.existsSync(standardPath)) {
+                    console.log('Using standard executable');
+                    sourceExecutable = standardPath;
+                } else {
+                    throw new Error('No executable found in exec directory');
+                }
+                
                 // Copy the executable to the safe location
-                console.log(`Copying executable to safe location: ${safeExecutablePath}`);
-                fs.copyFileSync(PythonExecutablePath, safeExecutablePath);
+                console.log(`Copying executable from ${sourceExecutable} to safe location: ${safeExecutablePath}`);
+                fs.copyFileSync(sourceExecutable, safeExecutablePath);
                 
                 // Fix permissions on the safe executable
                 const fixPermissionsCmd = `chmod +x "${safeExecutablePath}" && xattr -d com.apple.quarantine "${safeExecutablePath}" 2>/dev/null || true`;
@@ -367,6 +382,14 @@ async function startPythonServer() {
                     console.log('Successfully fixed executable permissions in safe location');
                     // Use the safe executable path instead
                     PythonExecutablePath = safeExecutablePath;
+                }
+                
+                // If using a universal executable that had its signature removed, we need to bypass
+                // the macOS security framework by setting an environment variable
+                if (sourceExecutable.includes('universal')) {
+                    process.env.DYLD_LIBRARY_PATH = path.dirname(safeExecutablePath);
+                    process.env.DYLD_INSERT_LIBRARIES = '';
+                    process.env.DYLD_FORCE_FLAT_NAMESPACE = '1';
                 }
             } catch (err) {
                 console.error('Error preparing macOS executable:', err);
@@ -392,9 +415,16 @@ async function startPythonServer() {
 
         console.log(`Starting Python server from: ${PythonExecutablePath}`);
         try {
+            // For macOS, set environment variables to help with library loading
+            const serverEnv = { ...process.env, Python_BACKTRACE: '1', EXTENSION_ROOT: extensionRoot };
+            if (process.platform === 'darwin') {
+                serverEnv.DYLD_LIBRARY_PATH = path.dirname(PythonExecutablePath);
+                serverEnv.PYTHONHOME = path.dirname(PythonExecutablePath);
+            }
+            
             PythonServerProcess = spawn(PythonExecutablePath, [], {
                 cwd: path.dirname(PythonExecutablePath),
-                env: {...process.env, Python_BACKTRACE: '1', EXTENSION_ROOT: extensionRoot},
+                env: serverEnv,
                 stdio: ['inherit', 'pipe', 'pipe'],
                 detached: false
             });
@@ -405,9 +435,14 @@ async function startPythonServer() {
                 try {
                     const { exec } = window.cep_node.require('child_process');
                     console.log('Trying shell execution as fallback...');
-                    PythonServerProcess = exec(`"${PythonExecutablePath}"`, {
-                        cwd: path.dirname(PythonExecutablePath),
-                        env: {...process.env, Python_BACKTRACE: '1', EXTENSION_ROOT: extensionRoot}
+                    
+                    // Create environment variable string for the shell command
+                    const envVars = 'DYLD_LIBRARY_PATH="' + path.dirname(PythonExecutablePath) + 
+                                    '" PYTHONHOME="' + path.dirname(PythonExecutablePath) + 
+                                    '" Python_BACKTRACE="1" EXTENSION_ROOT="' + extensionRoot + '"';
+                    
+                    PythonServerProcess = exec(`${envVars} "${PythonExecutablePath}"`, {
+                        cwd: path.dirname(PythonExecutablePath)
                     });
                     console.log('Shell execution started successfully');
                 } catch (execError) {

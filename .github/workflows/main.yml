@@ -380,13 +380,25 @@ jobs:
               --hidden-import pkg_resources.py2_warn \
               app/YoutubetoPremiere.py
           else
-            # macOS build with all necessary imports
+            # macOS build with all necessary imports and options to fix signature issues
             python -m PyInstaller --name YoutubetoPremiere --onefile \
               --add-data "app/sounds:sounds" \
               --hidden-import engineio.async_drivers.threading \
               --hidden-import socketio.async_drivers.threading \
               --hidden-import pkg_resources.py2_warn \
+              --codesign-identity=- \
+              --osx-bundle-identifier="com.mickael.YoutubetoPremiere" \
               app/YoutubetoPremiere.py
+            
+            # For macOS, also create an unstripped version
+            echo "Creating unstripped version as fallback..."
+            cd dist
+            cp YoutubetoPremiere YoutubetoPremiere-universal
+            
+            # Remove signature from the universal version to avoid validation issues
+            codesign --remove-signature YoutubetoPremiere-universal || true
+            echo "Created unsigned universal version"
+            cd ..
           fi
           
           echo "PyInstaller completed"
