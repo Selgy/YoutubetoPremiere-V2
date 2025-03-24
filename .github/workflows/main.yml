@@ -524,8 +524,27 @@ jobs:
           mkdir -p finalized
           cp YoutubetoPremiere finalized/
           cd finalized
-          tar -czf YoutubetoPremiere-notarized.tar.gz YoutubetoPremiere
-          cp YoutubetoPremiere-notarized.tar.gz ../
+          
+          # Set the file attributes explicitly to make it recognize as an application
+          echo "Setting file type flags to make sure it's recognized as an application..."
+          if command -v SetFile >/dev/null 2>&1; then
+            SetFile -t APPL YoutubetoPremiere
+            echo "Set file type with SetFile"
+          fi
+          
+          # Package with ditto to preserve all attributes and metadata
+          if command -v ditto >/dev/null 2>&1; then
+            mkdir -p app_package
+            ditto -c -k --keepParent YoutubetoPremiere app_package/YoutubetoPremiere.zip
+            mv app_package/YoutubetoPremiere.zip ../YoutubetoPremiere-notarized.zip
+            echo "Created archive with ditto to preserve all attributes"
+          else
+            # Fallback to tar which preserves executable permissions
+            tar -czf YoutubetoPremiere-notarized.tar.gz YoutubetoPremiere
+            cp YoutubetoPremiere-notarized.tar.gz ../
+            echo "Created fallback archive with tar"
+          fi
+          
           cd ..
           
           # Cleanup
@@ -789,6 +808,7 @@ jobs:
           $macExeSource = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere"
           $winFfmpegSource = Join-Path $workspacePath "ffmpeg-windows-latest/ffmpeg.exe"
           $macFfmpegSource = Join-Path $workspacePath "ffmpeg-macos-13/ffmpeg"
+          $tempNotarizedDir = Join-Path $workspacePath "temp_notarized"
           
           Write-Host "Windows FFmpeg source: $winFfmpegSource"
           Write-Host "macOS FFmpeg source: $macFfmpegSource" 
@@ -825,36 +845,6 @@ jobs:
             Write-Host "Copied Python files to $execDir"
           }
           
-          # Copy unblock script - No longer needed as we now use notarized executables
-          # We've removed the step that creates unblock.sh
-
-          # Check if executable-macos-13 contains a YoutubetoPremiere.zip file (notarized version)
-          $notarizedZipPath = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere.zip"
-          $tempNotarizedDir = Join-Path $workspacePath "temp_notarized"
-          
-          if (Test-Path $notarizedZipPath) {
-            Write-Host "Found notarized macOS executable ZIP. Extracting it..."
-            New-Item -ItemType Directory -Path $tempNotarizedDir -Force | Out-Null
-            Expand-Archive -Path $notarizedZipPath -DestinationPath $tempNotarizedDir -Force
-            
-            if (Test-Path "$tempNotarizedDir/YoutubetoPremiere") {
-              Write-Host "Using notarized macOS executable from ZIP"
-              Copy-Item -Path "$tempNotarizedDir/YoutubetoPremiere" -Destination "$execDir/YoutubetoPremiere" -Force
-              
-              # Set permissions explicitly
-              & "bash" "-c" "chmod +x \"$execDir/YoutubetoPremiere\" 2>/dev/null || true"
-              
-              # Verify the file is correctly copied
-              if (Test-Path "$execDir/YoutubetoPremiere") {
-                Write-Host "✅ Notarized macOS executable successfully copied to ZXP package"
-              } else {
-                Write-Host "❌ Failed to copy notarized macOS executable"
-              }
-            }
-          } else {
-            Write-Host "No notarized ZIP found - using regular macOS executable"
-          }
-          
           # Copy executables (Windows and the rest)
           Write-Host "Copying executables..."
           if (Test-Path $winExeSource) {
@@ -864,10 +854,40 @@ jobs:
             Write-Host "WARNING: Windows executable not found at $winExeSource"
           }
           
+          # Check for notarized ZIP first (highest priority)
+          $notarizedZipPath = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere-notarized.zip"
+          if (Test-Path $notarizedZipPath) {
+            Write-Host "Found ditto-prepared macOS executable ZIP. Extracting it..."
+            New-Item -ItemType Directory -Path $tempNotarizedDir -Force | Out-Null
+            
+            # Use unzip to preserve all attributes from ditto
+            & "bash" "-c" "unzip -o \"$notarizedZipPath\" -d \"$execDir\" || echo 'unzip failed'"
+            
+            # Verify the file is correctly extracted
+            if (Test-Path "$execDir/YoutubetoPremiere") {
+              Write-Host "✅ Notarized macOS executable from ditto archive successfully extracted"
+              & "bash" "-c" "ls -la \"$execDir/YoutubetoPremiere\" || echo 'ls command failed'"
+            } else {
+              Write-Host "❌ Failed to extract from ditto archive - falling back to other methods"
+            }
+          }
+          
+          # If notarized ZIP not found or extraction failed, check regular ZIP
+          if (-not (Test-Path "$execDir/YoutubetoPremiere") -and (Test-Path $notarizedZipPath)) {
+            Write-Host "Using standard notarized macOS executable ZIP..."
+            New-Item -ItemType Directory -Path $tempNotarizedDir -Force | Out-Null
+            Expand-Archive -Path $notarizedZipPath -DestinationPath $tempNotarizedDir -Force
+            
+            if (Test-Path "$tempNotarizedDir/YoutubetoPremiere") {
+              Write-Host "Using notarized macOS executable from ZIP"
+              Copy-Item -Path "$tempNotarizedDir/YoutubetoPremiere" -Destination "$execDir/YoutubetoPremiere" -Force
+            }
+          }
+          
           # Only copy macOS executable if we didn't extract it from the notarized ZIP
           if (-not (Test-Path "$execDir/YoutubetoPremiere") -and (Test-Path $macExeSource)) {
             Copy-Item -Path $macExeSource -Destination "$execDir/YoutubetoPremiere" -Force
-            Write-Host "Copied macOS executable"
+            Write-Host "Copied macOS executable (fallback)"
           }
           
           if (Test-Path $winFfmpegSource) {
@@ -915,16 +935,23 @@ jobs:
           
           # Create a .zip file with platform-specific tools to preserve attributes
           if ($IsWindows -or $env:OS -like "*Windows*") {
-            Write-Host "Running on Windows - using .NET for ZIP creation"
+            Write-Host "Running on Windows - using bash zip for ZXP creation"
             
-            # Use standard .NET ZIP with no compression to preserve attributes
-            Add-Type -AssemblyName System.IO.Compression.FileSystem
-            [System.IO.Compression.CompressionLevel]$compressionLevel = [System.IO.Compression.CompressionLevel]::NoCompression
-            [System.IO.Compression.ZipFile]::CreateFromDirectory($outputDir, $zxpPath, $compressionLevel, $false)
+            # Use bash zip with options to preserve attributes even on Windows
+            & "bash" "-c" "cd \"$outputDir\" && zip -r -X -9 --symlinks \"$zxpPath\" * || echo 'Zip command failed'"
           } else {
-            # On other platforms (like macOS runner), use zip command directly
-            Write-Host "Running on non-Windows - using zip command"
-            & "bash" "-c" "cd \"$outputDir\" && zip -r -0 -X \"$zxpPath\" * || echo 'Zip command failed'"
+            # On macOS runner, use ditto if available, otherwise zip
+            Write-Host "Running on macOS - using ditto for ZXP creation if available"
+            $tempZipPath = Join-Path $workspacePath "temp_zxp.zip"
+            
+            $dittoCmdExists = & "bash" "-c" "command -v ditto >/dev/null 2>&1 && echo 'true' || echo 'false'"
+            if ($dittoCmdExists -eq "true") {
+              & "bash" "-c" "ditto -c -k --keepParent \"$outputDir\" \"$tempZipPath\" && mv \"$tempZipPath\" \"$zxpPath\" || echo 'Ditto failed'"
+              Write-Host "Created ZXP package using ditto (preserves all file attributes)"
+            } else {
+              & "bash" "-c" "cd \"$outputDir\" && zip -r -y -X \"$zxpPath\" * || echo 'Zip command failed'"
+              Write-Host "Created ZXP package using zip with attributes preserved"
+            }
           }
           
           Write-Host "Created ZXP package at: $zxpPath"
