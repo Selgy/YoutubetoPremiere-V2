@@ -489,6 +489,7 @@ jobs:
           
           # Create backup of executables
           mkdir -p backup/exec
+          mkdir -p dist
           
           # Copy all Python files with preserved permissions
           echo "Copying Python files..."
@@ -499,24 +500,31 @@ jobs:
           echo "Copying executables and FFmpeg..."
           
           # Windows executable
-          copy_artifact "executable-windows-latest/YoutubetoPremiere.exe" "dist/cep/exec/" "Windows executable"
-          copy_artifact "executable-windows-latest/YoutubetoPremiere.exe" "backup/exec/" "Windows executable (backup)"
+          copy_artifact "executable-windows-latest/YoutubetoPremiere.exe" "dist/cep/exec/" "Windows executable to CEP"
+          copy_artifact "executable-windows-latest/YoutubetoPremiere.exe" "backup/exec/" "Windows executable to backup"
+          copy_artifact "executable-windows-latest/YoutubetoPremiere.exe" "dist/" "Windows executable to dist"
           
           # Windows FFmpeg
-          copy_artifact "ffmpeg-windows-latest/ffmpeg.exe" "dist/cep/exec/" "Windows FFmpeg"
-          copy_artifact "ffmpeg-windows-latest/ffmpeg.exe" "backup/exec/" "Windows FFmpeg (backup)"
+          copy_artifact "ffmpeg-windows-latest/ffmpeg.exe" "dist/cep/exec/" "Windows FFmpeg to CEP"
+          copy_artifact "ffmpeg-windows-latest/ffmpeg.exe" "backup/exec/" "Windows FFmpeg to backup"
+          copy_artifact "ffmpeg-windows-latest/ffmpeg.exe" "dist/" "Windows FFmpeg to dist"
           
           # macOS executable
-          copy_artifact "executable-macos-13/YoutubetoPremiere" "dist/cep/exec/" "macOS executable"
-          copy_artifact "executable-macos-13/YoutubetoPremiere" "backup/exec/" "macOS executable (backup)"
+          copy_artifact "executable-macos-13/YoutubetoPremiere" "dist/cep/exec/" "macOS executable to CEP"
+          copy_artifact "executable-macos-13/YoutubetoPremiere" "backup/exec/" "macOS executable to backup"
+          copy_artifact "executable-macos-13/YoutubetoPremiere" "dist/" "macOS executable to dist"
           
           # macOS FFmpeg
-          copy_artifact "ffmpeg-macos-13/ffmpeg" "dist/cep/exec/" "macOS FFmpeg"
-          copy_artifact "ffmpeg-macos-13/ffmpeg" "backup/exec/" "macOS FFmpeg (backup)"
+          copy_artifact "ffmpeg-macos-13/ffmpeg" "dist/cep/exec/" "macOS FFmpeg to CEP"
+          copy_artifact "ffmpeg-macos-13/ffmpeg" "backup/exec/" "macOS FFmpeg to backup"
+          copy_artifact "ffmpeg-macos-13/ffmpeg" "dist/" "macOS FFmpeg to dist"
           
           # Verify files in place and permissions
           echo "Verifying files in dist/cep/exec before yarn zxp:"
           ls -la dist/cep/exec
+          
+          echo "Verifying files in dist directory:"
+          ls -la dist
           
           # Build TypeScript
           echo "Building TypeScript..."
