@@ -392,7 +392,7 @@ jobs:
             Write-Host "NSIS installed successfully at: $NsisPath"
           }
           
-          # Create installer script
+          # Create installer script (with no icon definitions to avoid errors)
           $InstallerScript = @"
           !include "MUI2.nsh"
           !include "FileFunc.nsh"
@@ -401,15 +401,7 @@ jobs:
           OutFile "YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe"
           InstallDir "\$PROGRAMFILES\YoutubetoPremiere"
           
-          # Use default icon if app/sounds/icon.ico not available
-          !if /FileExists "app\sounds\icon.ico"
-            !define MUI_ICON "app\sounds\icon.ico"
-            !define MUI_UNICON "app\sounds\icon.ico"
-          !else
-            # Use default icon
-            !define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
-            !define MUI_UNICON "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
-          !endif
+          # Skip icon definition entirely to avoid errors
           
           !insertmacro MUI_PAGE_WELCOME
           !insertmacro MUI_PAGE_DIRECTORY
@@ -472,7 +464,7 @@ jobs:
             # Remove install directory if empty
             RMDir "\$INSTDIR"
           SectionEnd
-          "@
+"@
           
           # Create the installer script file
           Set-Content -Path "installer.nsi" -Value $InstallerScript
@@ -489,7 +481,9 @@ jobs:
           # Run NSIS to create installer
           Write-Host "Running NSIS to create installer..."
           if (Test-Path $NsisPath) {
+            # Execute NSIS command
             & $NsisPath "installer.nsi"
+            
             if (Test-Path "YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe") {
               Move-Item -Path "YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe" -Destination "dist\installer\" -Force
               Write-Host "Installer created: dist\installer\YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe"
