@@ -435,18 +435,24 @@ jobs:
           </plist>
           EOF
           
-          # Sign the executable
-          SIGNATURE_ID="Developer ID Application: $APPLE_TEAM_ID"
+          # Extract the available signing identities
+          echo "Available signing identities:"
+          security find-identity -v -p codesigning
           
-          if [[ -z "$APPLE_TEAM_ID" ]]; then
-            echo "::warning::No team ID provided. Using a placeholder for the signature."
+          # Find the Developer ID Application identity
+          SIGNATURE_ID=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F '"' '{print $2}')
+          echo "Found signing identity: $SIGNATURE_ID"
+          
+          if [[ -z "$SIGNATURE_ID" ]]; then
+            echo "::warning::No Developer ID Application identity found. Using placeholder."
             SIGNATURE_ID="-"
           fi
           
           # Ensure executable permissions
           chmod +x "dist/YoutubetoPremiere"
           
-          # Sign the executable
+          # Sign the executable with the found identity
+          echo "Signing with identity: $SIGNATURE_ID"
           codesign --force --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/YoutubetoPremiere"
           
           # Verify signature
@@ -466,50 +472,24 @@ jobs:
             exit 0
           fi
           
-          # Create a temporary DMG for notarization
-          mkdir -p dmg_root
-          cp "dist/YoutubetoPremiere" dmg_root/
+          # For non-app bundles, we need to create a ZIP for submission
+          echo "Creating zip of the executable for notarization..."
+          cd dist
+          zip -y YoutubetoPremiere.zip YoutubetoPremiere
+          cd ..
           
-          # Create DMG
-          create-dmg \
-            --volname "YoutubetoPremiere" \
-            --window-pos 200 120 \
-            --window-size 800 400 \
-            --icon-size 100 \
-            --icon "YoutubetoPremiere" 200 200 \
-            --hide-extension "YoutubetoPremiere" \
-            --app-drop-link 600 200 \
-            "YoutubetoPremiere.dmg" \
-            "dmg_root/" || true
-          
-          # Notarize the DMG
-          xcrun altool --notarize-app \
-            --primary-bundle-id "com.youtubetopremiereV2.app" \
-            --username "$APPLE_ID" \
+          # Submit for notarization
+          echo "Submitting for notarization..."
+          xcrun notarytool submit dist/YoutubetoPremiere.zip \
+            --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
-            --file "YoutubetoPremiere.dmg" || echo "Notarization submission failed but continuing"
+            --wait || echo "Notarization submission failed but continuing"
           
-          # Wait for notarization to complete and staple the result
-          echo "Waiting for notarization to complete. This may take several minutes..."
-          sleep 60  # Wait a minute for processing
-          
-          # Check notarization status by history
-          xcrun altool --notarization-history 0 \
-            --username "$APPLE_ID" \
-            --password "$APPLE_APP_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" || echo "Failed to check notarization history"
-          
-          # Extract the original executable and replace it
-          mkdir -p tmp_extract
-          7z x "YoutubetoPremiere.dmg" -otmp_extract || true
-          if [ -f "tmp_extract/YoutubetoPremiere" ]; then
-            cp "tmp_extract/YoutubetoPremiere" "dist/YoutubetoPremiere"
-            chmod +x "dist/YoutubetoPremiere"
-            echo "Replaced executable with notarized version"
-          else
-            echo "Could not extract notarized app from DMG"
-          fi
+          # Even if notarization fails, we want to use the signed executable
+          echo "Executable is signed and ready for distribution"
+          ls -la dist/YoutubetoPremiere
+          file dist/YoutubetoPremiere
         shell: bash
       
       - name: Upload executable artifact
@@ -597,6 +577,37 @@ jobs:
           fi
         shell: bash
 
+      - name: Create macOS unblock script
+        run: |
+          mkdir -p app/resources
+          cat > app/resources/unblock.sh << 'EOF'
+          #!/bin/bash
+          # Script to help macOS users bypass Gatekeeper restrictions
+          
+          SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          
+          echo "Setting executable permissions on YoutubetoPremiere..."
+          chmod +x "$SCRIPT_DIR/YoutubetoPremiere"
+          chmod +x "$SCRIPT_DIR/ffmpeg"
+          
+          echo "Removing quarantine attributes if present..."
+          xattr -d com.apple.quarantine "$SCRIPT_DIR/YoutubetoPremiere" 2>/dev/null || true
+          xattr -d com.apple.quarantine "$SCRIPT_DIR/ffmpeg" 2>/dev/null || true
+          
+          echo "Verification:"
+          ls -la "$SCRIPT_DIR/YoutubetoPremiere" "$SCRIPT_DIR/ffmpeg"
+          
+          echo "Checking security status:"
+          spctl --assess --verbose "$SCRIPT_DIR/YoutubetoPremiere" || echo "Security check failed but this is expected if not properly signed"
+          
+          echo "You should now be able to run the YoutubetoPremiere executable"
+          echo "If you still have issues, right-click on YoutubetoPremiere in Finder and select Open"
+          EOF
+          
+          chmod +x app/resources/unblock.sh
+          echo "Created macOS unblock script: app/resources/unblock.sh"
+        shell: bash
+
       - name: Optimize ZXP packaging process
         shell: bash
         env:
@@ -659,6 +670,10 @@ jobs:
           echo "Copying Python files..."
           cp -p app/*.py dist/cep/exec/ 2>/dev/null || echo "No Python files found"
           cp -rp app/sounds/* dist/cep/exec/sounds/ 2>/dev/null || echo "No sound files found"
+          
+          # Copy scripts and resources
+          echo "Copying helper scripts..."
+          cp -p app/resources/unblock.sh dist/cep/exec/ 2>/dev/null || echo "No unblock script found"
           
           # Copy artifacts efficiently
           echo "Copying executables and FFmpeg..."
@@ -843,7 +858,8 @@ jobs:
           
           # Use standard .NET ZIP functionality to create the ZXP
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          [System.IO.Compression.ZipFile]::CreateFromDirectory($outputDir, $zxpPath)
+          [System.IO.Compression.CompressionLevel]$compressionLevel = [System.IO.Compression.CompressionLevel]::NoCompression
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($outputDir, $zxpPath, $compressionLevel, $false)
           Write-Host "Created ZXP package at: $zxpPath"
           
           # Verify ZXP contents
