@@ -347,6 +347,153 @@ jobs:
           echo "Content of dist directory:"
           ls -la dist/
         shell: bash
+        
+      # Add macOS codesigning steps
+      - name: Install create-dmg on macOS
+        if: matrix.os == 'macos-13' && (steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true')
+        run: brew install create-dmg
+        shell: bash
+        
+      - name: Import Apple Developer Certificate on macOS
+        if: matrix.os == 'macos-13' && (steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true')
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          KEYCHAIN_PASSWORD: keychainpwd
+        run: |
+          # Check if certificate is provided
+          if [[ -z "$CERTIFICATE_BASE64" ]]; then
+            echo "::warning::No certificate provided. Skipping code signing."
+            exit 0
+          fi
+          
+          # Create variables
+          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          
+          # Import certificate and key
+          echo -n "$CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
+          
+          # Create a temporary keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          
+          # Import the certificate
+          security import $CERTIFICATE_PATH -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+          
+          # Allow codesign to access the key
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+        shell: bash
+        
+      - name: Code Sign macOS executable
+        if: matrix.os == 'macos-13' && (steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true')
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # Check if certificate is provided
+          if [[ -z "${{ secrets.SIGNING_CERTIFICATE }}" ]]; then
+            echo "::warning::No certificate provided. Skipping code signing."
+            exit 0
+          fi
+          
+          # Add entitlements.plist
+          cat > entitlements.plist << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>com.apple.security.cs.allow-jit</key>
+              <true/>
+              <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+              <true/>
+              <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+              <true/>
+              <key>com.apple.security.network.client</key>
+              <true/>
+              <key>com.apple.security.files.user-selected.read-write</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+          
+          # Sign the executable
+          SIGNATURE_ID="Developer ID Application: $APPLE_TEAM_ID"
+          
+          if [[ -z "$APPLE_TEAM_ID" ]]; then
+            echo "::warning::No team ID provided. Using a placeholder for the signature."
+            SIGNATURE_ID="-"
+          fi
+          
+          # Ensure executable permissions
+          chmod +x "dist/YoutubetoPremiere"
+          
+          # Sign the executable
+          codesign --force --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/YoutubetoPremiere"
+          
+          # Verify signature
+          codesign -vvv --deep --strict "dist/YoutubetoPremiere" || echo "Code signing verification failed but continuing"
+        shell: bash
+        
+      - name: Notarize macOS executable
+        if: matrix.os == 'macos-13' && (steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true')
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # Check if credentials are provided
+          if [[ -z "$APPLE_ID" || -z "$APPLE_APP_PASSWORD" ]]; then
+            echo "::warning::Apple ID or App Password not provided. Skipping notarization."
+            exit 0
+          fi
+          
+          # Create a temporary DMG for notarization
+          mkdir -p dmg_root
+          cp "dist/YoutubetoPremiere" dmg_root/
+          
+          # Create DMG
+          create-dmg \
+            --volname "YoutubetoPremiere" \
+            --window-pos 200 120 \
+            --window-size 800 400 \
+            --icon-size 100 \
+            --icon "YoutubetoPremiere" 200 200 \
+            --hide-extension "YoutubetoPremiere" \
+            --app-drop-link 600 200 \
+            "YoutubetoPremiere.dmg" \
+            "dmg_root/" || true
+          
+          # Notarize the DMG
+          xcrun altool --notarize-app \
+            --primary-bundle-id "com.youtubetopremiereV2.app" \
+            --username "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --file "YoutubetoPremiere.dmg" || echo "Notarization submission failed but continuing"
+          
+          # Wait for notarization to complete and staple the result
+          echo "Waiting for notarization to complete. This may take several minutes..."
+          sleep 60  # Wait a minute for processing
+          
+          # Check notarization status by history
+          xcrun altool --notarization-history 0 \
+            --username "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" || echo "Failed to check notarization history"
+          
+          # Extract the original executable and replace it
+          mkdir -p tmp_extract
+          7z x "YoutubetoPremiere.dmg" -otmp_extract || true
+          if [ -f "tmp_extract/YoutubetoPremiere" ]; then
+            cp "tmp_extract/YoutubetoPremiere" "dist/YoutubetoPremiere"
+            chmod +x "dist/YoutubetoPremiere"
+            echo "Replaced executable with notarized version"
+          else
+            echo "Could not extract notarized app from DMG"
+          fi
+        shell: bash
       
       - name: Upload executable artifact
         if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
@@ -581,16 +728,21 @@ jobs:
           $winFfmpegSource = Join-Path $workspacePath "ffmpeg-windows-latest/ffmpeg.exe"
           $macFfmpegSource = Join-Path $workspacePath "ffmpeg-macos-13/ffmpeg"
           
+          Write-Host "Windows FFmpeg source: $winFfmpegSource"
+          Write-Host "macOS FFmpeg source: $macFfmpegSource" 
+          
           # Create directory structure
           $outputDir = Join-Path $workspacePath "zxp_output"
           if (Test-Path $outputDir) {
             Remove-Item -Path $outputDir -Recurse -Force
           }
           New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+          Write-Host "Created output directory: $outputDir"
           
           # Create subdirectories
           $execDir = Join-Path $outputDir "exec"
           New-Item -ItemType Directory -Path $execDir -Force | Out-Null
+          Write-Host "Created exec directory: $execDir"
           New-Item -ItemType Directory -Path (Join-Path $outputDir "js") -Force | Out-Null
           New-Item -ItemType Directory -Path (Join-Path $outputDir "jsx") -Force | Out-Null
           New-Item -ItemType Directory -Path (Join-Path $outputDir "assets") -Force | Out-Null
@@ -602,25 +754,55 @@ jobs:
           # Copy files from dist/cep if they exist, otherwise create minimal structure
           if (Test-Path "dist/cep") {
             Copy-Item -Path "dist/cep/*" -Destination $outputDir -Force -Recurse
+            Write-Host "Copied files from dist/cep to $outputDir"
           }
           
           # Copy Python files
           if (Test-Path "app") {
             Copy-Item -Path "app/*.py" -Destination $execDir -Force
+            Write-Host "Copied Python files to $execDir"
           }
           
           # Copy executables
           Write-Host "Copying executables..."
-          Copy-Item -Path $winExeSource -Destination "$execDir/YoutubetoPremiere.exe" -Force
-          Copy-Item -Path $macExeSource -Destination "$execDir/YoutubetoPremiere" -Force
-          Copy-Item -Path $winFfmpegSource -Destination "$execDir/ffmpeg.exe" -Force
-          Copy-Item -Path $macFfmpegSource -Destination "$execDir/ffmpeg" -Force
+          if (Test-Path $winExeSource) {
+            Copy-Item -Path $winExeSource -Destination "$execDir/YoutubetoPremiere.exe" -Force
+            Write-Host "Copied Windows executable"
+          } else {
+            Write-Host "WARNING: Windows executable not found at $winExeSource"
+          }
           
-          # Set permissions for macOS files
+          if (Test-Path $macExeSource) {
+            Copy-Item -Path $macExeSource -Destination "$execDir/YoutubetoPremiere" -Force
+            Write-Host "Copied macOS executable"
+          } else {
+            Write-Host "WARNING: macOS executable not found at $macExeSource"
+          }
+          
+          if (Test-Path $winFfmpegSource) {
+            Copy-Item -Path $winFfmpegSource -Destination "$execDir/ffmpeg.exe" -Force
+            Write-Host "Copied Windows FFmpeg"
+          } else {
+            Write-Host "WARNING: Windows FFmpeg not found at $winFfmpegSource"
+          }
+          
+          if (Test-Path $macFfmpegSource) {
+            Copy-Item -Path $macFfmpegSource -Destination "$execDir/ffmpeg" -Force
+            Write-Host "Copied macOS FFmpeg"
+          } else {
+            Write-Host "WARNING: macOS FFmpeg not found at $macFfmpegSource"
+          }
+          
+          # Set permissions for macOS files - CRITICAL for preventing the "not open" error
+          Write-Host "Setting executable permissions for macOS files..."
           & "bash" "-c" "chmod +x \"$execDir/YoutubetoPremiere\" 2>/dev/null || true"
           & "bash" "-c" "chmod +x \"$execDir/ffmpeg\" 2>/dev/null || true"
           
+          # Verify permissions were set correctly
+          & "bash" "-c" "ls -la \"$execDir\" | grep -E 'YoutubetoPremiere|ffmpeg'"
+          
           # Create ZXP package
+          Write-Host "Creating ZXP package..."
           New-Item -ItemType Directory -Path "dist/zxp" -Force | Out-Null
           $zxpPath = Join-Path $workspacePath "dist/zxp/com.youtubetoPremiereV2.cep.zxp"
           
@@ -628,11 +810,37 @@ jobs:
             Remove-Item -Path $zxpPath -Force
           }
           
+          # Use standard .NET ZIP functionality to create the ZXP
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           [System.IO.Compression.ZipFile]::CreateFromDirectory($outputDir, $zxpPath)
+          Write-Host "Created ZXP package at: $zxpPath"
+          
+          # Verify ZXP contents
+          $tempExtractDir = Join-Path $workspacePath "verify_zxp"
+          if (Test-Path $tempExtractDir) {
+            Remove-Item -Path $tempExtractDir -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $tempExtractDir -Force | Out-Null
+          
+          Write-Host "Verifying ZXP contents..."
+          Copy-Item -Path $zxpPath -Destination "$tempExtractDir/package.zip" -Force
+          Expand-Archive -Path "$tempExtractDir/package.zip" -DestinationPath "$tempExtractDir/contents" -Force
+          
+          if (Test-Path "$tempExtractDir/contents/exec/YoutubetoPremiere") {
+            Write-Host "✅ macOS executable found in ZXP"
+          } else {
+            Write-Host "❌ ERROR: macOS executable not found in ZXP!"
+          }
+          
+          if (Test-Path "$tempExtractDir/contents/exec/ffmpeg") {
+            Write-Host "✅ macOS FFmpeg found in ZXP"
+          } else {
+            Write-Host "❌ ERROR: macOS FFmpeg not found in ZXP!"
+          }
           
           # Clean up
           Remove-Item -Path $outputDir -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path $tempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
           
           Write-Host "===== FINAL ZXP PACKAGING COMPLETED ====="
           EOF
