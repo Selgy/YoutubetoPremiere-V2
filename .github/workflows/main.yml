@@ -325,9 +325,9 @@ jobs:
             echo "is_windows=false" >> $GITHUB_OUTPUT
             
             # Check if Apple signing certificates are available
-            if [[ -z "${{ secrets.SIGNING_CERTIFICATE }}" || -z "${{ secrets.APPLE_ID }}" || -z "${{ secrets.APPLE_ID_PASSWORD }}" || -z "${{ secrets.APPLE_TEAM_ID }}" ]]; then
+            if [[ -z "${{ secrets.SIGNING_CERTIFICATE }}" || -z "${{ secrets.APPLE_ID }}" || -z "${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}" || -z "${{ secrets.APPLE_TEAM_ID }}" ]]; then
               echo "::warning::Missing Apple signing credentials! The macOS executable will not be properly signed and may be blocked by Gatekeeper on macOS."
-              echo "::warning::Please configure SIGNING_CERTIFICATE, APPLE_ID, APPLE_ID_PASSWORD, and APPLE_TEAM_ID secrets."
+              echo "::warning::Please configure SIGNING_CERTIFICATE, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID secrets."
               echo "::warning::Users on macOS will need to manually bypass Gatekeeper to run the application."
               echo "has_signing_creds=false" >> $GITHUB_OUTPUT
             else
@@ -463,7 +463,7 @@ jobs:
         if: matrix.os == 'macos-13' && (steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true')
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           # Check if credentials are provided
