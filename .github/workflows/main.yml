@@ -380,28 +380,173 @@ jobs:
               --hidden-import pkg_resources.py2_warn \
               app/YoutubetoPremiere.py
           else
-            # macOS build with all necessary imports and options to fix signature issues
-            python -m PyInstaller --name YoutubetoPremiere --onefile \
-              --add-data "app/sounds:sounds" \
-              --hidden-import engineio.async_drivers.threading \
-              --hidden-import socketio.async_drivers.threading \
-              --hidden-import pkg_resources.py2_warn \
-              --codesign-identity=- \
-              --osx-bundle-identifier="com.mickael.YoutubetoPremiere" \
-              app/YoutubetoPremiere.py
+            # For macOS, create a bootstrap script approach instead of relying on PyInstaller
+            echo "Creating a simplified macOS executable approach..."
             
-            # For macOS, also create an unstripped version
-            echo "Creating unstripped version as fallback..."
-            cd dist
-            cp YoutubetoPremiere YoutubetoPremiere-universal
+            # First, create the Python environment directory
+            mkdir -p dist/YoutubetoPremiere.app/Contents/MacOS
+            mkdir -p dist/YoutubetoPremiere.app/Contents/Resources/Python
+            mkdir -p dist/YoutubetoPremiere.app/Contents/Resources/sounds
             
-            # Remove signature from the universal version to avoid validation issues
-            codesign --remove-signature YoutubetoPremiere-universal || true
-            echo "Created unsigned universal version"
-            cd ..
+            # Copy resources
+            cp -r app/sounds/* dist/YoutubetoPremiere.app/Contents/Resources/sounds/ || true
+            
+            # Create Info.plist
+            echo '<?xml version="1.0" encoding="UTF-8"?>' > dist/YoutubetoPremiere.app/Contents/Info.plist
+            echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' >> dist/YoutubetoPremiere.app/Contents/Info.plist
+            echo '<plist version="1.0">' >> dist/YoutubetoPremiere.app/Contents/Info.plist
+            echo '<dict>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
+            echo '    <key>CFBundleDisplayName</key>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
+            echo '    <string>YoutubetoPremiere</string>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
+            echo '    <key>CFBundleExecutable</key>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
+            echo '    <string>YoutubetoPremiere</string>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
+            echo '    <key>CFBundleIdentifier</key>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
+            echo '    <string>com.mickael.YoutubetoPremiere</string>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
+            echo '    <key>CFBundleName</key>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
+            echo '    <string>YoutubetoPremiere</string>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
+            echo '    <key>CFBundlePackageType</key>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
+            echo '    <string>APPL</string>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
+            echo '    <key>CFBundleShortVersionString</key>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
+            echo '    <string>1.0</string>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
+            echo '    <key>NSHighResolutionCapable</key>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
+            echo '    <true/>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
+            echo '</dict>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
+            echo '</plist>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
+            
+            # Create the main Python script
+            echo '# Main Python entry point' > dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo 'import sys' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo 'import os' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo 'import subprocess' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo '' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo '# Get the directory containing this script' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo 'script_dir = os.path.dirname(os.path.abspath(__file__))' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo 'parent_dir = os.path.dirname(script_dir)  # Resources directory' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo 'app_dir = os.path.dirname(parent_dir)    # Contents directory' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo '' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo '# Add the current directory to the path to find modules' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo 'sys.path.insert(0, script_dir)' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo '' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo '# Try to locate app files' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo 'try:' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo '    # Copy all Python files from the app to this location' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo '    import importlib.util' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo '    import socketio' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo '    import engineio' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo '    import requests' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo '    print("Successfully imported required modules")' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo '    ' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo '    # Run the main app module' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo '    from app.YoutubetoPremiere import main' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo '    main()' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo 'except Exception as e:' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo '    print(f"Error starting application: {e}")' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo '    import traceback' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo '    traceback.print_exc()' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            echo '    sys.exit(1)' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
+            
+            # Create the bootstrap shell script
+            echo '#!/bin/bash' > dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo 'set -e' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo '' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo '# Get the directory where this script is located' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo 'DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo 'PARENT_DIR="$( dirname "$DIR" )"' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo 'RESOURCES_DIR="$PARENT_DIR/Resources"' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo 'PYTHON_DIR="$RESOURCES_DIR/Python"' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo '' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo '# Find Python 3 on the system' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo 'PYTHON_BIN=$(which python3)' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo 'if [ ! -x "$PYTHON_BIN" ]; then' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo '    PYTHON_BIN=$(which python)' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo 'fi' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo '' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo 'if [ ! -x "$PYTHON_BIN" ]; then' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo '    osascript -e '\''display dialog "Python 3 is required but was not found on your system. Please install Python 3 and try again." buttons {"OK"} default button "OK" with icon stop with title "Python Not Found"'\''' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo '    exit 1' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo 'fi' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo '' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo '# Export environment variables' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo 'export PYTHONPATH="$PYTHON_DIR:$PYTHONPATH"' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo 'export PATH="$DIR:$PATH"' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo '' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo '# Run Python script' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo 'cd "$RESOURCES_DIR"' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            echo '"$PYTHON_BIN" "$PYTHON_DIR/YoutubetoPremiere.py" "$@"' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            
+            # Copy app files to Resources/Python
+            cp -r app/* dist/YoutubetoPremiere.app/Contents/Resources/Python/
+            
+            # Make script executable
+            chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            
+            # Create a single binary executable for use with the extension
+            echo '#!/bin/bash' > dist/YoutubetoPremiere
+            echo 'set -e' >> dist/YoutubetoPremiere
+            echo '' >> dist/YoutubetoPremiere
+            echo '# Get the absolute path of this script' >> dist/YoutubetoPremiere
+            echo 'SCRIPT_PATH="$( cd "$(dirname "$0")" && pwd )/$(basename "$0")"' >> dist/YoutubetoPremiere
+            echo 'SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"' >> dist/YoutubetoPremiere
+            echo '' >> dist/YoutubetoPremiere
+            echo '# Find Python 3 on the system' >> dist/YoutubetoPremiere
+            echo 'PYTHON_BIN=$(which python3)' >> dist/YoutubetoPremiere
+            echo 'if [ ! -x "$PYTHON_BIN" ]; then' >> dist/YoutubetoPremiere
+            echo '    PYTHON_BIN=$(which python)' >> dist/YoutubetoPremiere
+            echo 'fi' >> dist/YoutubetoPremiere
+            echo '' >> dist/YoutubetoPremiere
+            echo 'if [ ! -x "$PYTHON_BIN" ]; then' >> dist/YoutubetoPremiere
+            echo '    echo "Error: Python 3 is required but was not found on your system."' >> dist/YoutubetoPremiere
+            echo '    exit 1' >> dist/YoutubetoPremiere
+            echo 'fi' >> dist/YoutubetoPremiere
+            echo '' >> dist/YoutubetoPremiere
+            echo '# Try to find app.py in the same directory or parent/exec' >> dist/YoutubetoPremiere
+            echo 'APP_FILE="$SCRIPT_DIR/YoutubetoPremiere.py"' >> dist/YoutubetoPremiere
+            echo 'if [ ! -f "$APP_FILE" ]; then' >> dist/YoutubetoPremiere
+            echo '    APP_FILE="$SCRIPT_DIR/app/YoutubetoPremiere.py"' >> dist/YoutubetoPremiere
+            echo 'fi' >> dist/YoutubetoPremiere
+            echo 'if [ ! -f "$APP_FILE" ]; then' >> dist/YoutubetoPremiere
+            echo '    # Check if we'\''re in the exec folder' >> dist/YoutubetoPremiere
+            echo '    APP_FILE="$(dirname "$SCRIPT_DIR")/app/YoutubetoPremiere.py"' >> dist/YoutubetoPremiere
+            echo 'fi' >> dist/YoutubetoPremiere
+            echo '' >> dist/YoutubetoPremiere
+            echo '# If still not found, check a couple more common locations' >> dist/YoutubetoPremiere
+            echo 'if [ ! -f "$APP_FILE" ]; then' >> dist/YoutubetoPremiere
+            echo '    if [ -f "$SCRIPT_DIR/exec/YoutubetoPremiere.py" ]; then' >> dist/YoutubetoPremiere
+            echo '        APP_FILE="$SCRIPT_DIR/exec/YoutubetoPremiere.py"' >> dist/YoutubetoPremiere
+            echo '    elif [ -f "$SCRIPT_DIR/../app/YoutubetoPremiere.py" ]; then' >> dist/YoutubetoPremiere
+            echo '        APP_FILE="$SCRIPT_DIR/../app/YoutubetoPremiere.py"' >> dist/YoutubetoPremiere
+            echo '    fi' >> dist/YoutubetoPremiere
+            echo 'fi' >> dist/YoutubetoPremiere
+            echo '' >> dist/YoutubetoPremiere
+            echo '# Copy app.py to the current directory as a fallback' >> dist/YoutubetoPremiere
+            echo 'if [ ! -f "$APP_FILE" ]; then' >> dist/YoutubetoPremiere
+            echo '    if [ -f "$EXTENSION_ROOT/app/YoutubetoPremiere.py" ]; then' >> dist/YoutubetoPremiere
+            echo '        echo "Found YoutubetoPremiere.py in $EXTENSION_ROOT/app/"' >> dist/YoutubetoPremiere
+            echo '        APP_FILE="$EXTENSION_ROOT/app/YoutubetoPremiere.py"' >> dist/YoutubetoPremiere
+            echo '    else' >> dist/YoutubetoPremiere
+            echo '        echo "Error: Could not locate YoutubetoPremiere.py - using current directory"' >> dist/YoutubetoPremiere
+            echo '        APP_FILE="$SCRIPT_DIR/YoutubetoPremiere.py"' >> dist/YoutubetoPremiere
+            echo '        # Copy the whole app directory here' >> dist/YoutubetoPremiere
+            echo '        cp -r $EXTENSION_ROOT/app/* $SCRIPT_DIR/ 2>/dev/null || true' >> dist/YoutubetoPremiere
+            echo '    fi' >> dist/YoutubetoPremiere
+            echo 'fi' >> dist/YoutubetoPremiere
+            echo '' >> dist/YoutubetoPremiere
+            echo 'echo "Using Python: $PYTHON_BIN"' >> dist/YoutubetoPremiere
+            echo 'echo "Using app file: $APP_FILE"' >> dist/YoutubetoPremiere
+            echo '' >> dist/YoutubetoPremiere
+            echo '# Run Python script with the full path' >> dist/YoutubetoPremiere
+            echo 'exec "$PYTHON_BIN" "$APP_FILE" "$@"' >> dist/YoutubetoPremiere
+            
+            # Make executable
+            chmod +x dist/YoutubetoPremiere
+            
+            # Also create a universal version just in case
+            cp dist/YoutubetoPremiere dist/YoutubetoPremiere-universal
+            
+            echo "Created simplified macOS executables"
           fi
           
-          echo "PyInstaller completed"
+          echo "PyInstaller/build completed"
           echo "Content of dist directory:"
           ls -la dist/
         shell: bash
@@ -457,24 +602,22 @@ jobs:
           fi
           
           # Add entitlements.plist
-          cat > entitlements.plist << EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>com.apple.security.cs.allow-jit</key>
-              <true/>
-              <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-              <true/>
-              <key>com.apple.security.cs.allow-dyld-environment-variables</key>
-              <true/>
-              <key>com.apple.security.network.client</key>
-              <true/>
-              <key>com.apple.security.files.user-selected.read-write</key>
-              <true/>
-          </dict>
-          </plist>
-          EOF
+          echo '<?xml version="1.0" encoding="UTF-8"?>' > entitlements.plist
+          echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' >> entitlements.plist
+          echo '<plist version="1.0">' >> entitlements.plist
+          echo '<dict>' >> entitlements.plist
+          echo '    <key>com.apple.security.cs.allow-jit</key>' >> entitlements.plist
+          echo '    <true/>' >> entitlements.plist
+          echo '    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>' >> entitlements.plist
+          echo '    <true/>' >> entitlements.plist
+          echo '    <key>com.apple.security.cs.allow-dyld-environment-variables</key>' >> entitlements.plist
+          echo '    <true/>' >> entitlements.plist
+          echo '    <key>com.apple.security.network.client</key>' >> entitlements.plist
+          echo '    <true/>' >> entitlements.plist
+          echo '    <key>com.apple.security.files.user-selected.read-write</key>' >> entitlements.plist
+          echo '    <true/>' >> entitlements.plist
+          echo '</dict>' >> entitlements.plist
+          echo '</plist>' >> entitlements.plist
           
           # Extract the available signing identities
           echo "Available signing identities:"

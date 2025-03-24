@@ -341,10 +341,54 @@ async function startPythonServer() {
                     fs.mkdirSync(appSupportDir, { recursive: true });
                 }
                 
+                // Create necessary directories for Python modules and scripts
+                const pythonDir = path.join(appSupportDir, 'python');
+                const appDir = path.join(appSupportDir, 'app');
+                const soundsDir = path.join(appSupportDir, 'sounds');
+                
+                // Create directories if they don't exist
+                [pythonDir, appDir, soundsDir].forEach(dir => {
+                    if (!fs.existsSync(dir)) {
+                        fs.mkdirSync(dir, { recursive: true });
+                    }
+                });
+                
                 // Define the safe executable path
                 const safeExecutablePath = path.join(appSupportDir, 'YoutubetoPremiere');
                 
-                // Look for different executable variants (prioritizing the universal version)
+                // Copy the Python files first
+                console.log('Copying Python app files to safe location...');
+                const appFiles = fs.readdirSync(path.join(extensionRoot, 'exec'));
+                
+                // Filter and copy Python files to the safe app directory
+                appFiles.filter(file => file.endsWith('.py')).forEach(file => {
+                    const sourcePath = path.join(extensionRoot, 'exec', file);
+                    const destPath = path.join(appDir, file);
+                    try {
+                        fs.copyFileSync(sourcePath, destPath);
+                        console.log(`Copied ${file} to safe location`);
+                    } catch (err) {
+                        console.warn(`Failed to copy ${file}: ${err.message}`);
+                    }
+                });
+                
+                // Copy sounds if they exist
+                const soundsPath = path.join(extensionRoot, 'exec', 'sounds');
+                if (fs.existsSync(soundsPath)) {
+                    try {
+                        const soundFiles = fs.readdirSync(soundsPath);
+                        soundFiles.forEach(file => {
+                            const sourcePath = path.join(soundsPath, file);
+                            const destPath = path.join(soundsDir, file);
+                            fs.copyFileSync(sourcePath, destPath);
+                        });
+                        console.log('Copied sound files to safe location');
+                    } catch (err) {
+                        console.warn(`Failed to copy sound files: ${err.message}`);
+                    }
+                }
+                
+                // Look for different executable variants 
                 const universalPath = path.join(extensionRoot, 'exec', 'YoutubetoPremiere-universal');
                 const standardPath = path.join(extensionRoot, 'exec', 'YoutubetoPremiere');
                 
@@ -363,7 +407,7 @@ async function startPythonServer() {
                 console.log(`Copying executable from ${sourceExecutable} to safe location: ${safeExecutablePath}`);
                 fs.copyFileSync(sourceExecutable, safeExecutablePath);
                 
-                // Fix permissions on the safe executable
+                // Fix permissions on the safe executable and contents
                 const fixPermissionsCmd = `chmod +x "${safeExecutablePath}" && xattr -d com.apple.quarantine "${safeExecutablePath}" 2>/dev/null || true`;
                 const { error } = await new Promise(resolve => {
                     exec(fixPermissionsCmd, (error, stdout, stderr) => {
@@ -372,25 +416,27 @@ async function startPythonServer() {
                 });
                 
                 if (error) {
-                    console.warn(`Failed to fix permissions, will try with original executable: ${error.message}`);
-                    // Try to fix permissions on the original executable as a fallback
-                    const fallbackFixCmd = `chmod +x "${PythonExecutablePath}" && xattr -d com.apple.quarantine "${PythonExecutablePath}" 2>/dev/null || true`;
-                    await new Promise(resolve => {
-                        exec(fallbackFixCmd, () => resolve());
-                    });
+                    console.warn(`Failed to fix permissions: ${error.message}`);
                 } else {
                     console.log('Successfully fixed executable permissions in safe location');
-                    // Use the safe executable path instead
-                    PythonExecutablePath = safeExecutablePath;
                 }
                 
-                // If using a universal executable that had its signature removed, we need to bypass
-                // the macOS security framework by setting an environment variable
-                if (sourceExecutable.includes('universal')) {
-                    process.env.DYLD_LIBRARY_PATH = path.dirname(safeExecutablePath);
-                    process.env.DYLD_INSERT_LIBRARIES = '';
-                    process.env.DYLD_FORCE_FLAT_NAMESPACE = '1';
+                // Use the safe executable path
+                PythonExecutablePath = safeExecutablePath;
+                
+                // Create a custom YoutubetoPremiere.py file if needed
+                const mainPyPath = path.join(appDir, 'YoutubetoPremiere.py');
+                if (!fs.existsSync(mainPyPath)) {
+                    console.log('Creating main Python file');
+                    // Find the original Python file
+                    const origPyPath = path.join(extensionRoot, 'exec', 'YoutubetoPremiere.py');
+                    if (fs.existsSync(origPyPath)) {
+                        fs.copyFileSync(origPyPath, mainPyPath);
+                    } else {
+                        console.warn('Could not find original YoutubetoPremiere.py');
+                    }
                 }
+                
             } catch (err) {
                 console.error('Error preparing macOS executable:', err);
                 // Continue with original path if preparation fails
@@ -415,14 +461,28 @@ async function startPythonServer() {
 
         console.log(`Starting Python server from: ${PythonExecutablePath}`);
         try {
-            // For macOS, set environment variables to help with library loading
-            const serverEnv = { ...process.env, Python_BACKTRACE: '1', EXTENSION_ROOT: extensionRoot };
+            // For macOS, create a more robust environment
+            const serverEnv = { 
+                ...process.env, 
+                Python_BACKTRACE: '1', 
+                EXTENSION_ROOT: extensionRoot,
+                PYTHONIOENCODING: 'utf-8',
+                PYTHONUNBUFFERED: '1'
+            };
+            
             if (process.platform === 'darwin') {
-                serverEnv.DYLD_LIBRARY_PATH = path.dirname(PythonExecutablePath);
-                serverEnv.PYTHONHOME = path.dirname(PythonExecutablePath);
+                // Add necessary information about the app location
+                const os = window.cep_node.require('os');
+                const appSupportDir = path.join(os.homedir(), 'Library/Application Support/YoutubetoPremiere');
+                const appDir = path.join(appSupportDir, 'app');
+                
+                serverEnv.PYTHONPATH = appDir;
+                serverEnv.APP_DIR = appDir;
+                serverEnv.SOUNDS_DIR = path.join(appSupportDir, 'sounds');
             }
             
-            PythonServerProcess = spawn(PythonExecutablePath, [], {
+            // Launch with extra verbosity for debugging
+            PythonServerProcess = spawn(PythonExecutablePath, ['--verbose'], {
                 cwd: path.dirname(PythonExecutablePath),
                 env: serverEnv,
                 stdio: ['inherit', 'pipe', 'pipe'],
@@ -430,23 +490,52 @@ async function startPythonServer() {
             });
         } catch (spawnError) {
             console.error(`Error spawning Python process: ${spawnError.message}`);
-            // On Mac, try with a shell wrapper if direct spawn fails
+            // On Mac, try with a direct Python call if the script fails
             if (process.platform === 'darwin') {
                 try {
                     const { exec } = window.cep_node.require('child_process');
-                    console.log('Trying shell execution as fallback...');
+                    const os = window.cep_node.require('os');
+                    console.log('Trying direct Python execution as fallback...');
                     
-                    // Create environment variable string for the shell command
-                    const envVars = 'DYLD_LIBRARY_PATH="' + path.dirname(PythonExecutablePath) + 
-                                    '" PYTHONHOME="' + path.dirname(PythonExecutablePath) + 
-                                    '" Python_BACKTRACE="1" EXTENSION_ROOT="' + extensionRoot + '"';
-                    
-                    PythonServerProcess = exec(`${envVars} "${PythonExecutablePath}"`, {
-                        cwd: path.dirname(PythonExecutablePath)
+                    // Get Python binary
+                    const pythonPath = await new Promise((resolve) => {
+                        exec('which python3 || which python', (error, stdout) => {
+                            resolve(stdout.trim());
+                        });
                     });
-                    console.log('Shell execution started successfully');
+                    
+                    if (!pythonPath) {
+                        throw new Error('Could not find Python interpreter');
+                    }
+                    
+                    console.log(`Found Python at: ${pythonPath}`);
+                    
+                    // Find the main Python file
+                    const appSupportDir = path.join(os.homedir(), 'Library/Application Support/YoutubetoPremiere');
+                    const pythonFile = path.join(appSupportDir, 'app', 'YoutubetoPremiere.py');
+                    
+                    if (!fs.existsSync(pythonFile)) {
+                        throw new Error(`Python file not found at ${pythonFile}`);
+                    }
+                    
+                    console.log(`Using Python file: ${pythonFile}`);
+                    
+                    // Build environment variables
+                    const envVars = [
+                        `PYTHONPATH="${appSupportDir}/app"`,
+                        `EXTENSION_ROOT="${extensionRoot}"`,
+                        'PYTHONIOENCODING="utf-8"',
+                        'PYTHONUNBUFFERED="1"'
+                    ].join(' ');
+                    
+                    // Run Python directly
+                    PythonServerProcess = exec(`${envVars} "${pythonPath}" "${pythonFile}" --verbose`, {
+                        cwd: path.dirname(pythonFile),
+                    });
+                    
+                    console.log('Direct Python execution started');
                 } catch (execError) {
-                    console.error(`Shell execution also failed: ${execError.message}`);
+                    console.error(`Direct Python execution failed: ${execError.message}`);
                     throw execError;
                 }
             } else {
