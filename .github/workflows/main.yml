@@ -361,100 +361,32 @@ jobs:
           echo "Content of app directory:"
           ls -la app/
           
-          # Create the spec file based on the platform
+          # Install additional dependencies for networking
+          pip install python-engineio python-socketio
+          
+          # Check for sounds directory
+          if [ ! -d "app/sounds" ]; then
+            echo "Warning: app/sounds directory not found, creating it"
+            mkdir -p app/sounds
+          fi
+          
+          # Directly use command-line parameters instead of spec file
           if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            # Windows spec with additional DLLs and hidden imports
-            cat > YoutubetoPremiere.spec << EOF
-            # -*- mode: python ; coding: utf-8 -*-
-            
-            block_cipher = None
-            
-            a = Analysis(['app/YoutubetoPremiere.py'],
-                         pathex=[],
-                         binaries=[],
-                         datas=[('app/sounds', 'sounds')],
-                         hiddenimports=['engineio.async_drivers.threading', 'socketio.async_drivers.threading', 'pkg_resources.py2_warn'],
-                         hookspath=[],
-                         hooksconfig={},
-                         runtime_hooks=[],
-                         excludes=[],
-                         win_no_prefer_redirects=False,
-                         win_private_assemblies=False,
-                         cipher=block_cipher,
-                         noarchive=False)
-            pyz = PYZ(a.pure, a.zipped_data,
-                      cipher=block_cipher)
-            
-            exe = EXE(pyz,
-                     a.scripts,
-                     a.binaries,
-                     a.zipfiles,
-                     a.datas,
-                     [],
-                     name='YoutubetoPremiere',
-                     debug=False,
-                     bootloader_ignore_signals=False,
-                     strip=False,
-                     upx=True,
-                     upx_exclude=[],
-                     runtime_tmpdir=None,
-                     console=True,
-                     disable_windowed_traceback=False,
-                     argv_emulation=False,
-                     target_arch=None,
-                     codesign_identity=None,
-                     entitlements_file=None,
-                     icon=None)
-            EOF
-            
-            # Run pyinstaller with the spec file
-            python -m PyInstaller YoutubetoPremiere.spec
+            # Windows build with all necessary imports
+            python -m PyInstaller --name YoutubetoPremiere --onefile \
+              --add-data "app/sounds:sounds" \
+              --hidden-import engineio.async_drivers.threading \
+              --hidden-import socketio.async_drivers.threading \
+              --hidden-import pkg_resources.py2_warn \
+              app/YoutubetoPremiere.py
           else
-            # macOS spec with additional hidden imports
-            cat > YoutubetoPremiere.spec << EOF
-            # -*- mode: python ; coding: utf-8 -*-
-            
-            block_cipher = None
-            
-            a = Analysis(['app/YoutubetoPremiere.py'],
-                         pathex=[],
-                         binaries=[],
-                         datas=[('app/sounds', 'sounds')],
-                         hiddenimports=['engineio.async_drivers.threading', 'socketio.async_drivers.threading', 'pkg_resources.py2_warn'],
-                         hookspath=[],
-                         hooksconfig={},
-                         runtime_hooks=[],
-                         excludes=[],
-                         win_no_prefer_redirects=False,
-                         win_private_assemblies=False,
-                         cipher=block_cipher,
-                         noarchive=False)
-            pyz = PYZ(a.pure, a.zipped_data,
-                      cipher=block_cipher)
-            
-            exe = EXE(pyz,
-                     a.scripts,
-                     a.binaries,
-                     a.zipfiles,
-                     a.datas,
-                     [],
-                     name='YoutubetoPremiere',
-                     debug=False,
-                     bootloader_ignore_signals=False,
-                     strip=False,
-                     upx=True,
-                     upx_exclude=[],
-                     runtime_tmpdir=None,
-                     console=True,
-                     disable_windowed_traceback=False,
-                     argv_emulation=False,
-                     target_arch=None,
-                     codesign_identity=None,
-                     entitlements_file=None)
-            EOF
-            
-            # Run pyinstaller with the spec file
-            python -m PyInstaller YoutubetoPremiere.spec
+            # macOS build with all necessary imports
+            python -m PyInstaller --name YoutubetoPremiere --onefile \
+              --add-data "app/sounds:sounds" \
+              --hidden-import engineio.async_drivers.threading \
+              --hidden-import socketio.async_drivers.threading \
+              --hidden-import pkg_resources.py2_warn \
+              app/YoutubetoPremiere.py
           fi
           
           echo "PyInstaller completed"
