@@ -534,20 +534,36 @@ jobs:
             exit 1
           }
           
-          # Verify executables exist
-          $exePath = "zxp_extract/contents/exec/YoutubetoPremiere.exe"
-          $ffmpegPath = "zxp_extract/contents/exec/ffmpeg.exe"
+          # Verify all executables exist
+          $winExePath = "zxp_extract/contents/exec/YoutubetoPremiere.exe"
+          $macExePath = "zxp_extract/contents/exec/YoutubetoPremiere"
+          $winFfmpegPath = "zxp_extract/contents/exec/ffmpeg.exe"
+          $macFfmpegPath = "zxp_extract/contents/exec/ffmpeg"
           
-          if (Test-Path $exePath) {
-            Write-Host "✓ Found Windows executable: $exePath"
+          # Check Windows executables
+          if (Test-Path $winExePath) {
+            Write-Host "✓ Found Windows executable: $winExePath"
           } else {
             Write-Host "✗ WARNING: Windows executable not found!"
           }
           
-          if (Test-Path $ffmpegPath) {
-            Write-Host "✓ Found Windows FFmpeg: $ffmpegPath"
+          if (Test-Path $winFfmpegPath) {
+            Write-Host "✓ Found Windows FFmpeg: $winFfmpegPath"
           } else {
             Write-Host "✗ WARNING: Windows FFmpeg not found!"
+          }
+          
+          # Check macOS executables
+          if (Test-Path $macExePath) {
+            Write-Host "✓ Found macOS executable: $macExePath"
+          } else {
+            Write-Host "✗ WARNING: macOS executable not found!"
+          }
+          
+          if (Test-Path $macFfmpegPath) {
+            Write-Host "✓ Found macOS FFmpeg: $macFfmpegPath"
+          } else {
+            Write-Host "✗ WARNING: macOS FFmpeg not found!"
           }
           
           # Create the new ZXP file
@@ -578,22 +594,21 @@ jobs:
             try {
               $zip = [System.IO.Compression.ZipFile]::OpenRead("dist/zxp/com.youtubetoPremiereV2.cep.zxp")
               
-              # Look for executables
-              $exeFiles = $zip.Entries | Where-Object { $_.Name -like "*.exe" }
-              if ($exeFiles.Count -gt 0) {
-                Write-Host "✓ Found .exe files in ZXP:"
-                $exeFiles | ForEach-Object { Write-Host "  - $_" }
-              } else {
-                Write-Host "✗ WARNING: No .exe files found in ZXP!"
+              # Look for all executables in exec directory
+              $execFiles = $zip.Entries | Where-Object { 
+                $_.FullName -like "exec/*" -and (
+                  $_.Name -eq "YoutubetoPremiere.exe" -or 
+                  $_.Name -eq "YoutubetoPremiere" -or 
+                  $_.Name -eq "ffmpeg.exe" -or 
+                  $_.Name -eq "ffmpeg"
+                )
               }
               
-              # Look for FFmpeg
-              $ffmpegFiles = $zip.Entries | Where-Object { $_.Name -like "*ffmpeg*" }
-              if ($ffmpegFiles.Count -gt 0) {
-                Write-Host "✓ Found ffmpeg files in ZXP:"
-                $ffmpegFiles | ForEach-Object { Write-Host "  - $_" }
+              if ($execFiles.Count -gt 0) {
+                Write-Host "✓ Found executables in ZXP:"
+                $execFiles | ForEach-Object { Write-Host "  - $($_.FullName)" }
               } else {
-                Write-Host "✗ WARNING: No ffmpeg files found in ZXP!"
+                Write-Host "✗ WARNING: No executables found in ZXP!"
               }
               
               $zip.Dispose()
