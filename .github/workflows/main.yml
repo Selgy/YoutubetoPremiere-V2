@@ -379,21 +379,17 @@ jobs:
       - name: Create Windows Installer
         if: matrix.os == 'windows-latest'
         run: |
-          # Download NSIS
-          Write-Host "Downloading NSIS installer..."
-          Invoke-WebRequest -Uri "https://sourceforge.net/projects/nsis/files/NSIS%203/3.09/nsis-3.09-setup.exe/download" -OutFile "nsis-setup.exe"
-          
-          # Install NSIS
-          Write-Host "Installing NSIS..."
-          Start-Process -FilePath "nsis-setup.exe" -ArgumentList "/S" -Wait
+          # Install NSIS directly using Chocolatey
+          Write-Host "Installing NSIS using Chocolatey..."
+          choco install nsis -y
           $NsisPath = "C:\Program Files (x86)\NSIS\makensis.exe"
           
           # Verify NSIS installation
           if (!(Test-Path $NsisPath)) {
-            Write-Host "NSIS not found at expected path. Trying alternative installation method..."
-            # Alternative: Install via Chocolatey
-            choco install nsis -y
-            $NsisPath = "C:\Program Files (x86)\NSIS\makensis.exe"
+            Write-Error "Error: NSIS not found at expected path after installation: $NsisPath"
+            exit 1
+          } else {
+            Write-Host "NSIS installed successfully at: $NsisPath"
           }
           
           # Create installer script
