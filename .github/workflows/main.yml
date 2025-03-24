@@ -562,17 +562,29 @@ jobs:
         run: |
           Write-Host "===== CREATING FINAL ZXP WITH EXECUTABLES ====="
           
-          # Verify all executables exist in dist/cep/exec
-          $winExePath = "dist/cep/exec/YoutubetoPremiere.exe"
-          $macExePath = "dist/cep/exec/YoutubetoPremiere"
-          $winFfmpegPath = "dist/cep/exec/ffmpeg.exe"
-          $macFfmpegPath = "dist/cep/exec/ffmpeg"
+          # Get the absolute path of the workspace
+          $workspacePath = Get-Location
+          Write-Host "Current workspace path: $workspacePath"
+          
+          # Verify all executables exist in dist directory
+          $winExePath = Join-Path $workspacePath "dist/YoutubetoPremiere.exe"
+          $macExePath = Join-Path $workspacePath "dist/YoutubetoPremiere"
+          $winFfmpegPath = Join-Path $workspacePath "dist/ffmpeg.exe"
+          $macFfmpegPath = Join-Path $workspacePath "dist/ffmpeg"
+          
+          Write-Host "Checking for files:"
+          Write-Host "Windows executable: $winExePath"
+          Write-Host "macOS executable: $macExePath"
+          Write-Host "Windows FFmpeg: $winFfmpegPath"
+          Write-Host "macOS FFmpeg: $macFfmpegPath"
           
           # Check Windows executables
           if (Test-Path $winExePath) {
             Write-Host "✓ Found Windows executable: $winExePath"
           } else {
             Write-Host "✗ WARNING: Windows executable not found!"
+            Write-Host "Directory contents:"
+            Get-ChildItem -Path (Split-Path $winExePath) | ForEach-Object { Write-Host "  - $($_.Name)" }
           }
           
           if (Test-Path $winFfmpegPath) {
@@ -596,21 +608,30 @@ jobs:
           
           # Create the ZXP package directly from the dist/cep directory
           Write-Host "Creating ZXP file..."
-          $currentLocation = Get-Location
-          Set-Location "dist/cep"
+          $cepPath = Join-Path $workspacePath "dist/cep"
+          Write-Host "Moving to directory: $cepPath"
+          Set-Location $cepPath
+          
+          # List contents before creating ZXP
+          Write-Host "Contents of dist/cep directory:"
+          Get-ChildItem -Recurse | ForEach-Object { Write-Host "  - $($_.FullName)" }
           
           # Create new ZXP using 7-Zip with maximum compression
-          & "C:\Program Files\7-Zip\7z.exe" a -tzip -mx=9 -mfb=258 -mpass=15 "../zxp/com.youtubetoPremiereV2.cep.zxp" *
-          Set-Location $currentLocation
+          $zxpPath = Join-Path $workspacePath "dist/zxp/com.youtubetoPremiereV2.cep.zxp"
+          Write-Host "Creating ZXP at: $zxpPath"
+          & "C:\Program Files\7-Zip\7z.exe" a -tzip -mx=9 -mfb=258 -mpass=15 $zxpPath *
+          
+          # Return to original directory
+          Set-Location $workspacePath
           
           # Verify the ZXP was created
-          if (Test-Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp") {
-            $fileSize = (Get-Item "dist/zxp/com.youtubetoPremiereV2.cep.zxp").Length / 1MB
+          if (Test-Path $zxpPath) {
+            $fileSize = (Get-Item $zxpPath).Length / 1MB
             Write-Host "✓ ZXP package created successfully: $fileSize MB"
             
             # Examine contents using 7-Zip
             Write-Host "Examining ZXP contents..."
-            $listOutput = & "C:\Program Files\7-Zip\7z.exe" l "dist/zxp/com.youtubetoPremiereV2.cep.zxp" "exec/*"
+            $listOutput = & "C:\Program Files\7-Zip\7z.exe" l $zxpPath "exec/*"
             
             # Check for executables
             $execFound = $false
