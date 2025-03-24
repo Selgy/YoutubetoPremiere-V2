@@ -4,6 +4,16 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      package_only:
+        description: 'Only run the packaging step (uses latest successful build artifacts)'
+        type: boolean
+        default: false
+      version:
+        description: 'Version to use for the release (e.g. 3.0.5)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -13,35 +23,74 @@ jobs:
   check-changes:
     runs-on: ubuntu-latest
     outputs:
-      app_changed: ${{ steps.check_app.outputs.changed }}
+      app_changed: ${{ steps.filter.outputs.app_changed }}
       tag_version: ${{ steps.get_version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
       
-      - name: Check for app changes
-        id: check_app
+      - name: Check if package_only is enabled
+        id: check_package_only
         run: |
-          git diff --name-only HEAD^ HEAD > changes.txt
-          echo "changed=$(if grep -q '^app/' changes.txt; then echo 'true'; else echo 'false'; fi)" >> $GITHUB_OUTPUT
-      
-      - name: Get version from tag
+          if [[ "${{ github.event.inputs.package_only }}" == "true" ]]; then
+            echo "package_only=true" >> $GITHUB_OUTPUT
+            if [[ -n "${{ github.event.inputs.version }}" ]]; then
+              echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            else
+              # Default to the latest tag if no version is specified
+              latest_tag=$(git describe --tags --abbrev=0)
+              echo "version=${latest_tag#v}" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "package_only=false" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+
+      - name: Check for app changes
+        id: filter
+        run: |
+          if [[ "${{ steps.check_package_only.outputs.package_only }}" == "true" ]]; then
+            echo "Skipping change detection as package_only is enabled"
+            echo "app_changed=true" >> $GITHUB_OUTPUT
+          else
+            # Normal change detection
+            if [[ "${{ github.event_name }}" == "push" && "${{ startsWith(github.ref, 'refs/tags/v') }}" == "true" ]]; then
+              echo "app_changed=true" >> $GITHUB_OUTPUT
+            else
+              echo "No app changes detected or not a tagged push event"
+              echo "app_changed=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+        shell: bash
+
+      - name: Extract version from tag or input
         id: get_version
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Building version: $VERSION"
+          if [[ "${{ steps.check_package_only.outputs.package_only }}" == "true" ]]; then
+            echo "version=${{ steps.check_package_only.outputs.version }}" >> $GITHUB_OUTPUT
+          else
+            if [[ "${{ github.event_name }}" == "push" && "${{ startsWith(github.ref, 'refs/tags/v') }}" == "true" ]]; then
+              version=${GITHUB_REF#refs/tags/v}
+              echo "version=$version" >> $GITHUB_OUTPUT
+            else
+              echo "version=0.0.0" >> $GITHUB_OUTPUT
+            fi
+          fi
+        shell: bash
 
   build-ffmpeg:
-    runs-on: ${{ matrix.os }}
+    needs: check-changes
+    if: ${{ needs.check-changes.outputs.app_changed == 'true' && github.event.inputs.package_only != 'true' }}
     strategy:
       matrix:
         os: [windows-latest, macos-13]
       fail-fast: false
+    runs-on: ${{ matrix.os }}
     outputs:
-      win_ffmpeg_path: ${{ steps.output_paths.outputs.win_ffmpeg_path }}
-      mac_ffmpeg_path: ${{ steps.output_paths.outputs.mac_ffmpeg_path }}
+      windows_ffmpeg_path: ${{ steps.output_paths.outputs.win_ffmpeg_path }}
+      macos_ffmpeg_path: ${{ steps.output_paths.outputs.mac_ffmpeg_path }}
     steps:
       - name: Check FFmpeg cache
         id: ffmpeg-cache
@@ -109,7 +158,8 @@ jobs:
           retention-days: 7
 
   build-executables:
-    needs: [check-changes]
+    needs: check-changes
+    if: ${{ needs.check-changes.outputs.app_changed == 'true' && github.event.inputs.package_only != 'true' }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -180,10 +230,12 @@ jobs:
 
   package-zxp:
     needs: [check-changes, build-ffmpeg, build-executables]
+    if: ${{ needs.check-changes.outputs.app_changed == 'true' }}
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -202,14 +254,32 @@ jobs:
       - name: Create directories
         run: |
           mkdir -p dist/cep/exec/sounds
-          mkdir -p dist/zxp
+          mkdir -p backup/exec
         shell: bash
 
-      # Download all artifacts in parallel
-      - name: Download all artifacts
+      - name: Download artifacts from current workflow
+        if: ${{ github.event.inputs.package_only != 'true' }}
         uses: actions/download-artifact@v4
+        
+      - name: Download artifacts from previous workflow
+        if: ${{ github.event.inputs.package_only == 'true' }}
+        uses: dawidd6/action-download-artifact@v2
         with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+          workflow: main.yml
+          workflow_conclusion: success
+          name_is_regexp: true
+          name: .*
           path: artifacts
+      
+      - name: List downloaded artifacts
+        run: |
+          if [[ "${{ github.event.inputs.package_only }}" == "true" ]]; then
+            find artifacts -type f | sort
+          else
+            ls -la
+          fi
+        shell: bash
 
       - name: Optimize ZXP packaging process
         shell: bash
@@ -299,31 +369,91 @@ jobs:
           echo "Verifying executables are in the extracted package:"
           ls -la zxp_extract/contents/exec
           
-          echo "Recreating the ZXP with executables included..."
-          cd zxp_extract/contents
-          zip -r ../../dist/zxp/com.youtubetoPremiereV2.cep.zxp ./* || echo "Failed to create ZIP file"
-          cd ../..
-          
-          # Verify ZXP was recreated
-          if [ -f "dist/zxp/com.youtubetoPremiereV2.cep.zxp" ]; then
-            echo "✓ ZXP package recreated successfully at: dist/zxp/com.youtubetoPremiereV2.cep.zxp"
-            echo "  Size: $(du -h dist/zxp/com.youtubetoPremiereV2.cep.zxp | cut -f1)"
-            
-            # Examine ZXP contents to verify executables are included
-            echo "Examining ZXP contents to verify executables are included..."
-            mkdir -p zxp_verification
-            cp dist/zxp/com.youtubetoPremiereV2.cep.zxp zxp_verification/
-            cd zxp_verification
-            unzip -l com.youtubetoPremiereV2.cep.zxp | grep -i "exec/" || echo "WARNING: No exec files found in ZXP!"
-            unzip -l com.youtubetoPremiereV2.cep.zxp | grep -i ".exe" || echo "WARNING: No .exe files found in ZXP!"
-            unzip -l com.youtubetoPremiereV2.cep.zxp | grep -i "ffmpeg" || echo "WARNING: No ffmpeg files found in ZXP!"
-            cd ..
-          else
-            echo "✗ ERROR: ZXP package was not recreated!"
-            exit 1
-          fi
-          
           echo "===== ZXP PACKAGING COMPLETED ====="
+
+      - name: Create Final ZXP with Executables
+        shell: pwsh
+        run: |
+          Write-Host "===== CREATING FINAL ZXP WITH EXECUTABLES ====="
+          
+          # Ensure the directories exist
+          if (-Not (Test-Path "zxp_extract/contents")) {
+            Write-Error "Contents directory not found! Packaging failed."
+            exit 1
+          }
+          
+          # Verify executables exist
+          $exePath = "zxp_extract/contents/exec/YoutubetoPremiere.exe"
+          $ffmpegPath = "zxp_extract/contents/exec/ffmpeg.exe"
+          
+          if (Test-Path $exePath) {
+            Write-Host "✓ Found Windows executable: $exePath"
+          } else {
+            Write-Host "✗ WARNING: Windows executable not found!"
+          }
+          
+          if (Test-Path $ffmpegPath) {
+            Write-Host "✓ Found Windows FFmpeg: $ffmpegPath"
+          } else {
+            Write-Host "✗ WARNING: Windows FFmpeg not found!"
+          }
+          
+          # Create the new ZXP file
+          Write-Host "Creating ZXP file..."
+          Add-Type -Assembly System.IO.Compression.FileSystem
+          $compressionLevel = [System.IO.Compression.CompressionLevel]::Optimal
+          
+          # Make sure the destination directory exists
+          if (-Not (Test-Path "dist/zxp")) {
+            New-Item -Path "dist/zxp" -ItemType Directory
+          }
+          
+          # Remove existing ZXP if it exists
+          if (Test-Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp") {
+            Remove-Item "dist/zxp/com.youtubetoPremiereV2.cep.zxp" -Force
+          }
+          
+          # Create new ZXP
+          [System.IO.Compression.ZipFile]::CreateFromDirectory("zxp_extract/contents", "dist/zxp/com.youtubetoPremiereV2.cep.zxp", $compressionLevel, $false)
+          
+          # Verify the ZXP was created
+          if (Test-Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp") {
+            $fileSize = (Get-Item "dist/zxp/com.youtubetoPremiereV2.cep.zxp").Length / 1MB
+            Write-Host "✓ ZXP package created successfully: $fileSize MB"
+            
+            # Examine contents
+            Write-Host "Examining ZXP contents..."
+            try {
+              $zip = [System.IO.Compression.ZipFile]::OpenRead("dist/zxp/com.youtubetoPremiereV2.cep.zxp")
+              
+              # Look for executables
+              $exeFiles = $zip.Entries | Where-Object { $_.Name -like "*.exe" }
+              if ($exeFiles.Count -gt 0) {
+                Write-Host "✓ Found .exe files in ZXP:"
+                $exeFiles | ForEach-Object { Write-Host "  - $_" }
+              } else {
+                Write-Host "✗ WARNING: No .exe files found in ZXP!"
+              }
+              
+              # Look for FFmpeg
+              $ffmpegFiles = $zip.Entries | Where-Object { $_.Name -like "*ffmpeg*" }
+              if ($ffmpegFiles.Count -gt 0) {
+                Write-Host "✓ Found ffmpeg files in ZXP:"
+                $ffmpegFiles | ForEach-Object { Write-Host "  - $_" }
+              } else {
+                Write-Host "✗ WARNING: No ffmpeg files found in ZXP!"
+              }
+              
+              $zip.Dispose()
+            } catch {
+              Write-Host "Error examining ZXP content: $_"
+            }
+          } else {
+            Write-Error "Failed to create ZXP package!"
+            exit 1
+          }
+          
+          Write-Host "===== FINAL ZXP PACKAGING COMPLETED ====="
 
       - name: Verify and Rename ZXP Package
         shell: pwsh
@@ -351,4 +481,5 @@ jobs:
         with:
           files: ./dist/zxp/YoutubetoPremiere-v${{ needs.check-changes.outputs.tag_version }}.zxp
           name: YoutubetoPremiere v${{ needs.check-changes.outputs.tag_version }}
+          tag_name: v${{ needs.check-changes.outputs.tag_version }}
           generate_release_notes: true
