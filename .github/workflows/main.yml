@@ -439,6 +439,7 @@ jobs:
           SKIP_PYTHON_BUILD: true
           NO_PYTHON: true
           ZXP_PACKAGE: true
+          SKIP_FILE_COPY: true
         run: |
           # Function to copy artifacts with error checking
           copy_artifact() {

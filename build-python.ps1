@@ -1,48 +1,48 @@
-# Ensure output directories exist
-$execDir = "dist\cep\exec"
-if (-not (Test-Path $execDir)) {
-    New-Item -ItemType Directory -Force -Path $execDir | Out-Null
-    Write-Host "Created directory: $execDir"
-}
+# Create necessary directories
+Write-Host "Created directory: dist\cep\exec"
+New-Item -Path "dist\cep\exec" -ItemType Directory -Force | Out-Null
 
 # Check if we should skip Python build
-$skipPythonBuild = $env:SKIP_PYTHON_BUILD -eq "true" -or $env:NO_PYTHON -eq "true"
-if ($skipPythonBuild) {
+if ($env:SKIP_PYTHON_BUILD -eq "true" -or $env:NO_PYTHON -eq "true") {
     Write-Host "Skipping Python build as SKIP_PYTHON_BUILD or NO_PYTHON is set to true"
+    
+    # Only copy Python files if SKIP_FILE_COPY is not set
+    if ($env:SKIP_FILE_COPY -ne "true") {
+        Write-Host "Copying Python source files..."
+        Copy-Item -Path "app\*.py" -Destination "dist\cep\exec\" -Force
+        New-Item -Path "dist\cep\exec\sounds" -ItemType Directory -Force | Out-Null
+        Write-Host "Created directory: dist\cep\exec\sounds"
+    } else {
+        Write-Host "Skipping file copy as SKIP_FILE_COPY is set to true"
+    }
     
     # Check if we have executables in build/executables (used in GitHub Actions)
     if (Test-Path "build\executables\YoutubetoPremiere.exe") {
         Write-Host "Found pre-built executable in build\executables, copying..."
-        Copy-Item -Path "build\executables\YoutubetoPremiere.exe" -Destination "$execDir\YoutubetoPremiere.exe" -Force
+        Copy-Item -Path "build\executables\YoutubetoPremiere.exe" -Destination "dist\cep\exec\YoutubetoPremiere.exe" -Force
         Write-Host "Copied Windows executable"
     }
     
     if (Test-Path "build\executables\YoutubetoPremiere") {
         Write-Host "Found pre-built macOS executable, copying..."
-        Copy-Item -Path "build\executables\YoutubetoPremiere" -Destination "$execDir\YoutubetoPremiere" -Force
+        Copy-Item -Path "build\executables\YoutubetoPremiere" -Destination "dist\cep\exec\YoutubetoPremiere" -Force
         Write-Host "Copied macOS executable"
     }
     
     if (Test-Path "build\executables\ffmpeg.exe") {
         Write-Host "Copying ffmpeg.exe from build\executables..."
-        Copy-Item -Path "build\executables\ffmpeg.exe" -Destination "$execDir\ffmpeg.exe" -Force
+        Copy-Item -Path "build\executables\ffmpeg.exe" -Destination "dist\cep\exec\ffmpeg.exe" -Force
         Write-Host "Copied Windows ffmpeg"
     }
     
     if (Test-Path "build\executables\ffmpeg") {
         Write-Host "Copying ffmpeg from build\executables..."
-        Copy-Item -Path "build\executables\ffmpeg" -Destination "$execDir\ffmpeg" -Force
+        Copy-Item -Path "build\executables\ffmpeg" -Destination "dist\cep\exec\ffmpeg" -Force
         Write-Host "Copied macOS ffmpeg"
     }
     
-    # Step 4: Copy Python files
-    Write-Host "Copying Python source files..."
-    Get-ChildItem -Path "app\*.py" | ForEach-Object {
-        Copy-Item -Path $_.FullName -Destination "$execDir\$($_.Name)" -Force
-    }
-    
     # Step 5: Create sounds directory and copy sounds
-    $soundsDir = "$execDir\sounds"
+    $soundsDir = "dist\cep\exec\sounds"
     if (-not (Test-Path $soundsDir)) {
         New-Item -ItemType Directory -Force -Path $soundsDir | Out-Null
         Write-Host "Created directory: $soundsDir"
@@ -77,7 +77,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # Step 2: Copy ffmpeg.exe to exec directory
 Write-Host "Copying ffmpeg.exe..."
-Copy-Item -Path "app\ffmpeg.exe" -Destination "$execDir\ffmpeg.exe" -Force
+Copy-Item -Path "app\ffmpeg.exe" -Destination "dist\cep\exec\ffmpeg.exe" -Force
 if (-not $?) {
     Write-Host "Failed to copy ffmpeg.exe" -ForegroundColor Red
     exit 1
@@ -86,7 +86,7 @@ if (-not $?) {
 # Step 3: Copy the built executable
 Write-Host "Copying YoutubetoPremiere.exe..."
 if (Test-Path "build\YoutubetoPremiere\YoutubetoPremiere.exe") {
-    Copy-Item -Path "build\YoutubetoPremiere\YoutubetoPremiere.exe" -Destination "$execDir\YoutubetoPremiere.exe" -Force
+    Copy-Item -Path "build\YoutubetoPremiere\YoutubetoPremiere.exe" -Destination "dist\cep\exec\YoutubetoPremiere.exe" -Force
     if (-not $?) {
         Write-Host "Failed to copy YoutubetoPremiere.exe" -ForegroundColor Red
         exit 1
@@ -99,7 +99,7 @@ if (Test-Path "build\YoutubetoPremiere\YoutubetoPremiere.exe") {
 # Step 4: Copy Python files
 Write-Host "Copying Python source files..."
 Get-ChildItem -Path "app\*.py" | ForEach-Object {
-    Copy-Item -Path $_.FullName -Destination "$execDir\$($_.Name)" -Force
+    Copy-Item -Path $_.FullName -Destination "dist\cep\exec\$($_.Name)" -Force
     if (-not $?) {
         Write-Host "Failed to copy $($_.Name)" -ForegroundColor Red
         exit 1
@@ -107,7 +107,7 @@ Get-ChildItem -Path "app\*.py" | ForEach-Object {
 }
 
 # Step 5: Create sounds directory and copy sounds
-$soundsDir = "$execDir\sounds"
+$soundsDir = "dist\cep\exec\sounds"
 if (-not (Test-Path $soundsDir)) {
     New-Item -ItemType Directory -Force -Path $soundsDir | Out-Null
     Write-Host "Created directory: $soundsDir"
@@ -129,7 +129,7 @@ For macOS users:
 2. The extension will automatically detect your ffmpeg installation
 "@
 
-    Set-Content -Path "$execDir\macOS_INFO.txt" -Value $macInfoContent
+    Set-Content -Path "dist\cep\exec\macOS_INFO.txt" -Value $macInfoContent
     Write-Host "Created macOS info file" -ForegroundColor Green
 }
 
