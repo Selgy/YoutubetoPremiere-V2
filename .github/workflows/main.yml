@@ -8,21 +8,15 @@ on:
 permissions:
   contents: write
   actions: read
-  checks: read
-  issues: read
-  packages: read
-  pull-requests: read
-  repository-projects: read
-  security-events: read
-  statuses: read
 
 jobs:
   check-changes:
     runs-on: ubuntu-latest
     outputs:
       app_changed: ${{ steps.check_app.outputs.changed }}
+      tag_version: ${{ steps.get_version.outputs.version }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 2
       
@@ -31,24 +25,45 @@ jobs:
         run: |
           git diff --name-only HEAD^ HEAD > changes.txt
           echo "changed=$(if grep -q '^app/' changes.txt; then echo 'true'; else echo 'false'; fi)" >> $GITHUB_OUTPUT
+      
+      - name: Get version from tag
+        id: get_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
 
   build-ffmpeg:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [windows-latest, macos-13]
+      fail-fast: false
+    outputs:
+      win_ffmpeg_path: ${{ steps.output_paths.outputs.win_ffmpeg_path }}
+      mac_ffmpeg_path: ${{ steps.output_paths.outputs.mac_ffmpeg_path }}
     steps:
       - name: Check FFmpeg cache
         id: ffmpeg-cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ffmpeg${{ matrix.os == 'windows-latest' && '.exe' || '' }}
-          key: ffmpeg-${{ matrix.os }}-v1
+          key: ffmpeg-${{ matrix.os }}-v2
+      
+      - name: Output FFmpeg paths
+        id: output_paths
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            echo "win_ffmpeg_path=ffmpeg.exe" >> $GITHUB_OUTPUT
+          else
+            echo "mac_ffmpeg_path=ffmpeg" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
 
       - name: Download and process FFmpeg
         if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         
       - name: Download FFmpeg for Windows
         if: matrix.os == 'windows-latest' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
@@ -91,64 +106,52 @@ jobs:
         with:
           name: ffmpeg-${{ matrix.os }}
           path: ffmpeg${{ matrix.os == 'windows-latest' && '.exe' || '' }}
-          retention-days: 1
+          retention-days: 7
 
   build-executables:
     needs: [check-changes]
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [windows-latest, macos-13]
-    runs-on: ${{ matrix.os }}
+      fail-fast: false
+    outputs:
+      win_exe_path: ${{ steps.output_paths.outputs.win_exe_path }}
+      mac_exe_path: ${{ steps.output_paths.outputs.mac_exe_path }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       
-      - name: Check existing artifact
-        id: check_artifact
-        continue-on-error: true
-        uses: actions/download-artifact@v4
+      - name: Output executable paths
+        id: output_paths
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            echo "win_exe_path=YoutubetoPremiere.exe" >> $GITHUB_OUTPUT
+          else
+            echo "mac_exe_path=YoutubetoPremiere" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+      
+      - name: Cache Python dependencies
+        uses: actions/cache@v4
         with:
-          name: executable-${{ matrix.os }}
-          path: existing-artifact
-
-      - name: Check if existing artifact was found
-        id: artifact_exists
-        run: |
-          if [[ -f "existing-artifact/YoutubetoPremiere${{ matrix.os == 'windows-latest' && '.exe' || '' }}" ]]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "No existing artifact found or download failed, will build from scratch"
-          fi
-        shell: bash
-
-      - name: Should build
-        id: should_build
-        run: |
-          if [[ "${{ needs.check-changes.outputs.app_changed }}" == "false" && "${{ steps.artifact_exists.outputs.exists }}" == "true" ]]; then
-            echo "build=false" >> $GITHUB_OUTPUT
-            echo "No app changes detected and existing artifact found, skipping build"
-          else
-            echo "build=true" >> $GITHUB_OUTPUT
-            echo "Building executable because app changes detected or no existing artifact found"
-          fi
-        shell: bash
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
       
       - name: Setup Python
-        if: steps.should_build.outputs.build == 'true'
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.9'
           cache: 'pip'
       
       - name: Install Python dependencies
-        if: steps.should_build.outputs.build == 'true'
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller pygame
         
       - name: Build executable
-        if: steps.should_build.outputs.build == 'true'
         shell: bash
         run: |
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
@@ -158,7 +161,7 @@ jobs:
           fi
       
       - name: Sign executable (macOS)
-        if: matrix.os == 'macos-13' && steps.should_build.outputs.build == 'true'
+        if: matrix.os == 'macos-13'
         env:
           CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
           CERTIFICATE_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
@@ -173,16 +176,6 @@ jobs:
           find . -name "*.dylib" -exec /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime {} \;
           rm -f certificate.p12
 
-      - name: Move existing artifact if not building
-        if: steps.should_build.outputs.build == 'false' && steps.artifact_exists.outputs.exists == 'true'
-        run: |
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            mv existing-artifact/YoutubetoPremiere.exe ./
-          else
-            mv existing-artifact/YoutubetoPremiere ./
-          fi
-        shell: bash
-
       - name: Upload executable
         uses: actions/upload-artifact@v4
         with:
@@ -196,284 +189,148 @@ jobs:
     needs: [check-changes, build-ffmpeg, build-executables]
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
           cache: 'yarn'
 
       - name: Install dependencies
-        run: yarn install
-
-      - name: Create directories and prepare environment
-        shell: pwsh
         run: |
-          # Create the dist/cep/exec directory
-          New-Item -ItemType Directory -Force -Path "dist/cep/exec" | Out-Null
-          Write-Host "Created dist/cep/exec directory"
-          
-          # Modify package.json to prevent yarn clean from removing build/executables
-          if (Test-Path "package.json") {
-            $packageJson = Get-Content "package.json" -Raw
-            $newPackageJson = $packageJson -replace 'rimraf dist/\* node_modules/\.vite build/\*', 'rimraf dist/* node_modules/.vite'
-            Set-Content -Path "package.json" -Value $newPackageJson
-            Write-Host "Modified package.json to preserve build/executables directory"
-          }
-
-      # Try to download artifacts with better error handling
-      - name: Download Windows executable
-        id: download_win_exe
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: executable-windows-latest
-          path: build/executables
-
-      - name: Download macOS executable
-        id: download_mac_exe
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: executable-macos-13
-          path: build/executables
-
-      - name: Download Windows FFmpeg
-        id: download_win_ffmpeg
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: ffmpeg-windows-latest
-          path: build/executables
-
-      - name: Download macOS FFmpeg
-        id: download_mac_ffmpeg
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: ffmpeg-macos-13
-          path: build/executables
-
-      # Verify what was actually downloaded
-      - name: Verify downloaded artifacts
-        shell: pwsh
+          yarn install --frozen-lockfile
+          yarn global add cross-env
+        
+      - name: Add global yarn bin to PATH
+        run: echo "$(yarn global bin)" >> $GITHUB_PATH
+        shell: bash
+      
+      - name: Create directories
         run: |
-          Write-Host "Checking downloaded artifacts in build/executables:"
-          if (Test-Path "build/executables") {
-            Get-ChildItem -Path "build/executables" -Recurse | ForEach-Object {
-              Write-Host "Found: $($_.FullName)"
-            }
-          } else {
-            Write-Host "build/executables directory does not exist!"
-            New-Item -ItemType Directory -Force -Path "build/executables" | Out-Null
-          }
+          mkdir -p dist/cep/exec/sounds
+          mkdir -p dist/zxp
+        shell: bash
 
-      # Ensure executables are in the right place
-      - name: Copy artifacts to dist directory
-        shell: pwsh
-        run: |
-          # Create dist directory
-          New-Item -ItemType Directory -Force -Path "dist/cep/exec"
-          
-          Write-Host "Contents of build/executables before copying:"
-          if (Test-Path "build/executables") {
-            Get-ChildItem -Path "build/executables" -Recurse
-          } else {
-            Write-Host "build/executables directory does not exist!"
-          }
-          
-          # Copy Windows executable and ffmpeg
-          if (Test-Path "build/executables/YoutubetoPremiere.exe") {
-            Copy-Item -Path "build/executables/YoutubetoPremiere.exe" -Destination "dist/cep/exec/YoutubetoPremiere.exe" -Force
-            Write-Host "Copied Windows executable"
-          } else {
-            Write-Host "WARNING: Windows executable not found!" -ForegroundColor Yellow
-          }
-          
-          if (Test-Path "build/executables/ffmpeg.exe") {
-            Copy-Item -Path "build/executables/ffmpeg.exe" -Destination "dist/cep/exec/ffmpeg.exe" -Force
-            Write-Host "Copied Windows ffmpeg"
-          } else {
-            Write-Host "WARNING: Windows ffmpeg not found!" -ForegroundColor Yellow
-          }
-          
-          # Copy macOS executable and ffmpeg
-          if (Test-Path "build/executables/YoutubetoPremiere") {
-            Copy-Item -Path "build/executables/YoutubetoPremiere" -Destination "dist/cep/exec/YoutubetoPremiere" -Force
-            Write-Host "Copied macOS executable"
-          } else {
-            Write-Host "WARNING: macOS executable not found!" -ForegroundColor Yellow
-          }
-          
-          if (Test-Path "build/executables/ffmpeg") {
-            Copy-Item -Path "build/executables/ffmpeg" -Destination "dist/cep/exec/ffmpeg" -Force
-            Write-Host "Copied macOS ffmpeg"
-          } else {
-            Write-Host "WARNING: macOS ffmpeg not found!" -ForegroundColor Yellow
-          }
-          
-          # Copy Python files
-          Get-ChildItem -Path "app/*.py" | ForEach-Object {
-            Copy-Item -Path $_.FullName -Destination "dist/cep/exec/$($_.Name)" -Force
-            Write-Host "Copied $($_.Name)"
-          }
-          
-          # Copy sounds directory
-          $soundsDir = "dist/cep/exec/sounds"
-          if (-not (Test-Path $soundsDir)) {
-            New-Item -ItemType Directory -Force -Path $soundsDir | Out-Null
-            Write-Host "Created directory: $soundsDir"
-          }
-          
-          if (Test-Path "app/sounds") {
-            Copy-Item -Path "app/sounds/*" -Destination "$soundsDir/" -Force -Recurse
-            Write-Host "Copied sound files"
-          }
-          
-          # List the contents of the directory
-          Write-Host "Contents of dist/cep/exec after copying:"
-          Get-ChildItem -Path "dist/cep/exec" -Recurse
+      # Download all artifacts in parallel
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
 
-      - name: Custom ZXP build script
+      - name: Optimize ZXP packaging process
         shell: bash
         env:
           SKIP_PYTHON_BUILD: true
           NO_PYTHON: true
           ZXP_PACKAGE: true
         run: |
-          echo "Starting custom ZXP packaging process..."
+          # Function to copy artifacts with error checking
+          copy_artifact() {
+            local source=$1
+            local dest=$2
+            local description=$3
+            
+            if [ -f "$source" ]; then
+              cp "$source" "$dest"
+              echo "✓ Copied $description"
+            else
+              echo "✗ ERROR: $description not found at: $source"
+              return 1
+            fi
+          }
           
-          # Clean specific directories but NOT build/executables
-          rm -rf dist/zxp dist/cep node_modules/.vite
+          echo "===== PREPARING ZXP PACKAGE ====="
           
-          # Compile TypeScript
+          # Make backup of executables
+          mkdir -p backup/exec
+          
+          # Copy all Python files
+          echo "Copying Python files..."
+          cp app/*.py dist/cep/exec/ 2>/dev/null || echo "No Python files found"
+          cp -r app/sounds/* dist/cep/exec/sounds/ 2>/dev/null || echo "No sound files found"
+          
+          # Copy artifacts efficiently
+          echo "Copying executables and FFmpeg..."
+          
+          # Windows executable
+          copy_artifact "artifacts/executable-windows-latest/YoutubetoPremiere.exe" "dist/cep/exec/" "Windows executable"
+          copy_artifact "artifacts/executable-windows-latest/YoutubetoPremiere.exe" "backup/exec/" "Windows executable (backup)"
+          
+          # Windows FFmpeg
+          copy_artifact "artifacts/ffmpeg-windows-latest/ffmpeg.exe" "dist/cep/exec/" "Windows FFmpeg"
+          copy_artifact "artifacts/ffmpeg-windows-latest/ffmpeg.exe" "backup/exec/" "Windows FFmpeg (backup)"
+          
+          # macOS executable
+          copy_artifact "artifacts/executable-macos-13/YoutubetoPremiere" "dist/cep/exec/" "macOS executable"
+          copy_artifact "artifacts/executable-macos-13/YoutubetoPremiere" "backup/exec/" "macOS executable (backup)"
+          
+          # macOS FFmpeg
+          copy_artifact "artifacts/ffmpeg-macos-13/ffmpeg" "dist/cep/exec/" "macOS FFmpeg"
+          copy_artifact "artifacts/ffmpeg-macos-13/ffmpeg" "backup/exec/" "macOS FFmpeg (backup)"
+          
+          # Verify files are in place
+          echo "Verifying files in dist/cep/exec before yarn zxp:"
+          ls -la dist/cep/exec
+          
+          # Build TypeScript
           echo "Building TypeScript..."
           yarn tsc -p "tsconfig-build.json"
           
-          # Run vite build WITHOUT yarn clean
-          echo "Running vite build directly without cleaning dist..."
+          # Run the original yarn zxp command with environment variables set directly
+          echo "Running yarn zxp..."
+          # Instead of cross-env, set environment variables directly
+          export SKIP_PYTHON_BUILD=true
+          export NO_PYTHON=true
+          export ZXP_PACKAGE=true
+          yarn zxp
+          
+          # Create exec directory if it doesn't exist after yarn zxp
           mkdir -p dist/cep/exec
-          mkdir -p dist/cep/exec/sounds
           
-          # Copy all Python files first
-          cp app/*.py dist/cep/exec/ 2>/dev/null || true
-          cp -r app/sounds/* dist/cep/exec/sounds/ 2>/dev/null || true
+          # Restore executables from backup
+          echo "Restoring executables from backup..."
+          cp backup/exec/* dist/cep/exec/ 2>/dev/null || echo "No backup files found to restore"
           
-          # Copy executables and ffmpeg directly from build/executables
-          if [ -f "build/executables/YoutubetoPremiere.exe" ]; then
-            cp "build/executables/YoutubetoPremiere.exe" "dist/cep/exec/"
-            echo "Copied Windows executable"
-          fi
-          
-          if [ -f "build/executables/ffmpeg.exe" ]; then
-            cp "build/executables/ffmpeg.exe" "dist/cep/exec/"
-            echo "Copied Windows ffmpeg"
-          fi
-          
-          if [ -f "build/executables/YoutubetoPremiere" ]; then
-            cp "build/executables/YoutubetoPremiere" "dist/cep/exec/"
-            echo "Copied macOS executable"
-          fi
-          
-          if [ -f "build/executables/ffmpeg" ]; then
-            cp "build/executables/ffmpeg" "dist/cep/exec/"
-            echo "Copied macOS ffmpeg"
-          fi
-          
-          # List the contents of dist/cep/exec before vite build
-          echo "Contents of dist/cep/exec before vite build:"
+          # Verify files are in place after yarn zxp and restoring backup
+          echo "Verifying files after yarn zxp and restore:"
           ls -la dist/cep/exec
           
-          # Run vite build directly without yarn zxp
-          cross-env ZXP_PACKAGE=true SKIP_PYTHON_BUILD=true NO_PYTHON=true vite build --force
-          
-          # Check the contents after vite build
-          echo "Contents of dist/cep/exec after vite build:"
-          ls -la dist/cep/exec
-          
-          # Copy executables again if they were removed during build
-          if [ ! -f "dist/cep/exec/YoutubetoPremiere.exe" ] && [ -f "build/executables/YoutubetoPremiere.exe" ]; then
-            cp "build/executables/YoutubetoPremiere.exe" "dist/cep/exec/"
-            echo "Re-copied Windows executable after vite build"
+          # Verify ZXP was created
+          if [ -f "dist/zxp/com.youtubetoPremiereV2.cep.zxp" ]; then
+            echo "✓ ZXP package created successfully at: dist/zxp/com.youtubetoPremiereV2.cep.zxp"
+            echo "  Size: $(du -h dist/zxp/com.youtubetoPremiereV2.cep.zxp | cut -f1)"
+          else
+            echo "✗ ERROR: ZXP package was not created!"
+            exit 1
           fi
           
-          if [ ! -f "dist/cep/exec/ffmpeg.exe" ] && [ -f "build/executables/ffmpeg.exe" ]; then
-            cp "build/executables/ffmpeg.exe" "dist/cep/exec/"
-            echo "Re-copied Windows ffmpeg after vite build"
-          fi
-          
-          if [ ! -f "dist/cep/exec/YoutubetoPremiere" ] && [ -f "build/executables/YoutubetoPremiere" ]; then
-            cp "build/executables/YoutubetoPremiere" "dist/cep/exec/"
-            echo "Re-copied macOS executable after vite build"
-          fi
-          
-          if [ ! -f "dist/cep/exec/ffmpeg" ] && [ -f "build/executables/ffmpeg" ]; then
-            cp "build/executables/ffmpeg" "dist/cep/exec/"
-            echo "Re-copied macOS ffmpeg after vite build"
-          fi
-          
-          # Create the ZXP package manually
-          echo "Creating ZXP package manually..."
-          mkdir -p dist/zxp
-          npx vite-cep-plugin package
-          
-          # List the contents of the dist/cep/exec directory after packaging
-          echo "Contents of dist/cep/exec after packaging:"
-          ls -la dist/cep/exec
-          
-          # List the ZXP packages
-          echo "ZXP packages created:"
-          ls -la dist/zxp
-          
-          echo "Custom ZXP packaging process completed."
+          echo "===== ZXP PACKAGING COMPLETED ====="
 
-      - name: Verify ZXP Package and Fix if Needed
+      - name: Verify and Rename ZXP Package
         shell: pwsh
         run: |
-          # Check if the /dist/cep/exec directory has the correct files after the build
-          Write-Host "Contents of dist/cep/exec after ZXP build:"
-          Get-ChildItem -Path "dist/cep/exec" -Recurse
+          $version = "${{ needs.check-changes.outputs.tag_version }}"
           
-          # Ensure our files are still there, copy them again if needed
-          Write-Host "Ensuring executables are in place before final check..."
-          
-          # Re-copy Windows executable and ffmpeg if needed
-          if (-not (Test-Path "dist/cep/exec/YoutubetoPremiere.exe") -and (Test-Path "build/executables/YoutubetoPremiere.exe")) {
-              Copy-Item -Path "build/executables/YoutubetoPremiere.exe" -Destination "dist/cep/exec/YoutubetoPremiere.exe" -Force
-              Write-Host "Re-copied Windows executable"
+          if (Test-Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp") {
+            # Rename the ZXP file to include the version
+            $newName = "YoutubetoPremiere-v$version.zxp"
+            Copy-Item -Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp" -Destination "dist/zxp/$newName" -Force
+            Write-Host "Renamed ZXP package to: $newName"
+            
+            # Remove the original file
+            Remove-Item -Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp" -Force
+            
+            # List the files
+            Get-ChildItem -Path dist/zxp
+          } else {
+            Write-Error "ZXP package was not found!"
+            exit 1
           }
-          
-          if (-not (Test-Path "dist/cep/exec/ffmpeg.exe") -and (Test-Path "build/executables/ffmpeg.exe")) {
-              Copy-Item -Path "build/executables/ffmpeg.exe" -Destination "dist/cep/exec/ffmpeg.exe" -Force
-              Write-Host "Re-copied Windows ffmpeg"
-          }
-          
-          # Re-copy macOS executable and ffmpeg if needed
-          if (-not (Test-Path "dist/cep/exec/YoutubetoPremiere") -and (Test-Path "build/executables/YoutubetoPremiere")) {
-              Copy-Item -Path "build/executables/YoutubetoPremiere" -Destination "dist/cep/exec/YoutubetoPremiere" -Force
-              Write-Host "Re-copied macOS executable"
-          }
-          
-          if (-not (Test-Path "dist/cep/exec/ffmpeg") -and (Test-Path "build/executables/ffmpeg")) {
-              Copy-Item -Path "build/executables/ffmpeg" -Destination "dist/cep/exec/ffmpeg" -Force
-              Write-Host "Re-copied macOS ffmpeg"
-          }
-          
-          # Create ZXP package manually one more time with the correct files
-          Write-Host "Creating final ZXP package..."
-          & npx vite-cep-plugin package
-          
-          # Check if ZXP package exists
-          if (-not (Test-Path "dist/zxp/*.zxp")) {
-              Write-Error "ZXP package was not created!"
-              exit 1
-          }
-          Write-Host "ZXP package created successfully"
-          Get-ChildItem -Path dist/zxp
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: ./dist/zxp/*.zxp
+          files: ./dist/zxp/YoutubetoPremiere-v${{ needs.check-changes.outputs.tag_version }}.zxp
+          name: YoutubetoPremiere v${{ needs.check-changes.outputs.tag_version }}
           generate_release_notes: true
