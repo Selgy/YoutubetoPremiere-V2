@@ -574,55 +574,85 @@ jobs:
           $workspacePath = Get-Location
           Write-Host "Current workspace path: $workspacePath"
           
-          # Verify all executables exist in dist directory
-          $winExePath = Join-Path $workspacePath "dist/YoutubetoPremiere.exe"
-          $macExePath = Join-Path $workspacePath "dist/YoutubetoPremiere"
-          $winFfmpegPath = Join-Path $workspacePath "dist/ffmpeg.exe"
-          $macFfmpegPath = Join-Path $workspacePath "dist/ffmpeg"
+          # Check for executables in artifact directories first
+          $winExeSource = Join-Path $workspacePath "executable-windows-latest/YoutubetoPremiere.exe"
+          $macExeSource = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere"
+          $winFfmpegSource = Join-Path $workspacePath "ffmpeg-windows-latest/ffmpeg.exe"
+          $macFfmpegSource = Join-Path $workspacePath "ffmpeg-macos-13/ffmpeg"
           
-          Write-Host "Checking for files:"
-          Write-Host "Windows executable: $winExePath"
-          Write-Host "macOS executable: $macExePath"
-          Write-Host "Windows FFmpeg: $winFfmpegPath"
-          Write-Host "macOS FFmpeg: $macFfmpegPath"
+          Write-Host "Checking for source files:"
+          Write-Host "Windows executable: $winExeSource"
+          Write-Host "macOS executable: $macExeSource"
+          Write-Host "Windows FFmpeg: $winFfmpegSource"
+          Write-Host "macOS FFmpeg: $macFfmpegSource"
           
-          # Check Windows executables
-          if (Test-Path $winExePath) {
-            Write-Host "✓ Found Windows executable: $winExePath"
-          } else {
-            Write-Host "✗ WARNING: Windows executable not found!"
-            Write-Host "Directory contents:"
-            Get-ChildItem -Path (Split-Path $winExePath) | ForEach-Object { Write-Host "  - $($_.Name)" }
+          # Create exec directory if it doesn't exist
+          $execDir = Join-Path $workspacePath "dist/cep/exec"
+          if (-not (Test-Path $execDir)) {
+            New-Item -ItemType Directory -Path $execDir -Force | Out-Null
+            Write-Host "Created exec directory: $execDir"
           }
           
-          if (Test-Path $winFfmpegPath) {
-            Write-Host "✓ Found Windows FFmpeg: $winFfmpegPath"
-          } else {
-            Write-Host "✗ WARNING: Windows FFmpeg not found!"
+          # Function to copy a file with checking
+          function Copy-FileWithCheck {
+            param (
+              [string]$Source,
+              [string]$Destination
+            )
+            
+            if (Test-Path $Source) {
+              Write-Host "Copying $Source to $Destination"
+              Copy-Item -Path $Source -Destination $Destination -Force
+              
+              if (Test-Path $Destination) {
+                $sourceSize = (Get-Item $Source).Length
+                $destSize = (Get-Item $Destination).Length
+                
+                if ($sourceSize -eq $destSize) {
+                  Write-Host "✓ Successfully copied $(Split-Path $Source -Leaf) ($sourceSize bytes)"
+                  return $true
+                } else {
+                  Write-Host "✗ WARNING: Size mismatch after copying $(Split-Path $Source -Leaf)"
+                  Write-Host "  Source: $sourceSize bytes"
+                  Write-Host "  Destination: $destSize bytes"
+                  return $false
+                }
+              } else {
+                Write-Host "✗ WARNING: Failed to copy $(Split-Path $Source -Leaf) to $Destination"
+                return $false
+              }
+            } else {
+              Write-Host "✗ WARNING: Source file not found: $Source"
+              return $false
+            }
           }
           
-          # Check macOS executables
-          if (Test-Path $macExePath) {
-            Write-Host "✓ Found macOS executable: $macExePath"
-          } else {
-            Write-Host "✗ WARNING: macOS executable not found!"
+          # Copy executables to dist/cep/exec
+          $winExeCopied = Copy-FileWithCheck -Source $winExeSource -Destination "$execDir/YoutubetoPremiere.exe"
+          $macExeCopied = Copy-FileWithCheck -Source $macExeSource -Destination "$execDir/YoutubetoPremiere"
+          $winFfmpegCopied = Copy-FileWithCheck -Source $winFfmpegSource -Destination "$execDir/ffmpeg.exe"
+          $macFfmpegCopied = Copy-FileWithCheck -Source $macFfmpegSource -Destination "$execDir/ffmpeg"
+          
+          # Set permissions for macOS executables
+          if ($macExeCopied) {
+            Write-Host "Setting execute permissions for macOS executable"
+            & "bash" "-c" "chmod +x `"$execDir/YoutubetoPremiere`""
           }
           
-          if (Test-Path $macFfmpegPath) {
-            Write-Host "✓ Found macOS FFmpeg: $macFfmpegPath"
-          } else {
-            Write-Host "✗ WARNING: macOS FFmpeg not found!"
+          if ($macFfmpegCopied) {
+            Write-Host "Setting execute permissions for macOS FFmpeg"
+            & "bash" "-c" "chmod +x `"$execDir/ffmpeg`""
           }
+          
+          # List contents of exec directory
+          Write-Host "Contents of $execDir directory:"
+          Get-ChildItem -Path $execDir | ForEach-Object { Write-Host "  - $($_.Name) ($($_.Length) bytes)" }
           
           # Create the ZXP package directly from the dist/cep directory
           Write-Host "Creating ZXP file..."
           $cepPath = Join-Path $workspacePath "dist/cep"
           Write-Host "Moving to directory: $cepPath"
           Set-Location $cepPath
-          
-          # List contents before creating ZXP
-          Write-Host "Contents of dist/cep directory:"
-          Get-ChildItem -Recurse | ForEach-Object { Write-Host "  - $($_.FullName)" }
           
           # Create new ZXP using 7-Zip with maximum compression
           $zxpPath = Join-Path $workspacePath "dist/zxp/com.youtubetoPremiereV2.cep.zxp"
