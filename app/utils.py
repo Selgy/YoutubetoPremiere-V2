@@ -492,3 +492,89 @@ def save_download_path(download_path):
     settings = load_settings()
     settings['downloadPath'] = download_path
     return save_settings(settings)
+
+def check_ffmpeg(ffmpeg_path):
+    """Check if ffmpeg is available and working."""
+    import subprocess
+    import platform
+    import logging
+    
+    logger = logging.getLogger('YoutubetoPremiere')
+    
+    if not ffmpeg_path:
+        logger.error("FFmpeg path is not set")
+        return False
+    
+    try:
+        # Run ffmpeg -version
+        result = subprocess.run([ffmpeg_path, "-version"], 
+                              capture_output=True, text=True, check=False)
+        
+        if result.returncode == 0 and "ffmpeg version" in result.stdout:
+            logger.info(f"FFmpeg found and working: {ffmpeg_path}")
+            return True
+        else:
+            logger.error(f"FFmpeg check failed. Return code: {result.returncode}")
+            logger.error(f"Error output: {result.stderr}")
+            return False
+    except Exception as e:
+        logger.error(f"Error checking FFmpeg: {str(e)}")
+        return False
+
+def get_temp_dir():
+    """Get the temporary directory for files."""
+    import os
+    import tempfile
+    
+    # First try to use a subdirectory in the same directory as the script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    temp_dir = os.path.join(script_dir, "temp")
+    
+    # If that's not writable, use system temp directory
+    if not os.access(script_dir, os.W_OK):
+        system_temp = tempfile.gettempdir()
+        temp_dir = os.path.join(system_temp, "YoutubetoPremiere")
+    
+    # Create the directory if it doesn't exist
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    return temp_dir
+
+def clear_temp_files(temp_dir=None, max_age_hours=24):
+    """Clear temporary files older than the specified age."""
+    import os
+    import time
+    import logging
+    
+    logger = logging.getLogger('YoutubetoPremiere')
+    
+    if temp_dir is None:
+        temp_dir = get_temp_dir()
+    
+    if not os.path.exists(temp_dir):
+        return
+    
+    try:
+        current_time = time.time()
+        max_age_seconds = max_age_hours * 3600
+        
+        count = 0
+        for filename in os.listdir(temp_dir):
+            file_path = os.path.join(temp_dir, filename)
+            
+            # Only remove files, not directories
+            if os.path.isfile(file_path):
+                # Check file age
+                file_age = current_time - os.path.getmtime(file_path)
+                if file_age > max_age_seconds:
+                    try:
+                        os.remove(file_path)
+                        count += 1
+                    except OSError:
+                        # Skip files that can't be removed
+                        pass
+        
+        if count > 0:
+            logger.info(f"Cleared {count} temporary files from {temp_dir}")
+    except Exception as e:
+        logger.error(f"Error clearing temporary files: {str(e)}")

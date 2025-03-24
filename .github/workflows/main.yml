@@ -7,11 +7,11 @@ on:
   workflow_dispatch:
     inputs:
       package_only:
-        description: 'Only run the packaging step (uses latest successful build artifacts)'
+        description: 'Uniquement générer les packages (utilise les derniers artefacts)'
         type: boolean
         default: false
       version:
-        description: 'Version to use for the release (e.g. 3.0.5)'
+        description: 'Version à utiliser pour la release (ex: 3.0.5)'
         required: false
         default: ''
 
@@ -20,69 +20,46 @@ permissions:
   actions: read
 
 jobs:
-  check-changes:
+  check-version:
     runs-on: ubuntu-latest
     outputs:
-      app_changed: ${{ steps.filter.outputs.app_changed }}
-      tag_version: ${{ steps.get_version.outputs.version }}
+      version: ${{ steps.get_version.outputs.version }}
+      should_build: ${{ steps.check_build.outputs.should_build }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
       
-      - name: Check if package_only is enabled
-        id: check_package_only
-        run: |
-          if [[ "${{ github.event.inputs.package_only }}" == "true" ]]; then
-            echo "package_only=true" >> $GITHUB_OUTPUT
-            if [[ -n "${{ github.event.inputs.version }}" ]]; then
-              echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-            else
-              # Default to the latest tag if no version is specified
-              latest_tag=$(git describe --tags --abbrev=0)
-              echo "version=${latest_tag#v}" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "package_only=false" >> $GITHUB_OUTPUT
-          fi
-        shell: bash
-      
-      - name: Check for app changes
-        id: filter
-        run: |
-          if [[ "${{ steps.check_package_only.outputs.package_only }}" == "true" ]]; then
-            echo "Skipping change detection as package_only is enabled"
-            echo "app_changed=true" >> $GITHUB_OUTPUT
-          else
-            # Normal change detection
-            if [[ "${{ github.event_name }}" == "push" && "${{ startsWith(github.ref, 'refs/tags/v') }}" == "true" ]]; then
-              echo "app_changed=true" >> $GITHUB_OUTPUT
-            else
-              echo "No app changes detected or not a tagged push event"
-              echo "app_changed=false" >> $GITHUB_OUTPUT
-            fi
-          fi
-        shell: bash
-
-      - name: Extract version from tag or input
+      - name: Extract version
         id: get_version
         run: |
-          if [[ "${{ steps.check_package_only.outputs.package_only }}" == "true" ]]; then
-            echo "version=${{ steps.check_package_only.outputs.version }}" >> $GITHUB_OUTPUT
+          if [[ "${{ github.event.inputs.package_only }}" == "true" && -n "${{ github.event.inputs.version }}" ]]; then
+            echo "Version spécifiée manuellement: ${{ github.event.inputs.version }}"
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event_name }}" == "push" && "${{ startsWith(github.ref, 'refs/tags/v') }}" == "true" ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+            echo "Version extraite du tag: $VERSION"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
           else
-            if [[ "${{ github.event_name }}" == "push" && "${{ startsWith(github.ref, 'refs/tags/v') }}" == "true" ]]; then
-              version=${GITHUB_REF#refs/tags/v}
-              echo "version=$version" >> $GITHUB_OUTPUT
-            else
-              echo "version=0.0.0" >> $GITHUB_OUTPUT
-            fi
+            echo "Aucune version spécifiée, utilisation de la valeur par défaut"
+            echo "version=0.0.0" >> $GITHUB_OUTPUT
           fi
-        shell: bash
+      
+      - name: Check if build is needed
+        id: check_build
+        run: |
+          if [[ "${{ github.event.inputs.package_only }}" == "true" ]]; then
+            echo "Génération des packages uniquement (skip build)"
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          else
+            echo "Build complet requis"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          fi
 
   build-ffmpeg:
-    needs: check-changes
-    if: ${{ needs.check-changes.outputs.app_changed == 'true' && github.event.inputs.package_only != 'true' }}
+    needs: check-version
+    if: ${{ needs.check-version.outputs.should_build == 'true' }}
     strategy:
       matrix:
         os: [windows-latest, macos-13]
@@ -92,71 +69,24 @@ jobs:
       windows_ffmpeg_path: ${{ steps.output_paths.outputs.win_ffmpeg_path }}
       macos_ffmpeg_path: ${{ steps.output_paths.outputs.mac_ffmpeg_path }}
     steps:
-      - name: Check FFmpeg cache
-        id: check_artifacts
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Install FFmpeg (Windows)
+        if: matrix.os == 'windows-latest'
         run: |
-          # First check if artifacts exist from previous successful runs
-          ARTIFACT_EXISTS=false
-
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            ARTIFACT_NAME="ffmpeg-windows-latest"
-          else
-            ARTIFACT_NAME="ffmpeg-macos-13"
-          fi
-
-          echo "Checking for artifact: $ARTIFACT_NAME"
-          
-          # Try to download the artifact using GitHub API
-          ARTIFACTS_RESPONSE=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts?name=$ARTIFACT_NAME")
-          
-          # Check if artifacts exist and are not expired
-          ARTIFACT_COUNT=$(echo $ARTIFACTS_RESPONSE | jq '.total_count')
-          
-          if [[ "$ARTIFACT_COUNT" -gt 0 ]]; then
-            echo "Found $ARTIFACT_COUNT existing artifact(s)"
-            ARTIFACT_EXISTS=true
-          else
-            echo "No existing artifacts found"
-          fi
-          
-          echo "artifact_exists=$ARTIFACT_EXISTS" >> $GITHUB_OUTPUT
+          choco install ffmpeg -y
+          cp "C:/ProgramData/chocolatey/bin/ffmpeg.exe" ./ffmpeg.exe
         shell: bash
       
-      - name: Download existing artifact
-        if: steps.check_artifacts.outputs.artifact_exists == 'true'
-        uses: dawidd6/action-download-artifact@v2
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          workflow: main.yml
-          workflow_conclusion: success
-          name: ${{ matrix.os == 'windows-latest' && 'ffmpeg-windows-latest' || 'ffmpeg-macos-13' }}
-          path: existing-artifact
-          check_artifacts: true
-          if_no_artifact_found: warn
-      
-      - name: Verify downloaded artifact
-        if: steps.check_artifacts.outputs.artifact_exists == 'true'
-        id: verify_artifact
+      - name: Install FFmpeg (macOS)
+        if: matrix.os == 'macos-13'
         run: |
-          ARTIFACT_VALID=false
-          
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            if [ -f "existing-artifact/ffmpeg.exe" ]; then
-              echo "Found valid Windows FFmpeg in artifact"
-              ARTIFACT_VALID=true
-            fi
-          else
-            if [ -f "existing-artifact/ffmpeg" ]; then
-              echo "Found valid macOS FFmpeg in artifact"
-              ARTIFACT_VALID=true
-            fi
-          fi
-          
-          echo "artifact_valid=$ARTIFACT_VALID" >> $GITHUB_OUTPUT
+          brew install ffmpeg
+          cp "$(which ffmpeg)" ./ffmpeg
         shell: bash
       
-      - name: Output paths
+      - name: Set output paths
         id: output_paths
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
@@ -166,56 +96,7 @@ jobs:
           fi
         shell: bash
       
-      # Only run the rest of the steps if artifacts don't exist or are invalid
-      - name: Checkout repository
-        if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
-        uses: actions/checkout@v4
-      
-      - name: Install FFmpeg through package manager
-        if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
-        id: package_install
-        run: |
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            choco install ffmpeg -y
-            cp "C:/ProgramData/chocolatey/bin/ffmpeg.exe" ./ffmpeg.exe
-          else
-            brew install ffmpeg
-            cp "$(which ffmpeg)" ./ffmpeg
-          fi
-          echo "FFmpeg installed successfully"
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            ls -la ./ffmpeg.exe || echo "Windows FFmpeg not found"
-          else
-            ls -la ./ffmpeg || echo "macOS FFmpeg not found"
-          fi
-        shell: bash
-      
       - name: Upload FFmpeg
-        if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ffmpeg-${{ matrix.os }}
-          path: ${{ matrix.os == 'windows-latest' && 'ffmpeg.exe' || 'ffmpeg' }}
-          retention-days: 90
-      
-      # Use existing artifact if it exists and is valid
-      - name: Prepare existing artifact for upload
-        if: steps.check_artifacts.outputs.artifact_exists == 'true' && steps.verify_artifact.outputs.artifact_valid == 'true'
-        run: |
-          mkdir -p .
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            cp existing-artifact/ffmpeg.exe ./
-            echo "Reusing existing Windows FFmpeg"
-          else
-            cp existing-artifact/ffmpeg ./
-            echo "Reusing existing macOS FFmpeg"
-          fi
-          echo "Content of current directory:"
-          ls -la .
-        shell: bash
-      
-      - name: Re-upload existing artifact
-        if: steps.check_artifacts.outputs.artifact_exists == 'true' && steps.verify_artifact.outputs.artifact_valid == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ffmpeg-${{ matrix.os }}
@@ -223,8 +104,8 @@ jobs:
           retention-days: 90
 
   build-executables:
-    needs: check-changes
-    if: ${{ needs.check-changes.outputs.app_changed == 'true' && github.event.inputs.package_only != 'true' }}
+    needs: check-version
+    if: ${{ needs.check-version.outputs.should_build == 'true' }}
     strategy:
       matrix:
         os: [windows-latest, macos-13]
@@ -233,552 +114,355 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
-      - name: Check for existing artifacts
-        id: check_artifacts
-        run: |
-          # First check if artifacts exist from previous successful runs
-          ARTIFACT_EXISTS=false
-
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            ARTIFACT_NAME="executable-windows-latest"
-          else
-            ARTIFACT_NAME="executable-macos-13"
-          fi
-
-          echo "Checking for artifact: $ARTIFACT_NAME"
-          
-          # For macOS, always rebuild to apply signature
-          if [[ "${{ matrix.os }}" == "macos-13" ]]; then
-            echo "Forces rebuilding macOS executable to apply proper signing"
-            echo "artifact_exists=false" >> $GITHUB_OUTPUT
-          else
-            # Try to download the artifact using GitHub API
-            ARTIFACTS_RESPONSE=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${{ github.repository }}/actions/artifacts?name=$ARTIFACT_NAME")
-            
-            # Check if artifacts exist and are not expired
-            ARTIFACT_COUNT=$(echo $ARTIFACTS_RESPONSE | jq '.total_count')
-            
-            if [[ "$ARTIFACT_COUNT" -gt 0 ]]; then
-              echo "Found $ARTIFACT_COUNT existing artifact(s)"
-              ARTIFACT_EXISTS=true
-            else
-              echo "No existing artifacts found"
-            fi
-            
-            echo "artifact_exists=$ARTIFACT_EXISTS" >> $GITHUB_OUTPUT
-          fi
-        shell: bash
       
-      - name: Download existing artifact
-        if: steps.check_artifacts.outputs.artifact_exists == 'true'
-        uses: dawidd6/action-download-artifact@v2
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          workflow: main.yml
-          workflow_conclusion: success
-          name: ${{ matrix.os == 'windows-latest' && 'executable-windows-latest' || 'executable-macos-13' }}
-          path: existing-artifact
-          check_artifacts: true
-          if_no_artifact_found: warn
-
-      - name: Verify downloaded artifact
-        if: steps.check_artifacts.outputs.artifact_exists == 'true'
-        id: verify_artifact
-        run: |
-          ARTIFACT_VALID=false
-          
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            if [ -f "existing-artifact/YoutubetoPremiere.exe" ]; then
-              echo "Found valid Windows executable in artifact"
-              ARTIFACT_VALID=true
-            fi
-          else
-            if [ -f "existing-artifact/YoutubetoPremiere" ]; then
-              echo "Found valid macOS executable in artifact"
-              ARTIFACT_VALID=true
-            fi
-          fi
-          
-          echo "artifact_valid=$ARTIFACT_VALID" >> $GITHUB_OUTPUT
-        shell: bash
-      
-      # Only run the rest of the steps if artifacts don't exist or are invalid
       - name: Setup Python
-        if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.9'
           cache: ${{ runner.os != 'Windows' && 'pip' || '' }}
       
       - name: Install Python dependencies
-        if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller python-socketio requests pillow
+          pip install pyinstaller python-socketio requests pillow python-engineio
       
-      - name: Create Windows pip cache directory
-        if: ${{ runner.os == 'Windows' && (steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true') }}
+      - name: Build Windows executable
+        if: matrix.os == 'windows-latest'
         run: |
-          mkdir -p "$env:LOCALAPPDATA\pip\cache" -ErrorAction SilentlyContinue
-        shell: pwsh
-      
-      - name: Check Platform
-        if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
-        id: platform
-        run: |
-          echo "Building for ${{ matrix.os }}"
-          if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            echo "is_windows=true" >> $GITHUB_OUTPUT
-          else
-            echo "is_windows=false" >> $GITHUB_OUTPUT
-            
-            # Check if Apple signing certificates are available
-            if [ -z "${{ secrets.SIGNING_CERTIFICATE }}" ] || [ -z "${{ secrets.APPLE_ID }}" ] || [ -z "${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}" ] || [ -z "${{ secrets.APPLE_TEAM_ID }}" ]; then
-              echo "::warning::Missing Apple signing credentials! The macOS executable will not be properly signed and may be blocked by Gatekeeper on macOS."
-              echo "::warning::Please configure SIGNING_CERTIFICATE, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID secrets."
-              echo "::warning::Users on macOS will need to manually bypass Gatekeeper to run the application."
-              echo "has_signing_creds=false" >> $GITHUB_OUTPUT
-            else
-              echo "has_signing_creds=true" >> $GITHUB_OUTPUT
-              echo "Apple signing credentials detected - the macOS executable will be properly signed."
-            fi
-          fi
-        shell: bash
-      
-      - name: Clean Python caches on Windows
-        if: ${{ steps.platform.outputs.is_windows == 'true' && (steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true') }}
-        run: |
-          Remove-Item -Path $env:LOCALAPPDATA\pip\Cache -Recurse -Force -ErrorAction SilentlyContinue
-          Write-Host "Cleared pip cache"
-        shell: pwsh
+          # Create informative version resource
+          $VERSION = "${{ needs.check-version.outputs.version }}"
+          echo "Version=$VERSION" > version.txt
+          echo "CompanyName=YoutubetoPremiere" >> version.txt
+          echo "FileDescription=YouTube to Premiere Pro Extension" >> version.txt
+          echo "LegalCopyright=(c) 2024 YoutubetoPremiere" >> version.txt
+          echo "OriginalFilename=YoutubetoPremiere.exe" >> version.txt
+          echo "ProductName=YouTube to Premiere Pro" >> version.txt
+          echo "ProductVersion=$VERSION" >> version.txt
 
-      - name: Build executable with PyInstaller
-        if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
+          # Build executable with PyInstaller
+          pyinstaller --name YoutubetoPremiere --onefile `
+            --add-data "app/sounds;sounds" `
+            --hidden-import engineio.async_drivers.threading `
+            --hidden-import socketio.async_drivers.threading `
+            --hidden-import pkg_resources.py2_warn `
+            --version-file version.txt `
+            app/YoutubetoPremiere.py
+          
+          # Create installer with NSIS
+          mkdir -p dist/installer
+          cp app/*.py dist/YoutubetoPremiere/
+          cp -r app/sounds dist/YoutubetoPremiere/
+        shell: pwsh
+      
+      - name: Build macOS executable
+        if: matrix.os == 'macos-13'
         run: |
-          echo "Working directory: $(pwd)"
-          echo "Content of app directory:"
-          ls -la app/
+          # Create bundle structure
+          mkdir -p dist/YoutubetoPremiere.app/Contents/MacOS
+          mkdir -p dist/YoutubetoPremiere.app/Contents/Resources/Python
+          mkdir -p dist/YoutubetoPremiere.app/Contents/Resources/sounds
           
-          # Install additional dependencies for networking
-          pip install python-engineio python-socketio
+          # Create Info.plist
+          cat > dist/YoutubetoPremiere.app/Contents/Info.plist << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleDisplayName</key>
+              <string>YoutubetoPremiere</string>
+              <key>CFBundleExecutable</key>
+              <string>YoutubetoPremiere</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.mickael.YoutubetoPremiere</string>
+              <key>CFBundleName</key>
+              <string>YoutubetoPremiere</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>${{ needs.check-version.outputs.version }}</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
           
-          # Check for sounds directory
-          if [ ! -d "app/sounds" ]; then
-            echo "Warning: app/sounds directory not found, creating it"
-            mkdir -p app/sounds
+          # Create executable script
+          cat > dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere << EOF
+          #!/bin/bash
+          set -e
+          
+          # Get the directory where this script is located
+          DIR="\$( cd "\$( dirname "\${BASH_SOURCE[0]}" )" && pwd )"
+          PARENT_DIR="\$( dirname "\$DIR" )"
+          RESOURCES_DIR="\$PARENT_DIR/Resources"
+          PYTHON_DIR="\$RESOURCES_DIR/Python"
+          
+          # Find Python 3 on the system
+          PYTHON_BIN=\$(which python3)
+          if [ ! -x "\$PYTHON_BIN" ]; then
+              PYTHON_BIN=\$(which python)
           fi
           
-          # Directly use command-line parameters instead of spec file
-          if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            # Windows build with all necessary imports
-            python -m PyInstaller --name YoutubetoPremiere --onefile \
-              --add-data "app/sounds:sounds" \
-              --hidden-import engineio.async_drivers.threading \
-              --hidden-import socketio.async_drivers.threading \
-              --hidden-import pkg_resources.py2_warn \
-              app/YoutubetoPremiere.py
-          else
-            # For macOS, create a bootstrap script approach instead of relying on PyInstaller
-            echo "Creating a simplified macOS executable approach..."
-            
-            # First, create the Python environment directory
-            mkdir -p dist/YoutubetoPremiere.app/Contents/MacOS
-            mkdir -p dist/YoutubetoPremiere.app/Contents/Resources/Python
-            mkdir -p dist/YoutubetoPremiere.app/Contents/Resources/sounds
-            
-            # Copy resources
-            cp -r app/sounds/* dist/YoutubetoPremiere.app/Contents/Resources/sounds/ || true
-            
-            # Create Info.plist
-            echo '<?xml version="1.0" encoding="UTF-8"?>' > dist/YoutubetoPremiere.app/Contents/Info.plist
-            echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' >> dist/YoutubetoPremiere.app/Contents/Info.plist
-            echo '<plist version="1.0">' >> dist/YoutubetoPremiere.app/Contents/Info.plist
-            echo '<dict>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
-            echo '    <key>CFBundleDisplayName</key>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
-            echo '    <string>YoutubetoPremiere</string>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
-            echo '    <key>CFBundleExecutable</key>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
-            echo '    <string>YoutubetoPremiere</string>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
-            echo '    <key>CFBundleIdentifier</key>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
-            echo '    <string>com.mickael.YoutubetoPremiere</string>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
-            echo '    <key>CFBundleName</key>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
-            echo '    <string>YoutubetoPremiere</string>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
-            echo '    <key>CFBundlePackageType</key>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
-            echo '    <string>APPL</string>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
-            echo '    <key>CFBundleShortVersionString</key>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
-            echo '    <string>1.0</string>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
-            echo '    <key>NSHighResolutionCapable</key>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
-            echo '    <true/>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
-            echo '</dict>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
-            echo '</plist>' >> dist/YoutubetoPremiere.app/Contents/Info.plist
-            
-            # Create the main Python script
-            echo '# Main Python entry point' > dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo 'import sys' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo 'import os' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo 'import subprocess' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo '' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo '# Get the directory containing this script' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo 'script_dir = os.path.dirname(os.path.abspath(__file__))' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo 'parent_dir = os.path.dirname(script_dir)  # Resources directory' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo 'app_dir = os.path.dirname(parent_dir)    # Contents directory' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo '' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo '# Add the current directory to the path to find modules' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo 'sys.path.insert(0, script_dir)' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo '' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo '# Try to locate app files' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo 'try:' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo '    # Copy all Python files from the app to this location' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo '    import importlib.util' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo '    import socketio' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo '    import engineio' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo '    import requests' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo '    print("Successfully imported required modules")' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo '    ' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo '    # Run the main app module' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo '    from app.YoutubetoPremiere import main' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo '    main()' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo 'except Exception as e:' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo '    print(f"Error starting application: {e}")' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo '    import traceback' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo '    traceback.print_exc()' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            echo '    sys.exit(1)' >> dist/YoutubetoPremiere.app/Contents/Resources/Python/YoutubetoPremiere.py
-            
-            # Create the bootstrap shell script
-            echo '#!/bin/bash' > dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo 'set -e' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo '' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo '# Get the directory where this script is located' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo 'DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo 'PARENT_DIR="$( dirname "$DIR" )"' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo 'RESOURCES_DIR="$PARENT_DIR/Resources"' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo 'PYTHON_DIR="$RESOURCES_DIR/Python"' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo '' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo '# Find Python 3 on the system' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo 'PYTHON_BIN=$(which python3)' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo 'if [ ! -x "$PYTHON_BIN" ]; then' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo '    PYTHON_BIN=$(which python)' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo 'fi' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo '' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo '# Export environment variables' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo 'export PYTHONPATH="$PYTHON_DIR:$PYTHONPATH"' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo 'export PATH="$DIR:$PATH"' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo '' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo '# Run Python script' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo 'cd "$RESOURCES_DIR"' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            echo '"$PYTHON_BIN" "$PYTHON_DIR/YoutubetoPremiere.py" "$@"' >> dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            
-            # Copy app files to Resources/Python
-            cp -r app/* dist/YoutubetoPremiere.app/Contents/Resources/Python/
-            
-            # Make script executable
-            chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-            
-            # Create a single binary executable for use with the extension
-            echo '#!/bin/bash' > dist/YoutubetoPremiere
-            echo 'set -e' >> dist/YoutubetoPremiere
-            echo '' >> dist/YoutubetoPremiere
-            echo '# Get the absolute path of this script' >> dist/YoutubetoPremiere
-            echo 'SCRIPT_PATH="$( cd "$(dirname "$0")" && pwd )/$(basename "$0")"' >> dist/YoutubetoPremiere
-            echo 'SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"' >> dist/YoutubetoPremiere
-            echo '' >> dist/YoutubetoPremiere
-            echo '# Find Python 3 on the system' >> dist/YoutubetoPremiere
-            echo 'PYTHON_BIN=$(which python3)' >> dist/YoutubetoPremiere
-            echo 'if [ ! -x "$PYTHON_BIN" ]; then' >> dist/YoutubetoPremiere
-            echo '    PYTHON_BIN=$(which python)' >> dist/YoutubetoPremiere
-            echo 'fi' >> dist/YoutubetoPremiere
-            echo '' >> dist/YoutubetoPremiere
-            echo 'if [ ! -x "$PYTHON_BIN" ]; then' >> dist/YoutubetoPremiere
-            echo '    echo "Error: Python 3 is required but was not found on your system."' >> dist/YoutubetoPremiere
-            echo '    exit 1' >> dist/YoutubetoPremiere
-            echo 'fi' >> dist/YoutubetoPremiere
-            echo '' >> dist/YoutubetoPremiere
-            echo '# Try to find app.py in the same directory or parent/exec' >> dist/YoutubetoPremiere
-            echo 'APP_FILE="$SCRIPT_DIR/YoutubetoPremiere.py"' >> dist/YoutubetoPremiere
-            echo 'if [ ! -f "$APP_FILE" ]; then' >> dist/YoutubetoPremiere
-            echo '    APP_FILE="$SCRIPT_DIR/app/YoutubetoPremiere.py"' >> dist/YoutubetoPremiere
-            echo 'fi' >> dist/YoutubetoPremiere
-            echo 'if [ ! -f "$APP_FILE" ]; then' >> dist/YoutubetoPremiere
-            echo '    # Check if we'\''re in the exec folder' >> dist/YoutubetoPremiere
-            echo '    APP_FILE="$(dirname "$SCRIPT_DIR")/app/YoutubetoPremiere.py"' >> dist/YoutubetoPremiere
-            echo 'fi' >> dist/YoutubetoPremiere
-            echo '' >> dist/YoutubetoPremiere
-            echo '# If still not found, check a couple more common locations' >> dist/YoutubetoPremiere
-            echo 'if [ ! -f "$APP_FILE" ]; then' >> dist/YoutubetoPremiere
-            echo '    if [ -f "$SCRIPT_DIR/exec/YoutubetoPremiere.py" ]; then' >> dist/YoutubetoPremiere
-            echo '        APP_FILE="$SCRIPT_DIR/exec/YoutubetoPremiere.py"' >> dist/YoutubetoPremiere
-            echo '    elif [ -f "$SCRIPT_DIR/../app/YoutubetoPremiere.py" ]; then' >> dist/YoutubetoPremiere
-            echo '        APP_FILE="$SCRIPT_DIR/../app/YoutubetoPremiere.py"' >> dist/YoutubetoPremiere
-            echo '    fi' >> dist/YoutubetoPremiere
-            echo 'fi' >> dist/YoutubetoPremiere
-            echo '' >> dist/YoutubetoPremiere
-            echo '# Copy app.py to the current directory as a fallback' >> dist/YoutubetoPremiere
-            echo 'if [ ! -f "$APP_FILE" ]; then' >> dist/YoutubetoPremiere
-            echo '    if [ -f "$EXTENSION_ROOT/app/YoutubetoPremiere.py" ]; then' >> dist/YoutubetoPremiere
-            echo '        echo "Found YoutubetoPremiere.py in $EXTENSION_ROOT/app/"' >> dist/YoutubetoPremiere
-            echo '        APP_FILE="$EXTENSION_ROOT/app/YoutubetoPremiere.py"' >> dist/YoutubetoPremiere
-            echo '    else' >> dist/YoutubetoPremiere
-            echo '        echo "Error: Could not locate YoutubetoPremiere.py - using current directory"' >> dist/YoutubetoPremiere
-            echo '        APP_FILE="$SCRIPT_DIR/YoutubetoPremiere.py"' >> dist/YoutubetoPremiere
-            echo '        # Copy the whole app directory here' >> dist/YoutubetoPremiere
-            echo '        cp -r $EXTENSION_ROOT/app/* $SCRIPT_DIR/ 2>/dev/null || true' >> dist/YoutubetoPremiere
-            echo '    fi' >> dist/YoutubetoPremiere
-            echo 'fi' >> dist/YoutubetoPremiere
-            echo '' >> dist/YoutubetoPremiere
-            echo 'echo "Using Python: $PYTHON_BIN"' >> dist/YoutubetoPremiere
-            echo 'echo "Using app file: $APP_FILE"' >> dist/YoutubetoPremiere
-            echo '' >> dist/YoutubetoPremiere
-            echo '# Run Python script with the full path' >> dist/YoutubetoPremiere
-            echo 'exec "$PYTHON_BIN" "$APP_FILE" "$@"' >> dist/YoutubetoPremiere
-            
-            # Make executable
-            chmod +x dist/YoutubetoPremiere
-            
-            # Also create a universal version just in case
-            cp dist/YoutubetoPremiere dist/YoutubetoPremiere-universal
-            
-            echo "Created simplified macOS executables"
+          # Export environment variables
+          export PYTHONPATH="\$PYTHON_DIR:\$PYTHONPATH"
+          export PATH="\$DIR:\$PATH"
+          
+          # Run Python script
+          cd "\$RESOURCES_DIR"
+          "\$PYTHON_BIN" "\$PYTHON_DIR/YoutubetoPremiere.py" "\$@"
+          EOF
+          
+          # Copy Python files and resources
+          cp app/*.py dist/YoutubetoPremiere.app/Contents/Resources/Python/
+          cp -r app/sounds/* dist/YoutubetoPremiere.app/Contents/Resources/sounds/ || true
+          
+          # Make script executable
+          chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+          
+          # Create a single binary executable for CLI use
+          cat > dist/YoutubetoPremiere << EOF
+          #!/bin/bash
+          set -e
+          
+          # Get the absolute path of this script
+          SCRIPT_PATH="\$( cd "\$(dirname "\$0")" && pwd )/\$(basename "\$0")"
+          SCRIPT_DIR="\$(dirname "\$SCRIPT_PATH")"
+          
+          # Find Python 3 on the system
+          PYTHON_BIN=\$(which python3)
+          if [ ! -x "\$PYTHON_BIN" ]; then
+              PYTHON_BIN=\$(which python)
           fi
           
-          echo "PyInstaller/build completed"
-          echo "Content of dist directory:"
-          ls -la dist/
+          if [ ! -x "\$PYTHON_BIN" ]; then
+              echo "Error: Python 3 is required but was not found on your system."
+              exit 1
+          fi
+          
+          APP_FILE="\$SCRIPT_DIR/YoutubetoPremiere.py"
+          if [ ! -f "\$APP_FILE" ]; then
+              APP_FILE="\$SCRIPT_DIR/app/YoutubetoPremiere.py"
+          fi
+          
+          echo "Using Python: \$PYTHON_BIN"
+          echo "Using app file: \$APP_FILE"
+          
+          # Run Python script with the full path
+          exec "\$PYTHON_BIN" "\$APP_FILE" "\$@"
+          EOF
+          
+          chmod +x dist/YoutubetoPremiere
         shell: bash
-        
-      # Add macOS codesigning steps
-      - name: Install create-dmg on macOS
-        if: matrix.os == 'macos-13' && (steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true')
-        run: brew install create-dmg
-        shell: bash
-        
-      - name: Import Apple Developer Certificate on macOS
-        if: matrix.os == 'macos-13' && (steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true')
-        env:
-          CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
-          CERTIFICATE_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-          KEYCHAIN_PASSWORD: keychainpwd
-        run: |
-          # Check if certificate is provided
-          if [[ -z "$CERTIFICATE_BASE64" ]]; then
-            echo "::warning::No certificate provided. Skipping code signing."
-            exit 0
-          fi
-          
-          # Create variables
-          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
-          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-          
-          # Import certificate and key
-          echo -n "$CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
-          
-          # Create a temporary keychain
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          
-          # Import the certificate
-          security import $CERTIFICATE_PATH -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security list-keychain -d user -s $KEYCHAIN_PATH
-          
-          # Allow codesign to access the key
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-        shell: bash
-        
-      - name: Code Sign macOS executable
-        if: matrix.os == 'macos-13' && (steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true')
-        env:
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          # Check if certificate is provided
-          if [[ -z "${{ secrets.SIGNING_CERTIFICATE }}" ]]; then
-            echo "::warning::No certificate provided. Skipping code signing."
-            exit 0
-          fi
-          
-          # Add entitlements.plist
-          echo '<?xml version="1.0" encoding="UTF-8"?>' > entitlements.plist
-          echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' >> entitlements.plist
-          echo '<plist version="1.0">' >> entitlements.plist
-          echo '<dict>' >> entitlements.plist
-          echo '    <key>com.apple.security.cs.allow-jit</key>' >> entitlements.plist
-          echo '    <true/>' >> entitlements.plist
-          echo '    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>' >> entitlements.plist
-          echo '    <true/>' >> entitlements.plist
-          echo '    <key>com.apple.security.cs.allow-dyld-environment-variables</key>' >> entitlements.plist
-          echo '    <true/>' >> entitlements.plist
-          echo '    <key>com.apple.security.network.client</key>' >> entitlements.plist
-          echo '    <true/>' >> entitlements.plist
-          echo '    <key>com.apple.security.files.user-selected.read-write</key>' >> entitlements.plist
-          echo '    <true/>' >> entitlements.plist
-          echo '</dict>' >> entitlements.plist
-          echo '</plist>' >> entitlements.plist
-          
-          # Extract the available signing identities
-          echo "Available signing identities:"
-          security find-identity -v -p codesigning
-          
-          # Find the Developer ID Application identity
-          SIGNATURE_ID=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F '"' '{print $2}')
-          echo "Found signing identity: $SIGNATURE_ID"
-          
-          if [[ -z "$SIGNATURE_ID" ]]; then
-            echo "::warning::No Developer ID Application identity found. Using placeholder."
-            SIGNATURE_ID="-"
-          fi
-          
-          # Ensure executable permissions
-          chmod +x "dist/YoutubetoPremiere"
-          
-          # Sign the executable with the found identity
-          echo "Signing with identity: $SIGNATURE_ID"
-          codesign --force --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/YoutubetoPremiere"
-          
-          # Verify signature
-          codesign -vvv --deep --strict "dist/YoutubetoPremiere" || echo "Code signing verification failed but continuing"
-        shell: bash
-        
-      - name: Notarize macOS executable
-        if: matrix.os == 'macos-13' && (steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true')
+      
+      - name: Sign and Notarize macOS App
+        if: matrix.os == 'macos-13' && env.APPLE_ID != ''
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          SIGNING_CERTIFICATE: ${{ secrets.SIGNING_CERTIFICATE }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          # Check if credentials are provided
-          if [[ -z "$APPLE_ID" || -z "$APPLE_APP_PASSWORD" ]]; then
-            echo "::warning::Apple ID or App Password not provided. Skipping notarization."
-            exit 0
-          fi
+          # Import certificate
+          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
           
-          # Save original executable for backup
-          cp "dist/YoutubetoPremiere" "dist/YoutubetoPremiere.original"
+          echo -n "$SIGNING_CERTIFICATE" | base64 --decode -o $CERTIFICATE_PATH
           
-          # For non-app bundles, we need to create a ZIP for submission
-          echo "Creating zip of the executable for notarization..."
-          cd dist
-          zip -y YoutubetoPremiere.zip YoutubetoPremiere
-          cd ..
+          # Create keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           
-          # Submit for notarization
-          echo "Submitting for notarization..."
-          xcrun notarytool submit dist/YoutubetoPremiere.zip \
-            --apple-id "$APPLE_ID" \
-            --password "$APPLE_APP_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --wait || echo "Notarization submission failed but continuing"
+          # Import certificate
+          security import $CERTIFICATE_PATH -P "$KEYCHAIN_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           
-          # Extract notarized binary and verify
-          echo "Extracting notarized binary..."
-          cd dist
-          mkdir -p notarized
-          unzip -o YoutubetoPremiere.zip -d notarized
+          # Create entitlements.plist
+          cat > entitlements.plist << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>com.apple.security.cs.allow-jit</key>
+              <true/>
+              <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+              <true/>
+              <key>com.apple.security.network.client</key>
+              <true/>
+              <key>com.apple.security.files.user-selected.read-write</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
           
-          if [ -f "notarized/YoutubetoPremiere" ]; then
-            # Give it execute permissions
-            chmod +x notarized/YoutubetoPremiere
+          # Sign the app
+          SIGNATURE_ID=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F '"' '{print $2}')
+          
+          if [[ -n "$SIGNATURE_ID" ]]; then
+            echo "Signing app with identity: $SIGNATURE_ID"
+            codesign --force --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/YoutubetoPremiere.app"
+            codesign --force --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/YoutubetoPremiere"
             
-            # Try stapling multiple times (sometimes it fails on first try)
-            echo "Attempting to staple notarization ticket to binary..."
-            MAX_ATTEMPTS=3
-            STAPLE_SUCCESS=false
+            # Create DMG
+            mkdir -p dist/dmg-contents
+            cp -r dist/YoutubetoPremiere.app dist/dmg-contents/
+            cp scripts/fix-macos-permissions.sh dist/dmg-contents/
             
-            for ((i=1; i<=MAX_ATTEMPTS; i++)); do
-              echo "Stapling attempt $i of $MAX_ATTEMPTS..."
-              if xcrun stapler staple notarized/YoutubetoPremiere; then
-                STAPLE_SUCCESS=true
-                echo "Stapling successful on attempt $i!"
-                break
-              else
-                echo "Stapling failed on attempt $i, waiting before retry..."
-                sleep 2
-              fi
-            done
+            hdiutil create -volname "YoutubetoPremiere-${{ needs.check-version.outputs.version }}" \
+              -srcfolder dist/dmg-contents \
+              -ov -format UDZO \
+              "dist/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.dmg"
             
-            # Check stapled ticket and binary integrity
-            if [ "$STAPLE_SUCCESS" = true ]; then
-              echo "Verifying stapled ticket..."
-              xcrun stapler validate notarized/YoutubetoPremiere || echo "Stapling verification failed, but continuing"
-            else
-              echo "::warning::All stapling attempts failed. The executable is still notarized but may trigger Gatekeeper warnings."
-            fi
+            # Sign DMG
+            codesign --force --sign "$SIGNATURE_ID" "dist/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.dmg"
             
-            # Verify the binary itself
-            echo "Verifying binary integrity..."
-            codesign -vvv --deep --strict notarized/YoutubetoPremiere || echo "Code signing verification failed, but continuing"
+            # Notarize
+            xcrun notarytool submit "dist/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.dmg" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_APP_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait
             
-            # Copy notarized version back to dist folder
-            cp notarized/YoutubetoPremiere YoutubetoPremiere
-            echo "Replaced executable with notarized version"
-            
-            # Create an alternate version with quarantine attribute removed
-            cp notarized/YoutubetoPremiere YoutubetoPremiere-unquarantined
-            xattr -d com.apple.quarantine YoutubetoPremiere-unquarantined 2>/dev/null || true
-            echo "Created unquarantined version as fallback"
+            # Staple
+            xcrun stapler staple "dist/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.dmg"
           else
-            echo "Could not extract notarized executable, using original"
-            cp YoutubetoPremiere.original YoutubetoPremiere
+            echo "No signing identity found, skipping signing and notarization"
           fi
-          
-          echo "Executable is signed and ready for distribution"
-          ls -la YoutubetoPremiere*
-          file YoutubetoPremiere
-          
-          # Create a special archive with both versions
-          echo "Creating archives with both normal and unquarantined executables..."
-          mkdir -p finalized
-          cp YoutubetoPremiere finalized/
-          if [ -f "YoutubetoPremiere-unquarantined" ]; then
-            cp YoutubetoPremiere-unquarantined finalized/
-          fi
-          cd finalized
-          tar -czf YoutubetoPremiere-notarized.tar.gz YoutubetoPremiere*
-          cp YoutubetoPremiere-notarized.tar.gz ../
-          cd ..
-          
-          # Cleanup
-          rm -rf finalized
-          cd ..
         shell: bash
-
-      - name: Upload executable artifact
-        if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
+      
+      - name: Create Windows Installer
+        if: matrix.os == 'windows-latest'
+        run: |
+          # Download NSIS
+          Invoke-WebRequest -Uri "https://nsis.sourceforge.io/mediawiki/images/c/c9/Winget-NSIS-3.09.zip" -OutFile "nsis.zip"
+          Expand-Archive -Path "nsis.zip" -DestinationPath "C:\NSIS"
+          $NsisPath = "C:\NSIS\makensis.exe"
+          
+          # Create installer script
+          $InstallerScript = @"
+          !include "MUI2.nsh"
+          !include "FileFunc.nsh"
+          
+          Name "YouTube to Premiere Pro"
+          OutFile "YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe"
+          InstallDir "\$PROGRAMFILES\YoutubetoPremiere"
+          
+          !define MUI_ICON "app\sounds\icon.ico"
+          !define MUI_UNICON "app\sounds\icon.ico"
+          
+          !insertmacro MUI_PAGE_WELCOME
+          !insertmacro MUI_PAGE_DIRECTORY
+          !insertmacro MUI_PAGE_INSTFILES
+          !insertmacro MUI_PAGE_FINISH
+          
+          !insertmacro MUI_UNPAGE_CONFIRM
+          !insertmacro MUI_UNPAGE_INSTFILES
+          
+          !insertmacro MUI_LANGUAGE "English"
+          
+          Section "Install"
+            SetOutPath "\$INSTDIR"
+            
+            # Application Files
+            File /r "dist\YoutubetoPremiere\*.*"
+            
+            # Add the ZXP to the installer
+            CreateDirectory "\$INSTDIR\zxp"
+            File /oname="\$INSTDIR\zxp\YoutubetoPremiere-${{ needs.check-version.outputs.version }}.zxp" "dist\zxp\YoutubetoPremiere-v${{ needs.check-version.outputs.version }}.zxp"
+            
+            # Create shortcut
+            CreateDirectory "\$SMPROGRAMS\YouTube to Premiere Pro"
+            CreateShortcut "\$SMPROGRAMS\YouTube to Premiere Pro\YouTube to Premiere Pro.lnk" "\$INSTDIR\YoutubetoPremiere.exe"
+            
+            # Create uninstaller
+            WriteUninstaller "\$INSTDIR\uninstall.exe"
+            
+            # Add uninstall information to Add/Remove Programs
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "DisplayName" "YouTube to Premiere Pro"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "UninstallString" '"\$INSTDIR\uninstall.exe"'
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "DisplayIcon" '"\$INSTDIR\YoutubetoPremiere.exe"'
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "Publisher" "YoutubetoPremiere"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "DisplayVersion" "${{ needs.check-version.outputs.version }}"
+            
+            # Get install size
+            \${GetSize} "\$INSTDIR" "/S=0K" \$0 \$1 \$2
+            IntFmt \$0 "0x%08X" \$0
+            WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "EstimatedSize" "\$0"
+          SectionEnd
+          
+          Section "Uninstall"
+            # Remove application files
+            RMDir /r "\$INSTDIR\*.*"
+            
+            # Remove shortcuts
+            Delete "\$SMPROGRAMS\YouTube to Premiere Pro\*.*"
+            RMDir "\$SMPROGRAMS\YouTube to Premiere Pro"
+            
+            # Remove registry entries
+            DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere"
+            
+            # Remove install directory if empty
+            RMDir "\$INSTDIR"
+          SectionEnd
+          "@
+          
+          # Create the installer script file
+          Set-Content -Path "installer.nsi" -Value $InstallerScript
+          
+          # Create output directory
+          New-Item -ItemType Directory -Path "dist\installer" -Force | Out-Null
+          
+          # Run NSIS to create installer
+          if (Test-Path $NsisPath) {
+            & $NsisPath "installer.nsi"
+            Move-Item -Path "YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe" -Destination "dist\installer\" -Force
+            Write-Output "Installer created: dist\installer\YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe"
+          } else {
+            Write-Error "NSIS not found at $NsisPath. Installer creation failed."
+            exit 1
+          }
+        shell: pwsh
+      
+      - name: Upload Windows executable
+        if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: executable-${{ matrix.os }}
-          path: |
-            dist/YoutubetoPremiere*
-            dist/*.zip
+          name: executable-windows-latest
+          path: dist/YoutubetoPremiere.exe
           retention-days: 90
       
-      # Use existing artifact if it exists and is valid
-      - name: Prepare existing artifact for upload
-        if: steps.check_artifacts.outputs.artifact_exists == 'true' && steps.verify_artifact.outputs.artifact_valid == 'true'
-        run: |
-          mkdir -p dist
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            cp existing-artifact/YoutubetoPremiere.exe dist/
-            echo "Reusing existing Windows executable"
-          else
-            cp existing-artifact/YoutubetoPremiere dist/
-            echo "Reusing existing macOS executable"
-          fi
-          echo "Content of dist directory:"
-          ls -la dist/
-        shell: bash
-
-      - name: Re-upload existing artifact
-        if: steps.check_artifacts.outputs.artifact_exists == 'true' && steps.verify_artifact.outputs.artifact_valid == 'true'
+      - name: Upload macOS executable
+        if: matrix.os == 'macos-13'
         uses: actions/upload-artifact@v4
         with:
-          name: executable-${{ matrix.os }}
-          path: dist/YoutubetoPremiere*
+          name: executable-macos-13
+          path: |
+            dist/YoutubetoPremiere
+            dist/YoutubetoPremiere.app/**/*
+          retention-days: 90
+      
+      - name: Upload Windows installer
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-windows
+          path: dist/installer/YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe
+          retention-days: 90
+      
+      - name: Upload macOS installer
+        if: matrix.os == 'macos-13' && env.APPLE_ID != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-macos
+          path: dist/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.dmg
           retention-days: 90
 
-  package-zxp:
-    needs: [check-changes, build-ffmpeg, build-executables]
-    if: ${{ needs.check-changes.outputs.app_changed == 'true' }}
+  build-zxp:
+    needs: [check-version, build-executables, build-ffmpeg]
     runs-on: windows-latest
+    if: always()
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -788,713 +472,114 @@ jobs:
         with:
           node-version: '18'
           cache: 'yarn'
-
+      
       - name: Install dependencies
         run: |
           yarn install --frozen-lockfile
           yarn global add cross-env
-
+      
       - name: Add global yarn bin to PATH
         run: echo "$(yarn global bin)" >> $GITHUB_PATH
         shell: bash
-
-      - name: Create directories
+      
+      - name: Download Executables
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      
+      - name: Prepare files for ZXP
         run: |
           mkdir -p dist/cep/exec/sounds
-          mkdir -p backup/exec
-        shell: bash
-
-      - name: Download artifacts from current workflow
-        if: ${{ github.event.inputs.package_only != 'true' }}
-        uses: actions/download-artifact@v4
-        
-      - name: Download artifacts from previous workflow
-        if: ${{ github.event.inputs.package_only == 'true' }}
-        uses: dawidd6/action-download-artifact@v2
-        with:
-          github_token: ${{secrets.GITHUB_TOKEN}}
-          workflow: main.yml
-          workflow_conclusion: success
-          name_is_regexp: true
-          name: .*
-          path: artifacts
-          check_artifacts: true
-          if_no_artifact_found: warn
-      
-      - name: List downloaded artifacts
-        run: |
-          if [[ "${{ github.event.inputs.package_only }}" == "true" ]]; then
-            find artifacts -type f | sort
-          else
-            ls -la
-          fi
-        shell: bash
-
-      - name: Create directories for CSX structure
-        if: matrix.os == 'macos-13' && (steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true')
-        run: |
-          mkdir -p dist/cep/js
-          mkdir -p dist/cep/jsx
-          mkdir -p dist/cep/assets
-          mkdir -p dist/cep/CSXS
-          mkdir -p dist/cep/exec
-          mkdir -p dist/cep/main
-          mkdir -p dist/cep/settings
-        shell: bash
-
-      - name: Create unblock.sh script for macOS users
-        if: matrix.os == 'macos-13' && (steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true')
-        run: |
-          # This step is no longer needed as we're using a properly notarized executable
-          echo "Skipping creation of unblock.sh - using notarized executable instead"
-        shell: bash
-
-      - name: Optimize ZXP packaging process
-        shell: bash
-        env:
-          SKIP_PYTHON_BUILD: true
-          NO_PYTHON: true
-          ZXP_PACKAGE: true
-          SKIP_FILE_COPY: true
-        run: |
-          # Function to copy artifacts with error checking
-          copy_artifact() {
-            local source=$1
-            local dest=$2
-            local description=$3
-            
-            if [ -f "$source" ]; then
-              # Use cp -p to preserve permissions
-              cp -p "$source" "$dest"
-              
-              # For macOS executables, ensure they have execute permissions
-              if [[ "$source" == *"macos"* ]] || [[ "$source" != *".exe" ]]; then
-                chmod +x "$dest/$(basename "$source")"
-                # Verify the permissions were set
-                if [ -x "$dest/$(basename "$source")" ]; then
-                  echo "✓ Set execute permissions for $description"
-                else
-                  echo "✗ WARNING: Failed to set execute permissions for $description"
-                fi
-                
-                # For macOS executables, also try to remove quarantine attribute
-                if [[ "$source" == *"macos"* ]]; then
-                  echo "Attempting to remove quarantine attribute for $description"
-                  xattr -d com.apple.quarantine "$dest/$(basename "$source")" 2>/dev/null || true
-                fi
-              fi
-              
-              echo "✓ Copied $description"
-              
-              # Verify the file exists and has the correct size
-              if [ -f "$dest/$(basename "$source")" ]; then
-                local source_size=$(stat -f%z "$source" 2>/dev/null || stat -c%s "$source")
-                local dest_size=$(stat -f%z "$dest/$(basename "$source")" 2>/dev/null || stat -c%s "$dest/$(basename "$source")")
-                if [ "$source_size" = "$dest_size" ]; then
-                  echo "✓ Verified $description (size: $source_size bytes)"
-                else
-                  echo "✗ WARNING: Size mismatch for $description"
-                  echo "  Source: $source_size bytes"
-                  echo "  Destination: $dest_size bytes"
-                fi
-              else
-                echo "✗ ERROR: Failed to copy $description"
-                return 1
-              fi
-            else
-              echo "✗ ERROR: $description not found at: $source"
-              return 1
-            fi
+          
+          # Copy Windows executable
+          cp artifacts/executable-windows-latest/YoutubetoPremiere.exe dist/cep/exec/
+          
+          # Copy macOS executable 
+          cp artifacts/executable-macos-13/YoutubetoPremiere dist/cep/exec/
+          
+          # Copy FFmpeg executables
+          cp artifacts/ffmpeg-windows-latest/ffmpeg.exe dist/cep/exec/
+          cp artifacts/ffmpeg-macos-13/ffmpeg dist/cep/exec/
+          
+          # Copy Python files
+          cp app/*.py dist/cep/exec/
+          
+          # Copy sounds if they exist
+          if (Test-Path app/sounds) {
+            cp -r app/sounds/* dist/cep/exec/sounds/
           }
           
-          echo "===== PREPARING ZXP PACKAGE ====="
-          
-          # Create backup of executables
-          mkdir -p backup/exec
-          mkdir -p dist
-          
-          # Copy all Python files with preserved permissions
-          echo "Copying Python files..."
-          cp -p app/*.py dist/cep/exec/ 2>/dev/null || echo "No Python files found"
-          cp -rp app/sounds/* dist/cep/exec/sounds/ 2>/dev/null || echo "No sound files found"
-          
-          # Copy scripts and resources
-          echo "Copying helper scripts..."
-          
-          # Copy artifacts efficiently
-          echo "Copying executables and FFmpeg..."
-          
-          # Windows executable
-          copy_artifact "executable-windows-latest/YoutubetoPremiere.exe" "dist/cep/exec/" "Windows executable to CEP"
-          copy_artifact "executable-windows-latest/YoutubetoPremiere.exe" "backup/exec/" "Windows executable to backup"
-          copy_artifact "executable-windows-latest/YoutubetoPremiere.exe" "dist/" "Windows executable to dist"
-          
-          # Windows FFmpeg
-          copy_artifact "ffmpeg-windows-latest/ffmpeg.exe" "dist/cep/exec/" "Windows FFmpeg to CEP"
-          copy_artifact "ffmpeg-windows-latest/ffmpeg.exe" "backup/exec/" "Windows FFmpeg to backup"
-          copy_artifact "ffmpeg-windows-latest/ffmpeg.exe" "dist/" "Windows FFmpeg to dist"
-          
-          # macOS executable
-          copy_artifact "executable-macos-13/YoutubetoPremiere" "dist/cep/exec/" "macOS executable to CEP"
-          copy_artifact "executable-macos-13/YoutubetoPremiere" "backup/exec/" "macOS executable to backup"
-          copy_artifact "executable-macos-13/YoutubetoPremiere" "dist/" "macOS executable to dist"
-          
-          # macOS FFmpeg
-          copy_artifact "ffmpeg-macos-13/ffmpeg" "dist/cep/exec/" "macOS FFmpeg to CEP"
-          copy_artifact "ffmpeg-macos-13/ffmpeg" "backup/exec/" "macOS FFmpeg to backup"
-          copy_artifact "ffmpeg-macos-13/ffmpeg" "dist/" "macOS FFmpeg to dist"
-          
-          # Verify files in place and permissions
-          echo "Verifying files in dist/cep/exec before yarn zxp:"
-          ls -la dist/cep/exec
-          
-          echo "Verifying files in dist directory:"
-          ls -la dist
-          
-          # Build TypeScript
-          echo "Building TypeScript..."
-          yarn tsc -p "tsconfig-build.json"
-          
-          # Create initial ZXP
-          echo "Running initial yarn zxp..."
-          yarn zxp
-          
-          # Verify the ZXP exists
-          if [ ! -f "dist/zxp/com.youtubetoPremiereV2.cep.zxp" ]; then
-            echo "ERROR: yarn zxp did not create the ZXP package"
-            exit 1
-          fi
-          
-          echo "Extracting the ZXP package..."
-          mkdir -p zxp_extract
-          cp dist/zxp/com.youtubetoPremiereV2.cep.zxp zxp_extract/
-          cd zxp_extract
-          unzip -q com.youtubetoPremiereV2.cep.zxp -d contents || echo "Could not extract ZXP"
-          cd ..
-          
-          echo "Creating exec directory in the extracted package..."
-          mkdir -p zxp_extract/contents/exec
-          
-          echo "Copying executables to the extracted package..."
-          cp -p backup/exec/* zxp_extract/contents/exec/ 2>/dev/null || echo "No executables found in backup"
-          cp -p app/*.py zxp_extract/contents/exec/ 2>/dev/null || echo "No Python files found"
-          mkdir -p zxp_extract/contents/exec/sounds
-          cp -rp app/sounds/* zxp_extract/contents/exec/sounds/ 2>/dev/null || echo "No sound files found"
-          
-          # Ensure proper permissions for macOS executables
-          chmod +x zxp_extract/contents/exec/YoutubetoPremiere 2>/dev/null || true
-          chmod +x zxp_extract/contents/exec/ffmpeg 2>/dev/null || true
-          
-          echo "Verifying executables are in the extracted package:"
-          ls -la zxp_extract/contents/exec
-          
-          echo "===== ZXP PACKAGING COMPLETED ====="
-
-      - name: Create Directory for Scripts
-        run: mkdir -p .github/scripts
-        shell: bash
-
-      - name: Create PowerShell Script for ZXP Creation
-        run: |
-          cat << 'EOF' > .github/scripts/create-zxp.ps1
-          Write-Host "===== CREATING FINAL ZXP WITH EXECUTABLES ====="
-          
-          # Get paths
-          $workspacePath = Get-Location
-          $winExeSource = Join-Path $workspacePath "executable-windows-latest/YoutubetoPremiere.exe"
-          $macExeSource = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere"
-          $macExeUniversalSource = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere-universal"
-          $winFfmpegSource = Join-Path $workspacePath "ffmpeg-windows-latest/ffmpeg.exe"
-          $macFfmpegSource = Join-Path $workspacePath "ffmpeg-macos-13/ffmpeg"
-          
-          Write-Host "Windows executable source: $winExeSource"
-          Write-Host "macOS executable source: $macExeSource"
-          Write-Host "macOS universal executable source: $macExeUniversalSource"
-          Write-Host "Windows FFmpeg source: $winFfmpegSource"
-          Write-Host "macOS FFmpeg source: $macFfmpegSource" 
-          
-          # Create directory structure
-          $outputDir = Join-Path $workspacePath "zxp_output"
-          if (Test-Path $outputDir) {
-            Remove-Item -Path $outputDir -Recurse -Force
-          }
-          New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
-          Write-Host "Created output directory: $outputDir"
-          
-          # Create subdirectories including exec and python files
-          $execDir = Join-Path $outputDir "exec"
-          New-Item -ItemType Directory -Path $execDir -Force | Out-Null
-          Write-Host "Created exec directory: $execDir"
-          
-          # Copy files from dist/cep if they exist, otherwise create minimal structure
-          if (Test-Path "dist/cep") {
-            Copy-Item -Path "dist/cep/*" -Destination $outputDir -Force -Recurse
-            Write-Host "Copied files from dist/cep to $outputDir"
-          } else {
-            Write-Host "Warning: dist/cep directory not found, creating minimal structure"
-            $cssDir = Join-Path $outputDir "CSXS"
-            $jsDir = Join-Path $outputDir "js"
-            $jsxDir = Join-Path $outputDir "jsx"
-            $assetsDir = Join-Path $outputDir "assets"
-            $mainDir = Join-Path $outputDir "main"
-            $settingsDir = Join-Path $outputDir "settings"
-            
-            New-Item -ItemType Directory -Path $cssDir -Force | Out-Null
-            New-Item -ItemType Directory -Path $jsDir -Force | Out-Null
-            New-Item -ItemType Directory -Path $jsxDir -Force | Out-Null
-            New-Item -ItemType Directory -Path $assetsDir -Force | Out-Null
-            New-Item -ItemType Directory -Path $mainDir -Force | Out-Null
-            New-Item -ItemType Directory -Path $settingsDir -Force | Out-Null
-          }
-          
-          # Create exec directory inside output directory if it doesn't exist
-          if (-not (Test-Path $execDir)) {
-            New-Item -ItemType Directory -Path $execDir -Force | Out-Null
-            Write-Host "Created exec directory: $execDir"
-          }
-          
-          # Copy Python files with special handling for errors
-          Write-Host "Copying Python files..."
-          Get-ChildItem -Path "app/*.py" -ErrorAction SilentlyContinue | ForEach-Object {
-            Copy-Item -Path $_.FullName -Destination $execDir -Force
-          }
-          
-          # Create sounds directory
-          $soundsDir = Join-Path $execDir "sounds"
-          New-Item -ItemType Directory -Path $soundsDir -Force | Out-Null
-          
-          # Copy sounds files if they exist
-          if (Test-Path "app/sounds") {
-            Copy-Item -Path "app/sounds/*" -Destination $soundsDir -Force -ErrorAction SilentlyContinue
-            Write-Host "Copied sound files to $soundsDir"
-          } else {
-            Write-Host "No sound files found to copy"
-          }
-          
-          # Extract macOS executable from archive if available
-          $notarizedZipPath = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere-notarized.tar.gz"
-          $macZipPath = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere.zip"
-          $tempNotarizedDir = Join-Path $workspacePath "temp_notarized"
-          
-          # Create temp directory
-          if (-not (Test-Path $tempNotarizedDir)) {
-            New-Item -ItemType Directory -Path $tempNotarizedDir -Force | Out-Null
-          }
-          
-          $macExeExtracted = $false
-          
-          if (Test-Path $notarizedZipPath) {
-            Write-Host "Found notarized macOS executable tarball"
-            try {
-              & "bash" "-c" "tar -xzf '$notarizedZipPath' -C '$tempNotarizedDir'"
-              
-              if (Test-Path "$tempNotarizedDir/YoutubetoPremiere") {
-                Copy-Item -Path "$tempNotarizedDir/YoutubetoPremiere" -Destination "$execDir/YoutubetoPremiere" -Force
-                & "bash" "-c" "chmod 755 '$execDir/YoutubetoPremiere'"
-                Write-Host "✅ Extracted notarized macOS executable from tarball"
-                $macExeExtracted = $true
-              }
-            } catch {
-              Write-Host "❌ Failed to extract notarized macOS executable from tarball: $_"
-            }
-          } elseif (Test-Path $macZipPath) {
-            Write-Host "Found notarized macOS executable ZIP"
-            try {
-              Expand-Archive -Path $macZipPath -DestinationPath $tempNotarizedDir -Force
-              
-              if (Test-Path "$tempNotarizedDir/YoutubetoPremiere") {
-                Copy-Item -Path "$tempNotarizedDir/YoutubetoPremiere" -Destination "$execDir/YoutubetoPremiere" -Force
-                & "bash" "-c" "chmod 755 '$execDir/YoutubetoPremiere'"
-                Write-Host "✅ Extracted notarized macOS executable from ZIP"
-                $macExeExtracted = $true
-              }
-            } catch {
-              Write-Host "❌ Failed to extract notarized macOS executable from ZIP: $_"
-            }
-          }
-          
-          # Copy executables with robust error handling
-          Write-Host "Copying executables..."
-          
-          # Windows executable
-          if (Test-Path $winExeSource) {
-            Copy-Item -Path $winExeSource -Destination "$execDir/YoutubetoPremiere.exe" -Force
-            Write-Host "✅ Copied Windows executable"
-          } else {
-            Write-Host "❌ Windows executable not found at: $winExeSource"
-          }
-          
-          # macOS executable (if not already extracted)
-          if (-not $macExeExtracted) {
-            if (Test-Path $macExeUniversalSource) {
-              Copy-Item -Path $macExeUniversalSource -Destination "$execDir/YoutubetoPremiere" -Force
-              & "bash" "-c" "chmod 755 '$execDir/YoutubetoPremiere'"
-              Write-Host "✅ Copied macOS universal executable"
-            } elseif (Test-Path $macExeSource) {
-              Copy-Item -Path $macExeSource -Destination "$execDir/YoutubetoPremiere" -Force
-              & "bash" "-c" "chmod 755 '$execDir/YoutubetoPremiere'"
-              Write-Host "✅ Copied macOS standard executable"
-            } else {
-              Write-Host "❌ macOS executable not found at: $macExeSource or $macExeUniversalSource"
-            }
-          }
-          
-          # Windows FFmpeg
-          if (Test-Path $winFfmpegSource) {
-            Copy-Item -Path $winFfmpegSource -Destination "$execDir/ffmpeg.exe" -Force
-            Write-Host "✅ Copied Windows FFmpeg"
-          } else {
-            Write-Host "❌ Windows FFmpeg not found at: $winFfmpegSource"
-            # Try alternate path
-            $altWinFfmpegSource = Join-Path $workspacePath "ffmpeg-windows-latest/dist/ffmpeg.exe"
-            if (Test-Path $altWinFfmpegSource) {
-              Copy-Item -Path $altWinFfmpegSource -Destination "$execDir/ffmpeg.exe" -Force
-              Write-Host "✅ Copied Windows FFmpeg from alternate location"
-            }
-          }
-          
-          # macOS FFmpeg
-          if (Test-Path $macFfmpegSource) {
-            Copy-Item -Path $macFfmpegSource -Destination "$execDir/ffmpeg" -Force
-            & "bash" "-c" "chmod 755 '$execDir/ffmpeg'"
-            Write-Host "✅ Copied macOS FFmpeg"
-          } else {
-            Write-Host "❌ macOS FFmpeg not found at: $macFfmpegSource"
-            # Try alternate path
-            $altMacFfmpegSource = Join-Path $workspacePath "ffmpeg-macos-13/dist/ffmpeg"
-            if (Test-Path $altMacFfmpegSource) {
-              Copy-Item -Path $altMacFfmpegSource -Destination "$execDir/ffmpeg" -Force
-              & "bash" "-c" "chmod 755 '$execDir/ffmpeg'"
-              Write-Host "✅ Copied macOS FFmpeg from alternate location"
-            }
-          }
-          
-          # Create permission fix script to ensure executables are runnable
-          $permissionScriptContent = @"
+          # Create fix-permissions.sh script
+          $fixPermissionsScript = @'
           #!/bin/bash
           # Fix permissions for macOS executables
-          chmod 755 "\$(dirname "\$0")/YoutubetoPremiere" 2>/dev/null || true
-          chmod 755 "\$(dirname "\$0")/ffmpeg" 2>/dev/null || true
-          xattr -d com.apple.quarantine "\$(dirname "\$0")/YoutubetoPremiere" 2>/dev/null || true
-          xattr -d com.apple.quarantine "\$(dirname "\$0")/ffmpeg" 2>/dev/null || true
+          SCRIPT_DIR="$(dirname "$0")"
+          chmod +x "$SCRIPT_DIR/YoutubetoPremiere" 2>/dev/null || true
+          chmod +x "$SCRIPT_DIR/ffmpeg" 2>/dev/null || true
+          xattr -d com.apple.quarantine "$SCRIPT_DIR/YoutubetoPremiere" 2>/dev/null || true
+          xattr -d com.apple.quarantine "$SCRIPT_DIR/ffmpeg" 2>/dev/null || true
           echo "Permissions fixed for macOS executables"
-          "@
-          Set-Content -Path "$execDir/fix-permissions.sh" -Value $permissionScriptContent -NoNewline
-          & "bash" "-c" "chmod 755 '$execDir/fix-permissions.sh'"
+          '@
           
-          # List content of exec directory for verification
-          Write-Host "Content of exec directory before packaging:"
-          Get-ChildItem -Path $execDir | ForEach-Object {
-            Write-Host "  $($_.Name) ($($_.Length) bytes)"
+          Set-Content -Path dist/cep/exec/fix-permissions.sh -Value $fixPermissionsScript -NoNewline
+          
+          # Copy README to exec folder
+          if (Test-Path app/exec/README.md) {
+            cp app/exec/README.md dist/cep/exec/
           }
           
-          # Create ZXP package 
-          Write-Host "Creating ZXP package..."
-          New-Item -ItemType Directory -Path "dist/zxp" -Force | Out-Null
-          $zxpPath = Join-Path $workspacePath "dist/zxp/com.youtubetoPremiereV2.cep.zxp"
-          
-          # First try with zip command to preserve permissions (macOS compatible)
-          $zipSuccess = $false
-          try {
-            Push-Location $outputDir
-            $zipExitCode = (Start-Process -FilePath "bash" -ArgumentList "-c", "zip -r -X -y '$zxpPath' *" -NoNewWindow -PassThru -Wait).ExitCode
-            if ($zipExitCode -eq 0) {
-              $zipSuccess = $true
-              Write-Host "✅ Created ZXP package using zip command"
-            } else {
-              Write-Host "⚠️ Zip command returned non-zero exit code: $zipExitCode"
-            }
-            Pop-Location
-          } catch {
-            Write-Host "⚠️ Zip command failed: $_"
-          }
-          
-          # If zip fails, fall back to PowerShell Compress-Archive
-          if (-not $zipSuccess) {
-            Write-Host "Falling back to PowerShell compression..."
-            Push-Location $outputDir
-            try {
-              Compress-Archive -Path "*" -DestinationPath "$zxpPath" -Force
-              if (Test-Path $zxpPath) {
-                Write-Host "✅ Created ZXP package using PowerShell Compress-Archive"
-              } else {
-                Write-Host "❌ PowerShell Compress-Archive failed to create the ZXP package"
-              }
-            } catch {
-              Write-Host "❌ PowerShell Compress-Archive error: $_"
-            }
-            Pop-Location
-          }
-          
-          # Verify the ZXP was created
-          if (Test-Path $zxpPath) {
-            Write-Host "✅ ZXP package created: $zxpPath"
-            Write-Host "ZXP file size: $((Get-Item $zxpPath).Length) bytes"
-          } else {
-            Write-Host "❌ Failed to create ZXP package"
-          }
-          
-          # Verify ZXP contents
-          $tempExtractDir = Join-Path $workspacePath "verify_zxp"
-          if (Test-Path $tempExtractDir) {
-            Remove-Item -Path $tempExtractDir -Recurse -Force
-          }
-          New-Item -ItemType Directory -Path $tempExtractDir -Force | Out-Null
-          
-          # Copy and extract for verification
-          Copy-Item -Path $zxpPath -Destination "$tempExtractDir/package.zip" -Force
-          
-          # Try to extract with unzip command first
-          $unzipSuccess = $false
-          try {
-            $unzipExitCode = (Start-Process -FilePath "bash" -ArgumentList "-c", "unzip -q '$tempExtractDir/package.zip' -d '$tempExtractDir/contents'" -NoNewWindow -PassThru -Wait).ExitCode
-            if ($unzipExitCode -eq 0 -or $unzipExitCode -eq 1) {  # unzip returns 1 for warnings
-              $unzipSuccess = $true
-              Write-Host "✅ Extracted ZXP package for verification using unzip"
-            } else {
-              Write-Host "⚠️ Unzip command returned error code: $unzipExitCode"
-            }
-          } catch {
-            Write-Host "⚠️ Unzip command failed: $_"
-          }
-          
-          # Fall back to Expand-Archive if unzip fails
-          if (-not $unzipSuccess) {
-            try {
-              Expand-Archive -Path "$tempExtractDir/package.zip" -DestinationPath "$tempExtractDir/contents" -Force
-              Write-Host "✅ Extracted ZXP package for verification using PowerShell"
-            } catch {
-              Write-Host "❌ Failed to extract ZXP for verification: $_"
-            }
-          }
-          
-          # Run permission fix script
-          if (Test-Path "$tempExtractDir/contents/exec/fix-permissions.sh") {
-            & "bash" "-c" "chmod +x '$tempExtractDir/contents/exec/fix-permissions.sh' && '$tempExtractDir/contents/exec/fix-permissions.sh'"
-          }
-          
-          # Check executables in the extracted ZXP
-          $missingFiles = @()
-          
-          # Check Windows executable
-          if (Test-Path "$tempExtractDir/contents/exec/YoutubetoPremiere.exe") {
-            Write-Host "✅ Windows executable found in ZXP"
-          } else {
-            Write-Host "❌ Windows executable NOT found in ZXP"
-            $missingFiles += "YoutubetoPremiere.exe"
-          }
-          
-          # Check macOS executable
-          if (Test-Path "$tempExtractDir/contents/exec/YoutubetoPremiere") {
-            Write-Host "✅ macOS executable found in ZXP"
-            & "bash" "-c" "chmod 755 '$tempExtractDir/contents/exec/YoutubetoPremiere'"
-          } else {
-            Write-Host "❌ macOS executable NOT found in ZXP"
-            $missingFiles += "YoutubetoPremiere (macOS)"
-          }
-          
-          # Check Windows FFmpeg
-          if (Test-Path "$tempExtractDir/contents/exec/ffmpeg.exe") {
-            Write-Host "✅ Windows FFmpeg found in ZXP"
-          } else {
-            Write-Host "❌ Windows FFmpeg NOT found in ZXP"
-            $missingFiles += "ffmpeg.exe"
-          }
-          
-          # Check macOS FFmpeg
-          if (Test-Path "$tempExtractDir/contents/exec/ffmpeg") {
-            Write-Host "✅ macOS FFmpeg found in ZXP"
-            & "bash" "-c" "chmod 755 '$tempExtractDir/contents/exec/ffmpeg'"
-          } else {
-            Write-Host "❌ macOS FFmpeg NOT found in ZXP"
-            $missingFiles += "ffmpeg (macOS)"
-          }
-          
-          # Report missing files if any
-          if ($missingFiles.Count -gt 0) {
-            Write-Host "❌ The following files are missing from the ZXP package:"
-            foreach ($file in $missingFiles) {
-              Write-Host "   - $file"
-            }
-            
-            # Force direct copy of all executables to the ZXP as a last resort
-            Write-Host "Attempting direct file inclusion as a fallback..."
-            
-            # Extract the ZXP again
-            Remove-Item -Path "$tempExtractDir/contents" -Recurse -Force -ErrorAction SilentlyContinue
-            New-Item -ItemType Directory -Path "$tempExtractDir/contents/exec" -Force | Out-Null
-            
-            # Copy the contents from our outputDir
-            Copy-Item -Path "$outputDir/*" -Destination "$tempExtractDir/contents" -Recurse -Force
-            
-            # Make sure exec directory exists
-            if (-not (Test-Path "$tempExtractDir/contents/exec")) {
-              New-Item -ItemType Directory -Path "$tempExtractDir/contents/exec" -Force | Out-Null
-            }
-            
-            # Force copy all executables
-            if (Test-Path $winExeSource) {
-              Copy-Item -Path $winExeSource -Destination "$tempExtractDir/contents/exec/YoutubetoPremiere.exe" -Force
-            }
-            if (Test-Path $macExeSource) {
-              Copy-Item -Path $macExeSource -Destination "$tempExtractDir/contents/exec/YoutubetoPremiere" -Force
-              & "bash" "-c" "chmod 755 '$tempExtractDir/contents/exec/YoutubetoPremiere'"
-            }
-            if (Test-Path $winFfmpegSource) {
-              Copy-Item -Path $winFfmpegSource -Destination "$tempExtractDir/contents/exec/ffmpeg.exe" -Force
-            }
-            if (Test-Path $macFfmpegSource) {
-              Copy-Item -Path $macFfmpegSource -Destination "$tempExtractDir/contents/exec/ffmpeg" -Force
-              & "bash" "-c" "chmod 755 '$tempExtractDir/contents/exec/ffmpeg'"
-            }
-            
-            # Repackage
-            Remove-Item -Path $zxpPath -Force -ErrorAction SilentlyContinue
-            
-            Push-Location "$tempExtractDir/contents"
-            try {
-              & "bash" "-c" "zip -r -X -y '$zxpPath' *"
-            } catch {
-              Compress-Archive -Path "*" -DestinationPath "$zxpPath" -Force
-            }
-            Pop-Location
-            
-            Write-Host "✅ Recreated ZXP package with direct file inclusion"
-          }
-          
-          # Clean up
-          Remove-Item -Path $outputDir -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item -Path $tempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item -Path $tempNotarizedDir -Recurse -Force -ErrorAction SilentlyContinue
-          
-          Write-Host "===== FINAL ZXP PACKAGING COMPLETED ====="
-          EOF
-        shell: bash
-
-      - name: Create Final ZXP with Executables
+          # Display content of exec directory
+          Write-Host "Content of exec directory:"
+          Get-ChildItem dist/cep/exec | ForEach-Object { Write-Host "  $($_.Name) - $($_.Length) bytes" }
         shell: pwsh
+      
+      - name: Build TypeScript
+        run: yarn tsc -p "tsconfig-build.json"
+      
+      - name: Create ZXP Package
         run: |
-          pwsh -ExecutionPolicy Bypass -File .github/scripts/create-zxp.ps1
-
-      - name: Verify and Rename ZXP Package
-        shell: pwsh
-        run: |
-          $version = "${{ needs.check-changes.outputs.tag_version }}"
+          # Set environment variables to skip Python build
+          $env:SKIP_PYTHON_BUILD = "true"
+          $env:NO_PYTHON = "true"
+          $env:ZXP_PACKAGE = "true"
           
-          # First check the expected locations
-          $possibleLocations = @(
-            "dist/zxp/com.youtubetoPremiereV2.cep.zxp",
-            "dist/zxp/YoutubetoPremiere.zxp"
-          )
+          # Run ZXP packaging
+          yarn zxp
           
-          $zxpPath = $null
-          foreach ($location in $possibleLocations) {
-            if (Test-Path $location) {
-              $zxpPath = $location
-              Write-Host "✅ Found ZXP package at: $zxpPath"
-              break
-            }
-          }
+          # Check if ZXP was created
+          $zxpOriginalPath = "dist/zxp/com.youtubetoPremiereV2.cep.zxp"
+          $zxpVersionedPath = "dist/zxp/YoutubetoPremiere-v${{ needs.check-version.outputs.version }}.zxp"
           
-          # If not found in primary locations, search more broadly
-          if (-not $zxpPath) {
-            Write-Host "ZXP not found at expected paths, searching in other locations..."
-            
-            # Check for ZXP files in multiple locations
-            $searchLocations = @(
-              "dist/zxp/*.zxp",
-              "dist/*.zxp",
-              "*.zxp"
-            )
-            
-            $foundZxps = @()
-            foreach ($location in $searchLocations) {
-              $files = Get-ChildItem -Path $location -ErrorAction SilentlyContinue
-              if ($files) {
-                $foundZxps += $files
-                Write-Host "Found ZXP files at $location"
-                foreach ($file in $files) {
-                  Write-Host "  - $($file.Name) ($($file.Length) bytes)"
-                }
-              }
-            }
-            
-            if ($foundZxps.Count -gt 0) {
-              # Use the largest ZXP file (most likely to be the complete one)
-              $largestZxp = $foundZxps | Sort-Object Length -Descending | Select-Object -First 1
-              Write-Host "Using ZXP file: $($largestZxp.FullName) (Size: $($largestZxp.Length) bytes)"
-              $zxpPath = $largestZxp.FullName
-              
-              # Create dist/zxp directory if it doesn't exist
-              if (-not (Test-Path "dist/zxp")) {
-                New-Item -ItemType Directory -Path "dist/zxp" -Force | Out-Null
-              }
-            }
-          }
-          
-          if ($zxpPath) {
-            # Rename the ZXP file to include the version
-            $newName = "YoutubetoPremiere-v$version.zxp"
-            $newPath = "dist/zxp/$newName"
-            
-            # Make sure the destination directory exists
-            if (-not (Test-Path "dist/zxp")) {
-              New-Item -ItemType Directory -Path "dist/zxp" -Force | Out-Null
-            }
-            
-            Copy-Item -Path $zxpPath -Destination $newPath -Force
-            Write-Host "Renamed ZXP package to: $newName"
-            
-            # List the files
-            Write-Host "Final ZXP files:"
-            Get-ChildItem -Path dist/zxp -Recurse | ForEach-Object {
-              Write-Host "  $($_.Name) ($($_.Length) bytes)"
-            }
+          if (Test-Path $zxpOriginalPath) {
+            Write-Host "ZXP package created: $zxpOriginalPath"
+            Copy-Item -Path $zxpOriginalPath -Destination $zxpVersionedPath -Force
+            Write-Host "Created versioned ZXP: $zxpVersionedPath"
           } else {
-            Write-Host "⚠️ ZXP package was not found! Running our custom ZXP creation script..."
-            
-            # Run our custom script to create the ZXP
-            pwsh -ExecutionPolicy Bypass -File .github/scripts/create-zxp.ps1
-            
-            # Check again for the ZXP file
-            $possibleLocations = @(
-              "dist/zxp/com.youtubetoPremiereV2.cep.zxp",
-              "dist/zxp/YoutubetoPremiere.zxp"
-            )
-            
-            $zxpPath = $null
-            foreach ($location in $possibleLocations) {
-              if (Test-Path $location) {
-                $zxpPath = $location
-                Write-Host "✅ Found ZXP package at: $zxpPath after running custom script"
-                
-                # Rename the ZXP file to include the version
-                $newName = "YoutubetoPremiere-v$version.zxp"
-                $newPath = "dist/zxp/$newName"
-                
-                Copy-Item -Path $zxpPath -Destination $newPath -Force
-                Write-Host "Renamed ZXP package to: $newName"
-                
-                # List the files
-                Write-Host "Final ZXP files:"
-                Get-ChildItem -Path dist/zxp -Recurse | ForEach-Object {
-                  Write-Host "  $($_.Name) ($($_.Length) bytes)"
-                }
-                
-                break
-              }
-            }
-            
-            if (-not $zxpPath) {
-              Write-Error "ZXP package was not found even after running custom script! This is a critical error."
-              exit 1
-            }
+            Write-Error "Failed to create ZXP package"
+            exit 1
           }
-
+        shell: pwsh
+      
+      - name: Verify ZXP Contents
+        run: |
+          pwsh verify-zxp-contents.ps1 "dist/zxp/YoutubetoPremiere-v${{ needs.check-version.outputs.version }}.zxp"
+        shell: pwsh
+      
+      - name: Upload ZXP Package
+        uses: actions/upload-artifact@v4
+        with:
+          name: zxp-package
+          path: dist/zxp/YoutubetoPremiere-v${{ needs.check-version.outputs.version }}.zxp
+          retention-days: 90
+      
       - name: Create Release
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
         uses: softprops/action-gh-release@v1
         with:
-          files: ./dist/zxp/YoutubetoPremiere-v${{ needs.check-changes.outputs.tag_version }}.zxp
-          name: YoutubetoPremiere v${{ needs.check-changes.outputs.tag_version }}
-          tag_name: v${{ needs.check-changes.outputs.tag_version }}
-          generate_release_notes: true
+          files: |
+            dist/zxp/YoutubetoPremiere-v${{ needs.check-version.outputs.version }}.zxp
+            artifacts/installer-windows/YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe
+            artifacts/installer-macos/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.dmg
+          name: YoutubetoPremiere v${{ needs.check-version.outputs.version }}
+          tag_name: v${{ needs.check-version.outputs.version }}
+          generate_release_notes: true 

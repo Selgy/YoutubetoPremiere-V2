@@ -11,6 +11,34 @@ from flask_socketio import SocketIO
 from routes import register_routes
 from utils import load_settings, monitor_premiere_and_shutdown, play_notification_sound
 import re
+import subprocess
+import socketio
+import engineio
+import requests
+from pathlib import Path
+
+# Import local modules
+try:
+    from init import init, logger
+    from routes import register_routes
+    from utils import check_ffmpeg, get_temp_dir, clear_temp_files
+    from video_processing import VideoProcessor
+except ImportError:
+    # Try relative import if we're in a package
+    try:
+        from .init import init, logger
+        from .routes import register_routes
+        from .utils import check_ffmpeg, get_temp_dir, clear_temp_files
+        from .video_processing import VideoProcessor
+    except ImportError:
+        # Last resort - modify path and try again
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        if script_dir not in sys.path:
+            sys.path.append(script_dir)
+        from init import init, logger
+        from routes import register_routes
+        from utils import check_ffmpeg, get_temp_dir, clear_temp_files
+        from video_processing import VideoProcessor
 
 # Configure logging with more detailed format
 logging.basicConfig(
@@ -445,5 +473,88 @@ def progress_hook(d, socketio):
         except Exception as e:
             logging.error(f"Error in progress hook: {e}")
 
+def setup_environment():
+    """Set up the application environment"""
+    # Initialize all requirements
+    config = init()
+    
+    # Set environment variables
+    if config['ffmpeg_path']:
+        os.environ['FFMPEG_PATH'] = config['ffmpeg_path']
+    
+    # Clear temporary files from previous runs
+    temp_dir = get_temp_dir()
+    clear_temp_files(temp_dir)
+    
+    # Create necessary directories
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    return config
+
+def start_server(port=4000):
+    """Start the WebSocket server"""
+    # Setup application
+    config = setup_environment()
+    
+    # Check if ffmpeg is available
+    ffmpeg_path = config['ffmpeg_path']
+    if not check_ffmpeg(ffmpeg_path):
+        logger.error("FFmpeg not found. Please install FFmpeg or make sure it's in your PATH.")
+        print("FFmpeg not found. Please install FFmpeg or make sure it's in your PATH.")
+        return False
+    
+    # Register Socket.IO event handlers
+    register_routes(sio, ffmpeg_path)
+    
+    # Create a video processor instance
+    video_processor = VideoProcessor(ffmpeg_path)
+    
+    # Start the server with eventlet if available, otherwise use the built-in server
+    try:
+        import eventlet
+        eventlet.monkey_patch()
+        logger.info(f"Starting server on port {port} with eventlet")
+        eventlet.wsgi.server(eventlet.listen(('localhost', port)), app)
+    except ImportError:
+        try:
+            import gevent
+            import gevent.pywsgi
+            from gevent import monkey
+            monkey.patch_all()
+            logger.info(f"Starting server on port {port} with gevent")
+            gevent.pywsgi.WSGIServer(('localhost', port), app).serve_forever()
+        except ImportError:
+            # Fallback to built-in server
+            import time
+            from wsgiref.simple_server import make_server
+            logger.info(f"Starting server on port {port} with wsgiref (fallback)")
+            httpd = make_server('localhost', port, app)
+            
+            # Log server start
+            logger.info("YouTube to Premiere server started")
+            print(f"YouTube to Premiere server running on port {port}")
+            print("Waiting for connections...")
+            
+            # Start the server
+            httpd.serve_forever()
+    
+    return True
+
+def main():
+    """Main entry point"""
+    try:
+        # Start the WebSocket server
+        if not start_server():
+            # If server fails to start, exit with error
+            sys.exit(1)
+    except KeyboardInterrupt:
+        logger.info("Server stopped by user")
+        print("\nServer stopped by user")
+    except Exception as e:
+        logger.error(f"Error starting server: {str(e)}")
+        print(f"Error starting server: {str(e)}")
+        sys.exit(1)
+
+# Main entry point
 if __name__ == "__main__":
-    run_server()
+    main()
