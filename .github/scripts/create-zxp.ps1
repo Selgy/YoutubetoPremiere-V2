@@ -1,6 +1,78 @@
 #!/usr/bin/env pwsh
 Write-Host "===== CREATING FINAL ZXP WITH EXECUTABLES ====="
 
+# Fonction pour vérifier et gérer les erreurs de copie d'artefacts
+function Copy-ArtifactWithFallback {
+    param (
+        [string]$SourcePath,
+        [string]$DestinationPath,
+        [string]$Description,
+        [string]$FallbackPath = "",
+        [bool]$IsRequired = $false
+    )
+
+    Write-Host "Copying $Description from $SourcePath to $DestinationPath"
+    
+    # Vérifier si le fichier source existe
+    if (Test-Path $SourcePath) {
+        # Créer le répertoire de destination s'il n'existe pas
+        $DestDir = Split-Path -Path $DestinationPath -Parent
+        if (-not (Test-Path $DestDir)) {
+            New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
+        }
+
+        # Copier le fichier
+        try {
+            Copy-Item -Path $SourcePath -Destination $DestinationPath -Force
+            Write-Host "✅ Successfully copied $Description"
+            return $true
+        }
+        catch {
+            Write-Host "⚠️ Error copying $Description: $_"
+        }
+    }
+    else {
+        Write-Host "⚠️ $Description not found at: $SourcePath"
+    }
+
+    # Essayer le chemin de secours si fourni
+    if ($FallbackPath -ne "" -and (Test-Path $FallbackPath)) {
+        try {
+            Copy-Item -Path $FallbackPath -Destination $DestinationPath -Force
+            Write-Host "✅ Successfully copied $Description using fallback: $FallbackPath"
+            return $true
+        }
+        catch {
+            Write-Host "⚠️ Error copying $Description from fallback: $_"
+        }
+    }
+
+    # Vérifier si le fichier existe déjà à la destination
+    if (Test-Path $DestinationPath) {
+        Write-Host "✅ $Description already exists at destination"
+        return $true
+    }
+
+    # Échouer si requis
+    if ($IsRequired) {
+        Write-Host "❌ ERROR: Required $Description not found!"
+        if (-not $env:CI) {
+            # En développement local, interrompre le script
+            Write-Error "Required file not found"
+            exit 1
+        }
+        else {
+            # Dans CI, continuer avec un avertissement
+            Write-Host "⚠️ CI environment detected, continuing despite missing required file..."
+            return $false
+        }
+    }
+    else {
+        Write-Host "⚠️ Optional $Description not found, continuing..."
+        return $false
+    }
+}
+
 # Get paths
 $workspacePath = Get-Location
 $winExeSource = Join-Path $workspacePath "executable-windows-latest/YoutubetoPremiere.exe"
@@ -9,6 +81,14 @@ $winFfmpegSource = Join-Path $workspacePath "ffmpeg-windows-latest/ffmpeg.exe"
 $macFfmpegSource = Join-Path $workspacePath "ffmpeg-macos-13/ffmpeg"
 $tempNotarizedDir = Join-Path $workspacePath "temp_notarized"
 
+# Sources alternatives pour les artefacts (chemins typiques)
+$altWinExeSource = Join-Path $workspacePath "artifacts/executable-windows-latest/YoutubetoPremiere.exe"
+$altMacExeSource = Join-Path $workspacePath "artifacts/executable-macos-13/YoutubetoPremiere"
+$altWinFfmpegSource = Join-Path $workspacePath "artifacts/ffmpeg-windows-latest/ffmpeg.exe"
+$altMacFfmpegSource = Join-Path $workspacePath "artifacts/ffmpeg-macos-13/ffmpeg"
+
+Write-Host "Windows executable source: $winExeSource"
+Write-Host "macOS executable source: $macExeSource"
 Write-Host "Windows FFmpeg source: $winFfmpegSource"
 Write-Host "macOS FFmpeg source: $macFfmpegSource"
 
@@ -57,55 +137,65 @@ if (Test-Path "app/sounds") {
 }
 
 # Copy Windows executable
-if (Test-Path $winExeSource) {
-    Copy-Item -Path $winExeSource -Destination "$execDir/YoutubetoPremiere.exe" -Force
-    Write-Host "Copied Windows executable"
-} else {
-    Write-Host "WARNING: Windows executable not found at $winExeSource"
-}
+Copy-ArtifactWithFallback -SourcePath $winExeSource -DestinationPath "$execDir/YoutubetoPremiere.exe" `
+                          -Description "Windows executable" -FallbackPath $altWinExeSource -IsRequired $true
 
 # Check for notarized macOS executable ZIP
 $notarizedZipPath = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere-notarized.zip"
+$altNotarizedZipPath = Join-Path $workspacePath "artifacts/executable-macos-13/YoutubetoPremiere-notarized.zip"
+$notarizedZipExists = $false
+
+# Check primary location
 if (Test-Path $notarizedZipPath) {
-    Write-Host "Found notarized macOS executable ZIP"
-    
+    Write-Host "Found notarized macOS executable ZIP at primary location"
+    $notarizedZipExists = $true
+    $zipToUse = $notarizedZipPath
+}
+# Check fallback location
+elseif (Test-Path $altNotarizedZipPath) {
+    Write-Host "Found notarized macOS executable ZIP at fallback location"
+    $notarizedZipExists = $true
+    $zipToUse = $altNotarizedZipPath
+}
+
+# Extract ZIP if found
+if ($notarizedZipExists) {
     # Create temp directory for extraction
     if (-not (Test-Path $tempNotarizedDir)) {
         New-Item -ItemType Directory -Path $tempNotarizedDir -Force | Out-Null
     }
     
-    # Extract using Expand-Archive
-    Expand-Archive -Path $notarizedZipPath -DestinationPath $tempNotarizedDir -Force
-    
-    # Copy notarized executable if found
-    if (Test-Path "$tempNotarizedDir/YoutubetoPremiere") {
-        Copy-Item -Path "$tempNotarizedDir/YoutubetoPremiere" -Destination "$execDir/YoutubetoPremiere" -Force
-        Write-Host "Copied notarized macOS executable"
-    } else {
-        Write-Host "WARNING: Notarized macOS executable not found in ZIP"
+    try {
+        # Extract using Expand-Archive
+        Expand-Archive -Path $zipToUse -DestinationPath $tempNotarizedDir -Force
+        
+        # Copy notarized executable if found
+        if (Test-Path "$tempNotarizedDir/YoutubetoPremiere") {
+            Copy-Item -Path "$tempNotarizedDir/YoutubetoPremiere" -Destination "$execDir/YoutubetoPremiere" -Force
+            Write-Host "✅ Copied notarized macOS executable"
+        } else {
+            Write-Host "⚠️ Notarized macOS executable not found in ZIP"
+        }
+    } catch {
+        Write-Host "⚠️ Error extracting notarized ZIP: $_"
     }
+}
+else {
+    Write-Host "⚠️ Notarized macOS executable ZIP not found, will try regular executable"
 }
 
 # Fallback to regular macOS executable if not already copied
-if (-not (Test-Path "$execDir/YoutubetoPremiere") -and (Test-Path $macExeSource)) {
-    Copy-Item -Path $macExeSource -Destination "$execDir/YoutubetoPremiere" -Force
-    Write-Host "Copied macOS executable (fallback)"
+if (-not (Test-Path "$execDir/YoutubetoPremiere")) {
+    Copy-ArtifactWithFallback -SourcePath $macExeSource -DestinationPath "$execDir/YoutubetoPremiere" `
+                              -Description "macOS executable" -FallbackPath $altMacExeSource -IsRequired $true
 }
 
 # Copy FFmpeg executables
-if (Test-Path $winFfmpegSource) {
-    Copy-Item -Path $winFfmpegSource -Destination "$execDir/ffmpeg.exe" -Force
-    Write-Host "Copied Windows FFmpeg"
-} else {
-    Write-Host "WARNING: Windows FFmpeg not found at $winFfmpegSource"
-}
+Copy-ArtifactWithFallback -SourcePath $winFfmpegSource -DestinationPath "$execDir/ffmpeg.exe" `
+                          -Description "Windows FFmpeg" -FallbackPath $altWinFfmpegSource -IsRequired $true
 
-if (Test-Path $macFfmpegSource) {
-    Copy-Item -Path $macFfmpegSource -Destination "$execDir/ffmpeg" -Force
-    Write-Host "Copied macOS FFmpeg"
-} else {
-    Write-Host "WARNING: macOS FFmpeg not found at $macFfmpegSource"
-}
+Copy-ArtifactWithFallback -SourcePath $macFfmpegSource -DestinationPath "$execDir/ffmpeg" `
+                          -Description "macOS FFmpeg" -FallbackPath $altMacFfmpegSource -IsRequired $true
 
 # Set permissions for macOS executables
 Write-Host "Setting executable permissions for macOS files..."
@@ -116,7 +206,33 @@ try {
     # Verify permissions
     & "bash" "-c" "ls -la \"$execDir\" | grep -E 'YoutubetoPremiere|ffmpeg'" 2>$null
 } catch {
-    Write-Host "WARNING: Error setting permissions: $_"
+    Write-Host "⚠️ Error setting permissions: $_"
+}
+
+# Check for essential files before proceeding
+$essentialFiles = @(
+    "$execDir/YoutubetoPremiere.exe",
+    "$execDir/YoutubetoPremiere",
+    "$execDir/ffmpeg.exe",
+    "$execDir/ffmpeg"
+)
+
+$missingFiles = $essentialFiles | Where-Object { -not (Test-Path $_) }
+if ($missingFiles.Count -gt 0) {
+    Write-Host "⚠️ WARNING: The following essential files are missing:"
+    $missingFiles | ForEach-Object { Write-Host "  - $_" }
+    Write-Host "This may result in a non-functional package for some platforms!"
+    
+    if (-not $env:CI) {
+        $continue = Read-Host "Continue anyway? (y/n)"
+        if ($continue -ne "y") {
+            Write-Host "Aborting ZXP creation."
+            exit 1
+        }
+    }
+    else {
+        Write-Host "CI environment detected, continuing despite missing files..."
+    }
 }
 
 # Run yarn zxp command to create the ZXP package

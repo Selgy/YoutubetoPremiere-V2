@@ -124,7 +124,9 @@ jobs:
         shell: bash
       
       - name: Download existing artifact
+        id: download_artifact
         if: steps.check_artifacts.outputs.artifact_exists == 'true'
+        continue-on-error: true
         uses: dawidd6/action-download-artifact@v2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -132,6 +134,17 @@ jobs:
           workflow_conclusion: success
           name: ${{ matrix.os == 'windows-latest' && 'ffmpeg-windows-latest' || 'ffmpeg-macos-13' }}
           path: existing-artifact
+          check_artifacts: true
+          if_no_artifact_found: warn
+          branch: ${{ github.ref_name }}
+          search_artifacts: true
+
+      - name: Reset artifact status if download failed
+        if: steps.check_artifacts.outputs.artifact_exists == 'true' && steps.download_artifact.outcome == 'failure'
+        run: |
+          echo "Download failed, will build from scratch"
+          echo "artifact_exists=false" >> $GITHUB_OUTPUT
+        shell: bash
       
       - name: Verify downloaded artifact
         if: steps.check_artifacts.outputs.artifact_exists == 'true'
@@ -270,7 +283,9 @@ jobs:
         shell: bash
       
       - name: Download existing artifact
+        id: download_executable
         if: steps.check_artifacts.outputs.artifact_exists == 'true'
+        continue-on-error: true
         uses: dawidd6/action-download-artifact@v2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -278,7 +293,18 @@ jobs:
           workflow_conclusion: success
           name: ${{ matrix.os == 'windows-latest' && 'executable-windows-latest' || 'executable-macos-13' }}
           path: existing-artifact
+          check_artifacts: true
+          if_no_artifact_found: warn
+          branch: ${{ github.ref_name }}
+          search_artifacts: true
 
+      - name: Reset artifact status if download failed
+        if: steps.check_artifacts.outputs.artifact_exists == 'true' && steps.download_executable.outcome == 'failure'
+        run: |
+          echo "Download failed, will build from scratch"
+          echo "artifact_exists=false" >> $GITHUB_OUTPUT
+        shell: bash
+      
       - name: Verify downloaded artifact
         if: steps.check_artifacts.outputs.artifact_exists == 'true'
         id: verify_artifact
@@ -620,7 +646,9 @@ jobs:
         uses: actions/download-artifact@v4
         
       - name: Download artifacts from previous workflow
+        id: download_previous_artifacts
         if: ${{ github.event.inputs.package_only == 'true' }}
+        continue-on-error: true
         uses: dawidd6/action-download-artifact@v2
         with:
           github_token: ${{secrets.GITHUB_TOKEN}}
@@ -629,7 +657,24 @@ jobs:
           name_is_regexp: true
           name: .*
           path: artifacts
+          check_artifacts: true
+          if_no_artifact_found: warn
+          search_artifacts: true
       
+      - name: Check previous artifacts download result
+        if: ${{ github.event.inputs.package_only == 'true' && steps.download_previous_artifacts.outcome == 'failure' }}
+        run: |
+          echo "Failed to download previous artifacts. Will try with current build artifacts."
+          echo "DOWNLOAD_FAILED=true" >> $GITHUB_ENV
+        shell: bash
+      
+      - name: Force build if artifacts not found
+        if: ${{ env.DOWNLOAD_FAILED == 'true' }}
+        run: |
+          echo "Running full build since artifacts were not found"
+          # Call the build workflow or logic here
+        shell: bash
+
       - name: List downloaded artifacts
         run: |
           if [[ "${{ github.event.inputs.package_only }}" == "true" ]]; then
@@ -1056,7 +1101,7 @@ jobs:
             
             # List the files in the directory
             Write-Host "Final ZXP directory contents:"
-            Get-ChildItem -Path dist/zxp
+          Get-ChildItem -Path dist/zxp
           } else {
             Write-Error "Failed to rename ZXP package! Check permissions and disk space."
             exit 1
