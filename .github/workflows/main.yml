@@ -1381,20 +1381,75 @@ jobs:
         run: |
           $version = "${{ needs.check-changes.outputs.tag_version }}"
           
-          if (Test-Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp") {
+          # First check the expected location
+          $originalZxpPath = "dist/zxp/com.youtubetoPremiereV2.cep.zxp"
+          $zxpExists = Test-Path $originalZxpPath
+          
+          if (-not $zxpExists) {
+            Write-Host "ZXP not found at expected path, searching in other locations..."
+            
+            # Check for ZXP files in multiple locations
+            $possibleLocations = @(
+              "dist/zxp/*.zxp",
+              "dist/*.zxp",
+              "*.zxp"
+            )
+            
+            $foundZxps = @()
+            foreach ($location in $possibleLocations) {
+              $files = Get-ChildItem -Path $location -ErrorAction SilentlyContinue
+              if ($files) {
+                $foundZxps += $files
+                Write-Host "Found ZXP files at $location"
+              }
+            }
+            
+            if ($foundZxps.Count -gt 0) {
+              # Use the largest ZXP file (most likely to be the complete one)
+              $largestZxp = $foundZxps | Sort-Object Length -Descending | Select-Object -First 1
+              Write-Host "Using ZXP file: $($largestZxp.FullName) (Size: $($largestZxp.Length) bytes)"
+              
+              # Create dist/zxp directory if it doesn't exist
+              if (-not (Test-Path "dist/zxp")) {
+                New-Item -ItemType Directory -Path "dist/zxp" -Force | Out-Null
+              }
+              
+              # Copy to expected location if not already there
+              if ($largestZxp.FullName -ne (Resolve-Path $originalZxpPath -ErrorAction SilentlyContinue)) {
+                Copy-Item -Path $largestZxp.FullName -Destination $originalZxpPath -Force
+                Write-Host "Copied ZXP to expected location: $originalZxpPath"
+              }
+              
+              $zxpExists = $true
+            }
+          }
+          
+          if ($zxpExists) {
             # Rename the ZXP file to include the version
             $newName = "YoutubetoPremiere-v$version.zxp"
-            Copy-Item -Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp" -Destination "dist/zxp/$newName" -Force
+            $newPath = "dist/zxp/$newName"
+            
+            # Make sure the destination directory exists
+            if (-not (Test-Path "dist/zxp")) {
+              New-Item -ItemType Directory -Path "dist/zxp" -Force | Out-Null
+            }
+            
+            Copy-Item -Path $originalZxpPath -Destination $newPath -Force
             Write-Host "Renamed ZXP package to: $newName"
             
-            # Remove the original file
-            Remove-Item -Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp" -Force
+            # Remove the original file only if it's different from the new one
+            if ($originalZxpPath -ne $newPath) {
+              Remove-Item -Path $originalZxpPath -Force -ErrorAction SilentlyContinue
+            }
             
             # List the files
-            Get-ChildItem -Path dist/zxp
+            Write-Host "Final ZXP files:"
+            Get-ChildItem -Path dist/zxp -Recurse | ForEach-Object {
+              Write-Host "  $($_.Name) ($($_.Length) bytes)"
+            }
           } else {
-            Write-Error "ZXP package was not found!"
-              exit 1
+            Write-Error "ZXP package was not found! This is a critical error."
+            exit 1
           }
 
       - name: Create Release
