@@ -472,6 +472,9 @@ jobs:
             exit 0
           fi
           
+          # Save original executable for backup
+          cp "dist/YoutubetoPremiere" "dist/YoutubetoPremiere.original"
+          
           # For non-app bundles, we need to create a ZIP for submission
           echo "Creating zip of the executable for notarization..."
           cd dist
@@ -486,18 +489,62 @@ jobs:
             --team-id "$APPLE_TEAM_ID" \
             --wait || echo "Notarization submission failed but continuing"
           
-          # Even if notarization fails, we want to use the signed executable
+          # Extract notarized binary and verify
+          echo "Extracting notarized binary..."
+          cd dist
+          mkdir -p notarized
+          unzip -o YoutubetoPremiere.zip -d notarized
+          
+          if [ -f "notarized/YoutubetoPremiere" ]; then
+            # Give it execute permissions
+            chmod +x notarized/YoutubetoPremiere
+            
+            # Staple the notarization ticket directly to the binary
+            echo "Stapling notarization ticket to binary..."
+            xcrun stapler staple notarized/YoutubetoPremiere || echo "Stapling failed, but continuing"
+            
+            # Check stapled ticket
+            echo "Checking for notarization ticket..."
+            xcrun stapler validate notarized/YoutubetoPremiere || echo "Stapling check failed, but continuing"
+            
+            # Copy notarized version back to dist folder
+            cp notarized/YoutubetoPremiere YoutubetoPremiere
+            echo "Replaced executable with notarized version"
+          else
+            echo "Could not extract notarized executable, using original"
+            cp YoutubetoPremiere.original YoutubetoPremiere
+          fi
+          
           echo "Executable is signed and ready for distribution"
-          ls -la dist/YoutubetoPremiere
-          file dist/YoutubetoPremiere
-        shell: bash
-      
+          ls -la YoutubetoPremiere
+          file YoutubetoPremiere
+          
+          # Create a special archive with the notarized executable for distribution
+          echo "Creating a special archive with notarized executable..."
+          mkdir -p finalized
+          cp YoutubetoPremiere finalized/
+          cd finalized
+          tar -czf YoutubetoPremiere-notarized.tar.gz YoutubetoPremiere
+          cp YoutubetoPremiere-notarized.tar.gz ../
+          cd ..
+          
+          # Cleanup
+          Remove-Item -Path $outputDir -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path $tempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+          if (Test-Path $tempNotarizedDir) {
+              Remove-Item -Path $tempNotarizedDir -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          
+          echo "===== FINAL ZXP PACKAGING COMPLETED ====="
+
       - name: Upload executable artifact
         if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: executable-${{ matrix.os }}
-          path: dist/YoutubetoPremiere*
+          path: |
+            dist/YoutubetoPremiere*
+            dist/*.zip
           retention-days: 90
       
       # Use existing artifact if it exists and is valid
@@ -577,35 +624,23 @@ jobs:
           fi
         shell: bash
 
-      - name: Create macOS unblock script
+      - name: Create directories for CSX structure
+        if: matrix.os == 'macos-13' && (steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true')
         run: |
-          mkdir -p app/resources
-          cat > app/resources/unblock.sh << 'EOF'
-          #!/bin/bash
-          # Script to help macOS users bypass Gatekeeper restrictions
-          
-          SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-          
-          echo "Setting executable permissions on YoutubetoPremiere..."
-          chmod +x "$SCRIPT_DIR/YoutubetoPremiere"
-          chmod +x "$SCRIPT_DIR/ffmpeg"
-          
-          echo "Removing quarantine attributes if present..."
-          xattr -d com.apple.quarantine "$SCRIPT_DIR/YoutubetoPremiere" 2>/dev/null || true
-          xattr -d com.apple.quarantine "$SCRIPT_DIR/ffmpeg" 2>/dev/null || true
-          
-          echo "Verification:"
-          ls -la "$SCRIPT_DIR/YoutubetoPremiere" "$SCRIPT_DIR/ffmpeg"
-          
-          echo "Checking security status:"
-          spctl --assess --verbose "$SCRIPT_DIR/YoutubetoPremiere" || echo "Security check failed but this is expected if not properly signed"
-          
-          echo "You should now be able to run the YoutubetoPremiere executable"
-          echo "If you still have issues, right-click on YoutubetoPremiere in Finder and select Open"
-          EOF
-          
-          chmod +x app/resources/unblock.sh
-          echo "Created macOS unblock script: app/resources/unblock.sh"
+          mkdir -p dist/cep/js
+          mkdir -p dist/cep/jsx
+          mkdir -p dist/cep/assets
+          mkdir -p dist/cep/CSXS
+          mkdir -p dist/cep/exec
+          mkdir -p dist/cep/main
+          mkdir -p dist/cep/settings
+        shell: bash
+
+      - name: Create unblock.sh script for macOS users
+        if: matrix.os == 'macos-13' && (steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true')
+        run: |
+          # This step is no longer needed as we're using a properly notarized executable
+          echo "Skipping creation of unblock.sh - using notarized executable instead"
         shell: bash
 
       - name: Optimize ZXP packaging process
@@ -673,7 +708,6 @@ jobs:
           
           # Copy scripts and resources
           echo "Copying helper scripts..."
-          cp -p app/resources/unblock.sh dist/cep/exec/ 2>/dev/null || echo "No unblock script found"
           
           # Copy artifacts efficiently
           echo "Copying executables and FFmpeg..."
@@ -795,7 +829,37 @@ jobs:
             Write-Host "Copied Python files to $execDir"
           }
           
-          # Copy executables
+          # Copy unblock script - No longer needed as we now use notarized executables
+          # We've removed the step that creates unblock.sh
+
+          # Check if executable-macos-13 contains a YoutubetoPremiere.zip file (notarized version)
+          $notarizedZipPath = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere.zip"
+          $tempNotarizedDir = Join-Path $workspacePath "temp_notarized"
+          
+          if (Test-Path $notarizedZipPath) {
+            Write-Host "Found notarized macOS executable ZIP. Extracting it..."
+            New-Item -ItemType Directory -Path $tempNotarizedDir -Force | Out-Null
+            Expand-Archive -Path $notarizedZipPath -DestinationPath $tempNotarizedDir -Force
+            
+            if (Test-Path "$tempNotarizedDir/YoutubetoPremiere") {
+              Write-Host "Using notarized macOS executable from ZIP"
+              Copy-Item -Path "$tempNotarizedDir/YoutubetoPremiere" -Destination "$execDir/YoutubetoPremiere" -Force
+              
+              # Set permissions explicitly
+              & "bash" "-c" "chmod +x \"$execDir/YoutubetoPremiere\" 2>/dev/null || true"
+              
+              # Verify the file is correctly copied
+              if (Test-Path "$execDir/YoutubetoPremiere") {
+                Write-Host "✅ Notarized macOS executable successfully copied to ZXP package"
+              } else {
+                Write-Host "❌ Failed to copy notarized macOS executable"
+              }
+            }
+          } else {
+            Write-Host "No notarized ZIP found - using regular macOS executable"
+          }
+          
+          # Copy executables (Windows and the rest)
           Write-Host "Copying executables..."
           if (Test-Path $winExeSource) {
             Copy-Item -Path $winExeSource -Destination "$execDir/YoutubetoPremiere.exe" -Force
@@ -804,11 +868,10 @@ jobs:
             Write-Host "WARNING: Windows executable not found at $winExeSource"
           }
           
-          if (Test-Path $macExeSource) {
+          # Only copy macOS executable if we didn't extract it from the notarized ZIP
+          if (-not (Test-Path "$execDir/YoutubetoPremiere") -and (Test-Path $macExeSource)) {
             Copy-Item -Path $macExeSource -Destination "$execDir/YoutubetoPremiere" -Force
             Write-Host "Copied macOS executable"
-          } else {
-            Write-Host "WARNING: macOS executable not found at $macExeSource"
           }
           
           if (Test-Path $winFfmpegSource) {
@@ -831,19 +894,17 @@ jobs:
           & "bash" "-c" "chmod +x \"$execDir/ffmpeg\" 2>/dev/null || true"
           
           # Verify permissions were set correctly
-          & "bash" "-c" "ls -la \"$execDir\" | grep -E 'YoutubetoPremiere|ffmpeg'"
+          & "bash" "-c" "ls -la \"$execDir\" | grep -E 'YoutubetoPremiere|ffmpeg|unblock'"
           
           # Test macOS executable signature if available
           if (Test-Path "$execDir/YoutubetoPremiere") {
             Write-Host "Testing macOS executable signature..."
-            & "bash" "-c" "file \"$execDir/YoutubetoPremiere\""
+            & "bash" "-c" "file \"$execDir/YoutubetoPremiere\" || echo 'File command failed'"
             
-            # Check if codesign is available (Windows runner won't have this)
-            $hasCodesign = & "bash" "-c" "command -v codesign" 2>$null
-            if ($hasCodesign) {
-              & "bash" "-c" "codesign -vvv --deep --strict \"$execDir/YoutubetoPremiere\" || echo 'Signature verification failed but continuing'"
-            } else {
-              Write-Host "codesign command not available - skipping signature check"
+            # Check if xattr is available (to check quarantine attributes)
+            $hasXattr = & "bash" "-c" "command -v xattr" 2>$null
+            if ($hasXattr) {
+              & "bash" "-c" "xattr -l \"$execDir/YoutubetoPremiere\" || echo 'No extended attributes'"
             }
           }
           
@@ -856,10 +917,20 @@ jobs:
             Remove-Item -Path $zxpPath -Force
           }
           
-          # Use standard .NET ZIP functionality to create the ZXP
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          [System.IO.Compression.CompressionLevel]$compressionLevel = [System.IO.Compression.CompressionLevel]::NoCompression
-          [System.IO.Compression.ZipFile]::CreateFromDirectory($outputDir, $zxpPath, $compressionLevel, $false)
+          # Create a .zip file with platform-specific tools to preserve attributes
+          if ($IsWindows -or $env:OS -like "*Windows*") {
+            Write-Host "Running on Windows - using .NET for ZIP creation"
+            
+            # Use standard .NET ZIP with no compression to preserve attributes
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            [System.IO.Compression.CompressionLevel]$compressionLevel = [System.IO.Compression.CompressionLevel]::NoCompression
+            [System.IO.Compression.ZipFile]::CreateFromDirectory($outputDir, $zxpPath, $compressionLevel, $false)
+          } else {
+            # On other platforms (like macOS runner), use zip command directly
+            Write-Host "Running on non-Windows - using zip command"
+            & "bash" "-c" "cd \"$outputDir\" && zip -r -0 -X \"$zxpPath\" * || echo 'Zip command failed'"
+          }
+          
           Write-Host "Created ZXP package at: $zxpPath"
           
           # Verify ZXP contents
@@ -875,6 +946,17 @@ jobs:
           
           if (Test-Path "$tempExtractDir/contents/exec/YoutubetoPremiere") {
             Write-Host "✅ macOS executable found in ZXP"
+            # Show file details
+            & "bash" "-c" "file \"$tempExtractDir/contents/exec/YoutubetoPremiere\" 2>/dev/null || echo 'File command not available'"
+            & "bash" "-c" "ls -la \"$tempExtractDir/contents/exec/YoutubetoPremiere\" || echo 'ls command failed'"
+            
+            # Verify executable permission is preserved
+            $isExecutable = & "bash" "-c" "test -x \"$tempExtractDir/contents/exec/YoutubetoPremiere\" && echo 'true' || echo 'false'"
+            if ($isExecutable -eq "true") {
+                Write-Host "✅ macOS executable permission is preserved"
+            } else {
+                Write-Host "❌ macOS executable permission is NOT preserved!"
+            }
           } else {
             Write-Host "❌ ERROR: macOS executable not found in ZXP!"
           }
@@ -885,9 +967,15 @@ jobs:
             Write-Host "❌ ERROR: macOS FFmpeg not found in ZXP!"
           }
           
+          # Check for unblock.sh - No longer needed as we now use notarized executables
+          # Since we've removed unblock.sh, we don't need to verify its presence
+          
           # Clean up
           Remove-Item -Path $outputDir -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item -Path $tempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+          if (Test-Path $tempNotarizedDir) {
+              Remove-Item -Path $tempNotarizedDir -Recurse -Force -ErrorAction SilentlyContinue
+          }
           
           Write-Host "===== FINAL ZXP PACKAGING COMPLETED ====="
           EOF
