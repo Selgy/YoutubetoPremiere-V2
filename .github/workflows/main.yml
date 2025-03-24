@@ -139,6 +139,12 @@ jobs:
           echo "ProductName=YouTube to Premiere Pro" >> version.txt
           echo "ProductVersion=$VERSION" >> version.txt
 
+          # Ensure sounds directory exists
+          if (!(Test-Path "app/sounds")) {
+            Write-Host "Creating app/sounds directory as it doesn't exist"
+            New-Item -Path "app/sounds" -ItemType Directory -Force
+          }
+
           # Build executable with PyInstaller
           pyinstaller --name YoutubetoPremiere --onefile `
             --add-data "app/sounds;sounds" `
@@ -148,10 +154,22 @@ jobs:
             --version-file version.txt `
             app/YoutubetoPremiere.py
           
-          # Create installer with NSIS
-          mkdir -p dist/installer
-          cp app/*.py dist/YoutubetoPremiere/
-          cp -r app/sounds dist/YoutubetoPremiere/
+          # Create output directory for Python files
+          New-Item -Path "dist/YoutubetoPremiere" -ItemType Directory -Force
+          
+          # Copy Python files
+          if (Test-Path "app/*.py") {
+            Copy-Item -Path "app/*.py" -Destination "dist/YoutubetoPremiere/" -Force
+          }
+          
+          # Copy sounds directory if it exists
+          if (Test-Path "app/sounds") {
+            New-Item -Path "dist/YoutubetoPremiere/sounds" -ItemType Directory -Force -ErrorAction SilentlyContinue
+            Copy-Item -Path "app/sounds/*" -Destination "dist/YoutubetoPremiere/sounds/" -Force -ErrorAction SilentlyContinue
+          }
+          
+          # Create installer directory if it doesn't exist
+          New-Item -Path "dist/installer" -ItemType Directory -Force
         shell: pwsh
       
       - name: Build macOS executable
@@ -192,24 +210,24 @@ jobs:
           set -e
           
           # Get the directory where this script is located
-          DIR="\$( cd "\$( dirname "\${BASH_SOURCE[0]}" )" && pwd )"
-          PARENT_DIR="\$( dirname "\$DIR" )"
-          RESOURCES_DIR="\$PARENT_DIR/Resources"
-          PYTHON_DIR="\$RESOURCES_DIR/Python"
+          DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+          PARENT_DIR="$( dirname "$DIR" )"
+          RESOURCES_DIR="$PARENT_DIR/Resources"
+          PYTHON_DIR="$RESOURCES_DIR/Python"
           
           # Find Python 3 on the system
-          PYTHON_BIN=\$(which python3)
-          if [ ! -x "\$PYTHON_BIN" ]; then
-              PYTHON_BIN=\$(which python)
+          PYTHON_BIN=$(which python3)
+          if [ ! -x "$PYTHON_BIN" ]; then
+              PYTHON_BIN=$(which python)
           fi
           
           # Export environment variables
-          export PYTHONPATH="\$PYTHON_DIR:\$PYTHONPATH"
-          export PATH="\$DIR:\$PATH"
+          export PYTHONPATH="$PYTHON_DIR:$PYTHONPATH"
+          export PATH="$DIR:$PATH"
           
           # Run Python script
-          cd "\$RESOURCES_DIR"
-          "\$PYTHON_BIN" "\$PYTHON_DIR/YoutubetoPremiere.py" "\$@"
+          cd "$RESOURCES_DIR"
+          "$PYTHON_BIN" "$PYTHON_DIR/YoutubetoPremiere.py" "$@"
           EOF
           
           # Copy Python files and resources
@@ -225,30 +243,30 @@ jobs:
           set -e
           
           # Get the absolute path of this script
-          SCRIPT_PATH="\$( cd "\$(dirname "\$0")" && pwd )/\$(basename "\$0")"
-          SCRIPT_DIR="\$(dirname "\$SCRIPT_PATH")"
+          SCRIPT_PATH="$( cd "$(dirname "$0")" && pwd )/$(basename "$0")"
+          SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
           
           # Find Python 3 on the system
-          PYTHON_BIN=\$(which python3)
-          if [ ! -x "\$PYTHON_BIN" ]; then
-              PYTHON_BIN=\$(which python)
+          PYTHON_BIN=$(which python3)
+          if [ ! -x "$PYTHON_BIN" ]; then
+              PYTHON_BIN=$(which python)
           fi
           
-          if [ ! -x "\$PYTHON_BIN" ]; then
+          if [ ! -x "$PYTHON_BIN" ]; then
               echo "Error: Python 3 is required but was not found on your system."
               exit 1
           fi
           
-          APP_FILE="\$SCRIPT_DIR/YoutubetoPremiere.py"
-          if [ ! -f "\$APP_FILE" ]; then
-              APP_FILE="\$SCRIPT_DIR/app/YoutubetoPremiere.py"
+          APP_FILE="$SCRIPT_DIR/YoutubetoPremiere.py"
+          if [ ! -f "$APP_FILE" ]; then
+              APP_FILE="$SCRIPT_DIR/app/YoutubetoPremiere.py"
           fi
           
-          echo "Using Python: \$PYTHON_BIN"
-          echo "Using app file: \$APP_FILE"
+          echo "Using Python: $PYTHON_BIN"
+          echo "Using app file: $APP_FILE"
           
           # Run Python script with the full path
-          exec "\$PYTHON_BIN" "\$APP_FILE" "\$@"
+          exec "$PYTHON_BIN" "$APP_FILE" "$@"
           EOF
           
           chmod +x dist/YoutubetoPremiere
@@ -336,9 +354,21 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           # Download NSIS
-          Invoke-WebRequest -Uri "https://nsis.sourceforge.io/mediawiki/images/c/c9/Winget-NSIS-3.09.zip" -OutFile "nsis.zip"
-          Expand-Archive -Path "nsis.zip" -DestinationPath "C:\NSIS"
-          $NsisPath = "C:\NSIS\makensis.exe"
+          Write-Host "Downloading NSIS installer..."
+          Invoke-WebRequest -Uri "https://sourceforge.net/projects/nsis/files/NSIS%203/3.09/nsis-3.09-setup.exe/download" -OutFile "nsis-setup.exe"
+          
+          # Install NSIS
+          Write-Host "Installing NSIS..."
+          Start-Process -FilePath "nsis-setup.exe" -ArgumentList "/S" -Wait
+          $NsisPath = "C:\Program Files (x86)\NSIS\makensis.exe"
+          
+          # Verify NSIS installation
+          if (!(Test-Path $NsisPath)) {
+            Write-Host "NSIS not found at expected path. Trying alternative installation method..."
+            # Alternative: Install via Chocolatey
+            choco install nsis -y
+            $NsisPath = "C:\Program Files (x86)\NSIS\makensis.exe"
+          }
           
           # Create installer script
           $InstallerScript = @"
@@ -349,8 +379,15 @@ jobs:
           OutFile "YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe"
           InstallDir "\$PROGRAMFILES\YoutubetoPremiere"
           
-          !define MUI_ICON "app\sounds\icon.ico"
-          !define MUI_UNICON "app\sounds\icon.ico"
+          # Use default icon if app/sounds/icon.ico not available
+          !if /FileExists "app\sounds\icon.ico"
+            !define MUI_ICON "app\sounds\icon.ico"
+            !define MUI_UNICON "app\sounds\icon.ico"
+          !else
+            # Use default icon
+            !define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
+            !define MUI_UNICON "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
+          !endif
           
           !insertmacro MUI_PAGE_WELCOME
           !insertmacro MUI_PAGE_DIRECTORY
@@ -365,12 +402,19 @@ jobs:
           Section "Install"
             SetOutPath "\$INSTDIR"
             
-            # Application Files
-            File /r "dist\YoutubetoPremiere\*.*"
+            # Main executable
+            File "dist\YoutubetoPremiere.exe"
             
-            # Add the ZXP to the installer
+            # Additional files if they exist
+            !if /FileExists "dist\YoutubetoPremiere\*.*"
+              File /r "dist\YoutubetoPremiere\*.*"
+            !endif
+            
+            # Add the ZXP to the installer if it exists
             CreateDirectory "\$INSTDIR\zxp"
-            File /oname="\$INSTDIR\zxp\YoutubetoPremiere-${{ needs.check-version.outputs.version }}.zxp" "dist\zxp\YoutubetoPremiere-v${{ needs.check-version.outputs.version }}.zxp"
+            !if /FileExists "dist\zxp\YoutubetoPremiere-v${{ needs.check-version.outputs.version }}.zxp"
+              File /oname="\$INSTDIR\zxp\YoutubetoPremiere-${{ needs.check-version.outputs.version }}.zxp" "dist\zxp\YoutubetoPremiere-v${{ needs.check-version.outputs.version }}.zxp"
+            !endif
             
             # Create shortcut
             CreateDirectory "\$SMPROGRAMS\YouTube to Premiere Pro"
@@ -414,13 +458,25 @@ jobs:
           # Create output directory
           New-Item -ItemType Directory -Path "dist\installer" -Force | Out-Null
           
+          # Check if YoutubetoPremiere.exe exists
+          if (!(Test-Path "dist\YoutubetoPremiere.exe")) {
+            Write-Error "Error: YoutubetoPremiere.exe not found in dist directory. Installer creation failed."
+            exit 1
+          }
+          
           # Run NSIS to create installer
+          Write-Host "Running NSIS to create installer..."
           if (Test-Path $NsisPath) {
             & $NsisPath "installer.nsi"
-            Move-Item -Path "YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe" -Destination "dist\installer\" -Force
-            Write-Output "Installer created: dist\installer\YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe"
+            if (Test-Path "YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe") {
+              Move-Item -Path "YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe" -Destination "dist\installer\" -Force
+              Write-Host "Installer created: dist\installer\YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe"
+            } else {
+              Write-Error "Error: Installer was not created. Check NSIS output for errors."
+              exit 1
+            }
           } else {
-            Write-Error "NSIS not found at $NsisPath. Installer creation failed."
+            Write-Error "Error: NSIS not found at $NsisPath. Installer creation failed."
             exit 1
           }
         shell: pwsh
@@ -487,50 +543,152 @@ jobs:
         with:
           path: artifacts
       
-      - name: Prepare files for ZXP
+      - name: Verify Downloaded Artifacts
         run: |
-          mkdir -p dist/cep/exec/sounds
+          # Check if artifacts were downloaded successfully
+          Write-Host "Checking downloaded artifacts..."
           
-          # Copy Windows executable
-          cp artifacts/executable-windows-latest/YoutubetoPremiere.exe dist/cep/exec/
-          
-          # Copy macOS executable 
-          cp artifacts/executable-macos-13/YoutubetoPremiere dist/cep/exec/
-          
-          # Copy FFmpeg executables
-          cp artifacts/ffmpeg-windows-latest/ffmpeg.exe dist/cep/exec/
-          cp artifacts/ffmpeg-macos-13/ffmpeg dist/cep/exec/
-          
-          # Copy Python files
-          cp app/*.py dist/cep/exec/
-          
-          # Copy sounds if they exist
-          if (Test-Path app/sounds) {
-            cp -r app/sounds/* dist/cep/exec/sounds/
+          # List files in artifacts directory
+          Get-ChildItem -Path artifacts -Recurse | ForEach-Object {
+            Write-Host "  $($_.FullName)"
           }
           
-          # Create fix-permissions.sh script
-          $fixPermissionsScript = @'
-          #!/bin/bash
-          # Fix permissions for macOS executables
-          SCRIPT_DIR="$(dirname "$0")"
-          chmod +x "$SCRIPT_DIR/YoutubetoPremiere" 2>/dev/null || true
-          chmod +x "$SCRIPT_DIR/ffmpeg" 2>/dev/null || true
-          xattr -d com.apple.quarantine "$SCRIPT_DIR/YoutubetoPremiere" 2>/dev/null || true
-          xattr -d com.apple.quarantine "$SCRIPT_DIR/ffmpeg" 2>/dev/null || true
-          echo "Permissions fixed for macOS executables"
-          '@
+          # Check Windows executable
+          if (Test-Path "artifacts/executable-windows-latest/YoutubetoPremiere.exe") {
+            Write-Host "✅ Windows executable found"
+          } else {
+            Write-Host "❌ Windows executable NOT found" -ForegroundColor Red
+          }
           
-          Set-Content -Path dist/cep/exec/fix-permissions.sh -Value $fixPermissionsScript -NoNewline
+          # Check macOS executable
+          if (Test-Path "artifacts/executable-macos-13/YoutubetoPremiere") {
+            Write-Host "✅ macOS executable found"
+          } else {
+            Write-Host "❌ macOS executable NOT found" -ForegroundColor Red
+          }
           
-          # Copy README to exec folder
-          if (Test-Path app/exec/README.md) {
-            cp app/exec/README.md dist/cep/exec/
+          # Check Windows FFmpeg
+          if (Test-Path "artifacts/ffmpeg-windows-latest/ffmpeg.exe") {
+            Write-Host "✅ Windows FFmpeg found"
+          } else {
+            Write-Host "❌ Windows FFmpeg NOT found" -ForegroundColor Red
+          }
+          
+          # Check macOS FFmpeg
+          if (Test-Path "artifacts/ffmpeg-macos-13/ffmpeg") {
+            Write-Host "✅ macOS FFmpeg found"
+          } else {
+            Write-Host "❌ macOS FFmpeg NOT found" -ForegroundColor Red
+          }
+        shell: pwsh
+      
+      - name: Prepare files for ZXP
+        run: |
+          # Create required directory structure
+          New-Item -Path "dist/cep/exec/sounds" -ItemType Directory -Force | Out-Null
+          
+          # Copy Windows executable
+          if (Test-Path "artifacts/executable-windows-latest/YoutubetoPremiere.exe") {
+            Copy-Item -Path "artifacts/executable-windows-latest/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -Force
+            Write-Host "✅ Copied Windows executable to dist/cep/exec/"
+          } else {
+            Write-Host "❌ Windows executable NOT found" -ForegroundColor Red
+            exit 1
+          }
+          
+          # Copy macOS executable 
+          if (Test-Path "artifacts/executable-macos-13/YoutubetoPremiere") {
+            Copy-Item -Path "artifacts/executable-macos-13/YoutubetoPremiere" -Destination "dist/cep/exec/" -Force
+            Write-Host "✅ Copied macOS executable to dist/cep/exec/"
+          } else {
+            Write-Host "❌ macOS executable NOT found" -ForegroundColor Red
+            exit 1
+          }
+          
+          # Copy FFmpeg executables
+          if (Test-Path "artifacts/ffmpeg-windows-latest/ffmpeg.exe") {
+            Copy-Item -Path "artifacts/ffmpeg-windows-latest/ffmpeg.exe" -Destination "dist/cep/exec/" -Force
+            Write-Host "✅ Copied Windows FFmpeg to dist/cep/exec/"
+          } else {
+            Write-Host "❌ Windows FFmpeg NOT found" -ForegroundColor Red
+            exit 1
+          }
+          
+          if (Test-Path "artifacts/ffmpeg-macos-13/ffmpeg") {
+            Copy-Item -Path "artifacts/ffmpeg-macos-13/ffmpeg" -Destination "dist/cep/exec/" -Force
+            Write-Host "✅ Copied macOS FFmpeg to dist/cep/exec/"
+          } else {
+            Write-Host "❌ macOS FFmpeg NOT found" -ForegroundColor Red
+            exit 1
+          }
+          
+          # Copy Python files from app directory (main files)
+          Write-Host "Copying Python files from app directory..."
+          Get-ChildItem -Path "app" -Filter "*.py" | ForEach-Object {
+            Copy-Item -Path $_.FullName -Destination "dist/cep/exec/" -Force
+            Write-Host "  Copied $($_.Name) to dist/cep/exec/"
+          }
+          
+          # Copy sounds directory from app/exec
+          if (Test-Path "app/exec/sounds") {
+            Write-Host "Copying sounds from app/exec/sounds..."
+            Get-ChildItem -Path "app/exec/sounds" | ForEach-Object {
+              Copy-Item -Path $_.FullName -Destination "dist/cep/exec/sounds/" -Force
+              Write-Host "  Copied $($_.Name) to dist/cep/exec/sounds/"
+            }
+          } else {
+            Write-Host "⚠️ Sound files directory not found at app/exec/sounds" -ForegroundColor Yellow
+          }
+          
+          # Create fix-permissions.sh script for macOS
+          Write-Host "Creating fix-permissions.sh script..."
+          # Copy from existing one or create it from scratch
+          if (Test-Path "app/exec/fix-permissions.sh") {
+            Copy-Item -Path "app/exec/fix-permissions.sh" -Destination "dist/cep/exec/" -Force
+          } else {
+            # Create bash script content as a simple string
+            $fixScript = "#!/bin/bash`n"
+            $fixScript += "# Fix permissions for macOS executables`n"
+            $fixScript += "SCRIPT_DIR=`"```$(dirname ```$0)`"`n"
+            $fixScript += "chmod +x ```"```$SCRIPT_DIR/YoutubetoPremiere```" 2>/dev/null || true`n"
+            $fixScript += "chmod +x ```"```$SCRIPT_DIR/ffmpeg```" 2>/dev/null || true`n"
+            $fixScript += "xattr -d com.apple.quarantine ```"```$SCRIPT_DIR/YoutubetoPremiere```" 2>/dev/null || true`n"
+            $fixScript += "xattr -d com.apple.quarantine ```"```$SCRIPT_DIR/ffmpeg```" 2>/dev/null || true`n"
+            $fixScript += "echo ```"Permissions fixed for macOS executables```"`n"
+            Set-Content -Path "dist/cep/exec/fix-permissions.sh" -Value $fixScript -NoNewline
+          }
+          
+          # Copy README from app/exec if it exists
+          if (Test-Path "app/exec/README.md") {
+            Copy-Item -Path "app/exec/README.md" -Destination "dist/cep/exec/" -Force
+            Write-Host "✅ Copied README.md from app/exec/"
+          } else {
+            Write-Host "Creating README.md..."
+            # Create readme content line by line
+            $readmeContent = "# YouTube to Premiere Pro Extension`n`n"
+            $readmeContent += "This directory contains the executables needed for the YouTube to Premiere Pro extension.`n`n"
+            $readmeContent += "## Executables`n`n"
+            $readmeContent += "- YoutubetoPremiere.exe - Windows executable`n"
+            $readmeContent += "- YoutubetoPremiere - macOS executable`n"
+            $readmeContent += "- ffmpeg.exe - FFmpeg for Windows`n"
+            $readmeContent += "- ffmpeg - FFmpeg for macOS`n"
+            $readmeContent += "- fix-permissions.sh - Script to fix permissions on macOS`n`n"
+            $readmeContent += "## macOS Permission Issues`n`n"
+            $readmeContent += "If you encounter permission issues on macOS, run this command in Terminal:`n`n"
+            $readmeContent += "```bash`n"
+            $readmeContent += "chmod +x ```"/Library/Application Support/Adobe/CEP/extensions/com.youtubetoPremiereV2.cep/exec/fix-permissions.sh```"`n"
+            $readmeContent += "```"/Library/Application Support/Adobe/CEP/extensions/com.youtubetoPremiereV2.cep/exec/fix-permissions.sh```"`n"
+            $readmeContent += "```"
+            Set-Content -Path "dist/cep/exec/README.md" -Value $readmeContent
           }
           
           # Display content of exec directory
           Write-Host "Content of exec directory:"
-          Get-ChildItem dist/cep/exec | ForEach-Object { Write-Host "  $($_.Name) - $($_.Length) bytes" }
+          Get-ChildItem -Path "dist/cep/exec" -Recurse | ForEach-Object {
+            $fileSize = if ($_.PSIsContainer) { "Directory" } else { "$($_.Length) bytes" }
+            $indent = "  " * ($_.FullName.Split([IO.Path]::DirectorySeparatorChar).Count - $_.FullName.Split([IO.Path]::DirectorySeparatorChar).IndexOf("exec") - 1)
+            Write-Host "$indent$($_.Name) - $fileSize"
+          }
         shell: pwsh
       
       - name: Build TypeScript
