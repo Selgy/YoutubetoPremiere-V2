@@ -246,21 +246,27 @@ jobs:
 
           echo "Checking for artifact: $ARTIFACT_NAME"
           
-          # Try to download the artifact using GitHub API
-          ARTIFACTS_RESPONSE=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts?name=$ARTIFACT_NAME")
-          
-          # Check if artifacts exist and are not expired
-          ARTIFACT_COUNT=$(echo $ARTIFACTS_RESPONSE | jq '.total_count')
-          
-          if [[ "$ARTIFACT_COUNT" -gt 0 ]]; then
-            echo "Found $ARTIFACT_COUNT existing artifact(s)"
-            ARTIFACT_EXISTS=true
+          # For macOS, always rebuild to apply signature
+          if [[ "${{ matrix.os }}" == "macos-13" ]]; then
+            echo "Forces rebuilding macOS executable to apply proper signing"
+            echo "artifact_exists=false" >> $GITHUB_OUTPUT
           else
-            echo "No existing artifacts found"
+            # Try to download the artifact using GitHub API
+            ARTIFACTS_RESPONSE=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/artifacts?name=$ARTIFACT_NAME")
+            
+            # Check if artifacts exist and are not expired
+            ARTIFACT_COUNT=$(echo $ARTIFACTS_RESPONSE | jq '.total_count')
+            
+            if [[ "$ARTIFACT_COUNT" -gt 0 ]]; then
+              echo "Found $ARTIFACT_COUNT existing artifact(s)"
+              ARTIFACT_EXISTS=true
+            else
+              echo "No existing artifacts found"
+            fi
+            
+            echo "artifact_exists=$ARTIFACT_EXISTS" >> $GITHUB_OUTPUT
           fi
-          
-          echo "artifact_exists=$ARTIFACT_EXISTS" >> $GITHUB_OUTPUT
         shell: bash
       
       - name: Download existing artifact
@@ -317,6 +323,17 @@ jobs:
             echo "is_windows=true" >> $GITHUB_OUTPUT
           else
             echo "is_windows=false" >> $GITHUB_OUTPUT
+            
+            # Check if Apple signing certificates are available
+            if [[ -z "${{ secrets.SIGNING_CERTIFICATE }}" || -z "${{ secrets.APPLE_ID }}" || -z "${{ secrets.APPLE_ID_PASSWORD }}" || -z "${{ secrets.APPLE_TEAM_ID }}" ]]; then
+              echo "::warning::Missing Apple signing credentials! The macOS executable will not be properly signed and may be blocked by Gatekeeper on macOS."
+              echo "::warning::Please configure SIGNING_CERTIFICATE, APPLE_ID, APPLE_ID_PASSWORD, and APPLE_TEAM_ID secrets."
+              echo "::warning::Users on macOS will need to manually bypass Gatekeeper to run the application."
+              echo "has_signing_creds=false" >> $GITHUB_OUTPUT
+            else
+              echo "has_signing_creds=true" >> $GITHUB_OUTPUT
+              echo "Apple signing credentials detected - the macOS executable will be properly signed."
+            fi
           fi
         shell: bash
       
@@ -800,6 +817,20 @@ jobs:
           
           # Verify permissions were set correctly
           & "bash" "-c" "ls -la \"$execDir\" | grep -E 'YoutubetoPremiere|ffmpeg'"
+          
+          # Test macOS executable signature if available
+          if (Test-Path "$execDir/YoutubetoPremiere") {
+            Write-Host "Testing macOS executable signature..."
+            & "bash" "-c" "file \"$execDir/YoutubetoPremiere\""
+            
+            # Check if codesign is available (Windows runner won't have this)
+            $hasCodesign = & "bash" "-c" "command -v codesign" 2>$null
+            if ($hasCodesign) {
+              & "bash" "-c" "codesign -vvv --deep --strict \"$execDir/YoutubetoPremiere\" || echo 'Signature verification failed but continuing'"
+            } else {
+              Write-Host "codesign command not available - skipping signature check"
+            }
+          }
           
           # Create ZXP package
           Write-Host "Creating ZXP package..."
