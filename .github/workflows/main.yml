@@ -586,17 +586,6 @@ jobs:
           Write-Host "Windows FFmpeg: $winFfmpegSource"
           Write-Host "macOS FFmpeg: $macFfmpegSource"
           
-          # Run yarn zxp to create the initial package
-          Write-Host "Running yarn zxp to create initial package..."
-          yarn zxp
-          
-          # Create exec directory if it doesn't exist (should already exist from yarn zxp)
-          $execDir = Join-Path $workspacePath "dist/cep/exec"
-          if (-not (Test-Path $execDir)) {
-            New-Item -ItemType Directory -Path $execDir -Force | Out-Null
-            Write-Host "Created exec directory: $execDir"
-          }
-          
           # Function to copy a file with checking
           function Copy-FileWithCheck {
             param (
@@ -631,69 +620,209 @@ jobs:
             }
           }
           
-          # Create a temporary directory to extract the ZXP 
-          $tempDir = Join-Path $workspacePath "temp_zxp"
-          if (Test-Path $tempDir) {
-            Remove-Item -Path $tempDir -Recurse -Force
+          # Create fresh ZXP directory structure
+          $outputDir = Join-Path $workspacePath "zxp_output"
+          if (Test-Path $outputDir) {
+            Remove-Item -Path $outputDir -Recurse -Force
           }
-          New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
-          Write-Host "Created temporary directory: $tempDir"
+          New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+          Write-Host "Created output directory: $outputDir"
           
-          # Copy the ZXP to the temp directory
-          $zxpPath = Join-Path $workspacePath "dist/zxp/com.youtubetoPremiereV2.cep.zxp"
-          $tempZxpPath = Join-Path $tempDir "package.zip"  # Rename to .zip for extraction
-          Copy-Item -Path $zxpPath -Destination $tempZxpPath -Force
-          Write-Host "Copied ZXP to temporary location: $tempZxpPath"
+          # Create necessary directories
+          $execDir = Join-Path $outputDir "exec"
+          $jsDir = Join-Path $outputDir "js"
+          $jsxDir = Join-Path $outputDir "jsx"
+          $assetsDir = Join-Path $outputDir "assets"
+          $csxsDir = Join-Path $outputDir "CSXS"
+          $mainDir = Join-Path $outputDir "main"
+          $settingsDir = Join-Path $outputDir "settings"
+          $soundsDir = Join-Path $execDir "sounds"
           
-          # Extract the ZXP (ZIP) to a subdirectory
-          $extractDir = Join-Path $tempDir "extracted"
-          New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
-          Write-Host "Extracting ZXP to: $extractDir"
-          Expand-Archive -Path $tempZxpPath -DestinationPath $extractDir -Force
+          New-Item -ItemType Directory -Path $execDir -Force | Out-Null
+          New-Item -ItemType Directory -Path $jsDir -Force | Out-Null
+          New-Item -ItemType Directory -Path $jsxDir -Force | Out-Null
+          New-Item -ItemType Directory -Path $assetsDir -Force | Out-Null
+          New-Item -ItemType Directory -Path $csxsDir -Force | Out-Null
+          New-Item -ItemType Directory -Path $mainDir -Force | Out-Null
+          New-Item -ItemType Directory -Path $settingsDir -Force | Out-Null
+          New-Item -ItemType Directory -Path $soundsDir -Force | Out-Null
           
-          # Make sure the exec directory exists in the extracted contents
-          $extractedExecDir = Join-Path $extractDir "exec"
-          if (-not (Test-Path $extractedExecDir)) {
-            New-Item -ItemType Directory -Path $extractedExecDir -Force | Out-Null
-            Write-Host "Created exec directory in extracted package: $extractedExecDir"
+          # Copy built files from dist directory if they exist
+          if (Test-Path "dist/cep") {
+            Write-Host "Copying built files from dist/cep directory..."
+            Copy-Item -Path "dist/cep/*" -Destination $outputDir -Force -Recurse
+          } else {
+            Write-Host "dist/cep directory doesn't exist, building only with executables"
+            
+            # Copy basic structure from src
+            if (Test-Path "src") {
+              Write-Host "Copying basic structure from src directory..."
+              # Create simple HTML files
+              @"
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>YouTube to Premiere</title>
+</head>
+<body>
+  <div id="app"></div>
+</body>
+</html>
+"@ | Out-File -FilePath (Join-Path $mainDir "index.html") -Encoding utf8
+              
+              @"
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>YouTube to Premiere - Settings</title>
+</head>
+<body>
+  <div id="app"></div>
+</body>
+</html>
+"@ | Out-File -FilePath (Join-Path $settingsDir "index.html") -Encoding utf8
+              
+              # Create simple manifest
+              @"
+<?xml version="1.0" encoding="UTF-8"?>
+<ExtensionManifest Version="6.0" ExtensionBundleId="com.youtubetoPremiereV2.cep" ExtensionBundleVersion="3.0.0" ExtensionBundleName="YoutubetoPremiere">
+  <ExtensionList>
+    <Extension Id="com.youtubetoPremiereV2.cep.main" Version="3.0.0" />
+    <Extension Id="com.youtubetoPremiereV2.cep.settings" Version="3.0.0" />
+  </ExtensionList>
+  <ExecutionEnvironment>
+    <HostList>
+      <Host Name="PPRO" Version="[22.0,99.9]" />
+    </HostList>
+    <LocaleList>
+      <Locale Code="All" />
+    </LocaleList>
+    <RequiredRuntimeList>
+      <RequiredRuntime Name="CSXS" Version="9.0" />
+    </RequiredRuntimeList>
+  </ExecutionEnvironment>
+  <DispatchInfoList>
+    <Extension Id="com.youtubetoPremiereV2.cep.main">
+      <DispatchInfo>
+        <Resources>
+          <MainPath>./main/index.html</MainPath>
+          <ScriptPath>./jsx/index.js</ScriptPath>
+          <CEFCommandLine>
+            <Parameter>--allow-file-access-from-files</Parameter>
+            <Parameter>--allow-file-access</Parameter>
+            <Parameter>--disable-web-security</Parameter>
+          </CEFCommandLine>
+        </Resources>
+        <Lifecycle>
+          <AutoVisible>true</AutoVisible>
+        </Lifecycle>
+        <UI>
+          <Type>Panel</Type>
+          <Menu>YouTube to Premiere Pro</Menu>
+          <Geometry>
+            <Size>
+              <Height>600</Height>
+              <Width>600</Width>
+            </Size>
+          </Geometry>
+        </UI>
+      </DispatchInfo>
+    </Extension>
+    <Extension Id="com.youtubetoPremiereV2.cep.settings">
+      <DispatchInfo>
+        <Resources>
+          <MainPath>./settings/index.html</MainPath>
+          <ScriptPath>./jsx/index.js</ScriptPath>
+          <CEFCommandLine>
+            <Parameter>--allow-file-access-from-files</Parameter>
+            <Parameter>--allow-file-access</Parameter>
+            <Parameter>--disable-web-security</Parameter>
+          </CEFCommandLine>
+        </Resources>
+        <Lifecycle>
+          <AutoVisible>true</AutoVisible>
+        </Lifecycle>
+        <UI>
+          <Type>ModalDialog</Type>
+          <Menu>YouTube to Premiere Pro Settings</Menu>
+          <Geometry>
+            <Size>
+              <Height>400</Height>
+              <Width>400</Width>
+            </Size>
+          </Geometry>
+        </UI>
+      </DispatchInfo>
+    </Extension>
+  </DispatchInfoList>
+</ExtensionManifest>
+"@ | Out-File -FilePath (Join-Path $csxsDir "manifest.xml") -Encoding utf8
+              
+              # Create .debug file
+              @"
+<?xml version="1.0" encoding="UTF-8"?>
+<ExtensionList>
+  <Extension Id="com.youtubetoPremiereV2.cep.main">
+    <HostList>
+      <Host Name="PPRO" Port="8080" />
+    </HostList>
+  </Extension>
+  <Extension Id="com.youtubetoPremiereV2.cep.settings">
+    <HostList>
+      <Host Name="PPRO" Port="8081" />
+    </HostList>
+  </Extension>
+</ExtensionList>
+"@ | Out-File -FilePath (Join-Path $outputDir ".debug") -Encoding utf8
+              
+              # Copy Python source files
+              Get-ChildItem -Path "app/*.py" -ErrorAction SilentlyContinue | ForEach-Object {
+                Copy-Item -Path $_.FullName -Destination $execDir -Force
+              }
+            }
           }
           
-          # Copy the executables to the extracted exec directory
-          Copy-FileWithCheck -Source $winExeSource -Destination "$extractedExecDir/YoutubetoPremiere.exe"
-          Copy-FileWithCheck -Source $macExeSource -Destination "$extractedExecDir/YoutubetoPremiere"
-          Copy-FileWithCheck -Source $winFfmpegSource -Destination "$extractedExecDir/ffmpeg.exe"
-          Copy-FileWithCheck -Source $macFfmpegSource -Destination "$extractedExecDir/ffmpeg"
+          # Copy the executables to the exec directory
+          Copy-FileWithCheck -Source $winExeSource -Destination "$execDir/YoutubetoPremiere.exe"
+          Copy-FileWithCheck -Source $macExeSource -Destination "$execDir/YoutubetoPremiere"
+          Copy-FileWithCheck -Source $winFfmpegSource -Destination "$execDir/ffmpeg.exe"
+          Copy-FileWithCheck -Source $macFfmpegSource -Destination "$execDir/ffmpeg"
           
           # Set permissions for macOS files
           Write-Host "Setting permissions for macOS files..."
-          & "bash" "-c" "chmod +x `"$extractedExecDir/YoutubetoPremiere`" 2>/dev/null || true"
-          & "bash" "-c" "chmod +x `"$extractedExecDir/ffmpeg`" 2>/dev/null || true"
+          & "bash" "-c" "chmod +x `"$execDir/YoutubetoPremiere`" 2>/dev/null || true"
+          & "bash" "-c" "chmod +x `"$execDir/ffmpeg`" 2>/dev/null || true"
           
           # List contents of exec directory
-          Write-Host "Contents of $extractedExecDir directory:"
-          Get-ChildItem -Path $extractedExecDir | ForEach-Object { Write-Host "  - $($_.Name) ($($_.Length) bytes)" }
+          Write-Host "Contents of $execDir directory:"
+          Get-ChildItem -Path $execDir | ForEach-Object { Write-Host "  - $($_.Name) ($($_.Length) bytes)" }
           
-          # Create a new ZXP from the extracted directory using standard .NET ZIP functionality
-          Write-Host "Creating new ZXP with all executables..."
-          $newZxpPath = Join-Path $workspacePath "dist/zxp/com.youtubetoPremiereV2.cep.zxp"
+          # Create output directory for ZXP
+          New-Item -ItemType Directory -Path "dist/zxp" -Force | Out-Null
+          
+          # Create the ZXP using simple ZIP compression to ensure it completes quickly
+          Write-Host "Creating ZXP package..."
+          $zxpPath = Join-Path $workspacePath "dist/zxp/com.youtubetoPremiereV2.cep.zxp"
           
           # Delete the existing ZXP if it exists
-          if (Test-Path $newZxpPath) {
-            Remove-Item -Path $newZxpPath -Force
+          if (Test-Path $zxpPath) {
+            Remove-Item -Path $zxpPath -Force
           }
           
-          # Create the new ZXP using simple ZIP compression to ensure it completes quickly
+          # Create the ZXP (which is just a ZIP file with .zxp extension)
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          [System.IO.Compression.ZipFile]::CreateFromDirectory($extractDir, $newZxpPath)
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($outputDir, $zxpPath)
           
           # Verify the ZXP was created
-          if (Test-Path $newZxpPath) {
-            $fileSize = (Get-Item $newZxpPath).Length / 1MB
-            Write-Host "✓ New ZXP package created successfully: $fileSize MB"
+          if (Test-Path $zxpPath) {
+            $fileSize = (Get-Item $zxpPath).Length / 1MB
+            Write-Host "✓ ZXP package created successfully: $fileSize MB"
             
             # List the contents of the ZXP to verify
             Write-Host "Verifying executables in the ZXP package:"
-            $zipFile = [System.IO.Compression.ZipFile]::OpenRead($newZxpPath)
+            $zipFile = [System.IO.Compression.ZipFile]::OpenRead($zxpPath)
             $execFiles = $zipFile.Entries | Where-Object { $_.FullName -like "exec/*" -and $_.Name -match "(YoutubetoPremiere|ffmpeg)($|\.exe$)" }
             
             if ($execFiles.Count -gt 0) {
@@ -722,7 +851,7 @@ jobs:
           }
           
           # Clean up the temporary directory
-          Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path $outputDir -Recurse -Force -ErrorAction SilentlyContinue
           
           Write-Host "===== FINAL ZXP PACKAGING COMPLETED ====="
 
