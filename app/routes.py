@@ -46,7 +46,7 @@ def register_routes(app, socketio, settings):
         socketio.emit('connection_status', {'status': 'connected'}, room=client_id)
 
     @socketio.on('disconnect')
-    def handle_route_disconnect():
+    def handle_route_disconnect(sid=None):
         client_id = request.sid
         if client_id in connected_clients:
             connected_clients.remove(client_id)
