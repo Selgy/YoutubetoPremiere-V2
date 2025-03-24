@@ -132,6 +132,8 @@ jobs:
           workflow_conclusion: success
           name: ${{ matrix.os == 'windows-latest' && 'ffmpeg-windows-latest' || 'ffmpeg-macos-13' }}
           path: existing-artifact
+          check_artifacts: true
+          if_no_artifact_found: warn
       
       - name: Verify downloaded artifact
         if: steps.check_artifacts.outputs.artifact_exists == 'true'
@@ -278,6 +280,8 @@ jobs:
           workflow_conclusion: success
           name: ${{ matrix.os == 'windows-latest' && 'executable-windows-latest' || 'executable-macos-13' }}
           path: existing-artifact
+          check_artifacts: true
+          if_no_artifact_found: warn
 
       - name: Verify downloaded artifact
         if: steps.check_artifacts.outputs.artifact_exists == 'true'
@@ -610,6 +614,8 @@ jobs:
           name_is_regexp: true
           name: .*
           path: artifacts
+          check_artifacts: true
+          if_no_artifact_found: warn
       
       - name: List downloaded artifacts
         run: |
