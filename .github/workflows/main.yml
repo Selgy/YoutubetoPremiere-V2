@@ -1003,9 +1003,13 @@ jobs:
           $workspacePath = Get-Location
           $winExeSource = Join-Path $workspacePath "executable-windows-latest/YoutubetoPremiere.exe"
           $macExeSource = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere"
+          $macExeUniversalSource = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere-universal"
           $winFfmpegSource = Join-Path $workspacePath "ffmpeg-windows-latest/ffmpeg.exe"
           $macFfmpegSource = Join-Path $workspacePath "ffmpeg-macos-13/ffmpeg"
           
+          Write-Host "Windows executable source: $winExeSource"
+          Write-Host "macOS executable source: $macExeSource"
+          Write-Host "macOS universal executable source: $macExeUniversalSource"
           Write-Host "Windows FFmpeg source: $winFfmpegSource"
           Write-Host "macOS FFmpeg source: $macFfmpegSource" 
           
@@ -1017,7 +1021,7 @@ jobs:
           New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
           Write-Host "Created output directory: $outputDir"
           
-          # Create subdirectories
+          # Create subdirectories including exec and python files
           $execDir = Join-Path $outputDir "exec"
           New-Item -ItemType Directory -Path $execDir -Force | Out-Null
           Write-Host "Created exec directory: $execDir"
@@ -1026,12 +1030,45 @@ jobs:
           if (Test-Path "dist/cep") {
             Copy-Item -Path "dist/cep/*" -Destination $outputDir -Force -Recurse
             Write-Host "Copied files from dist/cep to $outputDir"
+          } else {
+            Write-Host "Warning: dist/cep directory not found, creating minimal structure"
+            $cssDir = Join-Path $outputDir "CSXS"
+            $jsDir = Join-Path $outputDir "js"
+            $jsxDir = Join-Path $outputDir "jsx"
+            $assetsDir = Join-Path $outputDir "assets"
+            $mainDir = Join-Path $outputDir "main"
+            $settingsDir = Join-Path $outputDir "settings"
+            
+            New-Item -ItemType Directory -Path $cssDir -Force | Out-Null
+            New-Item -ItemType Directory -Path $jsDir -Force | Out-Null
+            New-Item -ItemType Directory -Path $jsxDir -Force | Out-Null
+            New-Item -ItemType Directory -Path $assetsDir -Force | Out-Null
+            New-Item -ItemType Directory -Path $mainDir -Force | Out-Null
+            New-Item -ItemType Directory -Path $settingsDir -Force | Out-Null
           }
           
-          # Copy Python files
-          if (Test-Path "app") {
-            Copy-Item -Path "app/*.py" -Destination $execDir -Force
-            Write-Host "Copied Python files to $execDir"
+          # Create exec directory inside output directory if it doesn't exist
+          if (-not (Test-Path $execDir)) {
+            New-Item -ItemType Directory -Path $execDir -Force | Out-Null
+            Write-Host "Created exec directory: $execDir"
+          }
+          
+          # Copy Python files with special handling for errors
+          Write-Host "Copying Python files..."
+          Get-ChildItem -Path "app/*.py" -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item -Path $_.FullName -Destination $execDir -Force
+          }
+          
+          # Create sounds directory
+          $soundsDir = Join-Path $execDir "sounds"
+          New-Item -ItemType Directory -Path $soundsDir -Force | Out-Null
+          
+          # Copy sounds files if they exist
+          if (Test-Path "app/sounds") {
+            Copy-Item -Path "app/sounds/*" -Destination $soundsDir -Force -ErrorAction SilentlyContinue
+            Write-Host "Copied sound files to $soundsDir"
+          } else {
+            Write-Host "No sound files found to copy"
           }
           
           # Extract macOS executable from archive if available
@@ -1039,98 +1076,196 @@ jobs:
           $macZipPath = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere.zip"
           $tempNotarizedDir = Join-Path $workspacePath "temp_notarized"
           
+          # Create temp directory
+          if (-not (Test-Path $tempNotarizedDir)) {
+            New-Item -ItemType Directory -Path $tempNotarizedDir -Force | Out-Null
+          }
+          
+          $macExeExtracted = $false
+          
           if (Test-Path $notarizedZipPath) {
             Write-Host "Found notarized macOS executable tarball"
-            New-Item -ItemType Directory -Path $tempNotarizedDir -Force | Out-Null
-            & "bash" "-c" "tar -xzf '$notarizedZipPath' -C '$tempNotarizedDir'"
-            
-            if (Test-Path "$tempNotarizedDir/YoutubetoPremiere") {
-              Copy-Item -Path "$tempNotarizedDir/YoutubetoPremiere" -Destination "$execDir/YoutubetoPremiere" -Force
-              & "bash" "-c" "chmod 755 '$execDir/YoutubetoPremiere'"
-              Write-Host "✅ Notarized macOS executable from tarball copied to ZXP package"
+            try {
+              & "bash" "-c" "tar -xzf '$notarizedZipPath' -C '$tempNotarizedDir'"
+              
+              if (Test-Path "$tempNotarizedDir/YoutubetoPremiere") {
+                Copy-Item -Path "$tempNotarizedDir/YoutubetoPremiere" -Destination "$execDir/YoutubetoPremiere" -Force
+                & "bash" "-c" "chmod 755 '$execDir/YoutubetoPremiere'"
+                Write-Host "✅ Extracted notarized macOS executable from tarball"
+                $macExeExtracted = $true
+              }
+            } catch {
+              Write-Host "❌ Failed to extract notarized macOS executable from tarball: $_"
             }
           } elseif (Test-Path $macZipPath) {
             Write-Host "Found notarized macOS executable ZIP"
-            New-Item -ItemType Directory -Path $tempNotarizedDir -Force | Out-Null
-            Expand-Archive -Path $macZipPath -DestinationPath $tempNotarizedDir -Force
-            
-            if (Test-Path "$tempNotarizedDir/YoutubetoPremiere") {
-              Copy-Item -Path "$tempNotarizedDir/YoutubetoPremiere" -Destination "$execDir/YoutubetoPremiere" -Force
-              & "bash" "-c" "chmod 755 '$execDir/YoutubetoPremiere'"
-              Write-Host "✅ Notarized macOS executable from ZIP copied to ZXP package"
+            try {
+              Expand-Archive -Path $macZipPath -DestinationPath $tempNotarizedDir -Force
+              
+              if (Test-Path "$tempNotarizedDir/YoutubetoPremiere") {
+                Copy-Item -Path "$tempNotarizedDir/YoutubetoPremiere" -Destination "$execDir/YoutubetoPremiere" -Force
+                & "bash" "-c" "chmod 755 '$execDir/YoutubetoPremiere'"
+                Write-Host "✅ Extracted notarized macOS executable from ZIP"
+                $macExeExtracted = $true
+              }
+            } catch {
+              Write-Host "❌ Failed to extract notarized macOS executable from ZIP: $_"
             }
           }
           
-          # Copy executables
+          # Copy executables with robust error handling
           Write-Host "Copying executables..."
           
           # Windows executable
           if (Test-Path $winExeSource) {
             Copy-Item -Path $winExeSource -Destination "$execDir/YoutubetoPremiere.exe" -Force
-            Write-Host "Copied Windows executable"
+            Write-Host "✅ Copied Windows executable"
+          } else {
+            Write-Host "❌ Windows executable not found at: $winExeSource"
           }
           
-          # macOS executable (if not already copied)
-          if (-not (Test-Path "$execDir/YoutubetoPremiere") -and (Test-Path $macExeSource)) {
-            Copy-Item -Path $macExeSource -Destination "$execDir/YoutubetoPremiere" -Force
-            & "bash" "-c" "chmod 755 '$execDir/YoutubetoPremiere'"
-            Write-Host "Copied macOS executable"
+          # macOS executable (if not already extracted)
+          if (-not $macExeExtracted) {
+            if (Test-Path $macExeUniversalSource) {
+              Copy-Item -Path $macExeUniversalSource -Destination "$execDir/YoutubetoPremiere" -Force
+              & "bash" "-c" "chmod 755 '$execDir/YoutubetoPremiere'"
+              Write-Host "✅ Copied macOS universal executable"
+            } elseif (Test-Path $macExeSource) {
+              Copy-Item -Path $macExeSource -Destination "$execDir/YoutubetoPremiere" -Force
+              & "bash" "-c" "chmod 755 '$execDir/YoutubetoPremiere'"
+              Write-Host "✅ Copied macOS standard executable"
+            } else {
+              Write-Host "❌ macOS executable not found at: $macExeSource or $macExeUniversalSource"
+            }
           }
           
           # Windows FFmpeg
           if (Test-Path $winFfmpegSource) {
             Copy-Item -Path $winFfmpegSource -Destination "$execDir/ffmpeg.exe" -Force
-            Write-Host "Copied Windows FFmpeg"
+            Write-Host "✅ Copied Windows FFmpeg"
+          } else {
+            Write-Host "❌ Windows FFmpeg not found at: $winFfmpegSource"
+            # Try alternate path
+            $altWinFfmpegSource = Join-Path $workspacePath "ffmpeg-windows-latest/dist/ffmpeg.exe"
+            if (Test-Path $altWinFfmpegSource) {
+              Copy-Item -Path $altWinFfmpegSource -Destination "$execDir/ffmpeg.exe" -Force
+              Write-Host "✅ Copied Windows FFmpeg from alternate location"
+            }
           }
           
           # macOS FFmpeg
           if (Test-Path $macFfmpegSource) {
             Copy-Item -Path $macFfmpegSource -Destination "$execDir/ffmpeg" -Force
             & "bash" "-c" "chmod 755 '$execDir/ffmpeg'"
-            Write-Host "Copied macOS FFmpeg"
+            Write-Host "✅ Copied macOS FFmpeg"
+          } else {
+            Write-Host "❌ macOS FFmpeg not found at: $macFfmpegSource"
+            # Try alternate path
+            $altMacFfmpegSource = Join-Path $workspacePath "ffmpeg-macos-13/dist/ffmpeg"
+            if (Test-Path $altMacFfmpegSource) {
+              Copy-Item -Path $altMacFfmpegSource -Destination "$execDir/ffmpeg" -Force
+              & "bash" "-c" "chmod 755 '$execDir/ffmpeg'"
+              Write-Host "✅ Copied macOS FFmpeg from alternate location"
+            }
           }
           
-          # Create permission fix script
+          # Create permission fix script to ensure executables are runnable
           $permissionScriptContent = @"
           #!/bin/bash
           # Fix permissions for macOS executables
           chmod 755 "\$(dirname "\$0")/YoutubetoPremiere" 2>/dev/null || true
           chmod 755 "\$(dirname "\$0")/ffmpeg" 2>/dev/null || true
+          xattr -d com.apple.quarantine "\$(dirname "\$0")/YoutubetoPremiere" 2>/dev/null || true
+          xattr -d com.apple.quarantine "\$(dirname "\$0")/ffmpeg" 2>/dev/null || true
           echo "Permissions fixed for macOS executables"
           "@
           Set-Content -Path "$execDir/fix-permissions.sh" -Value $permissionScriptContent -NoNewline
           & "bash" "-c" "chmod 755 '$execDir/fix-permissions.sh'"
           
-          # Create ZXP package
+          # List content of exec directory for verification
+          Write-Host "Content of exec directory before packaging:"
+          Get-ChildItem -Path $execDir | ForEach-Object {
+            Write-Host "  $($_.Name) ($($_.Length) bytes)"
+          }
+          
+          # Create ZXP package 
           Write-Host "Creating ZXP package..."
           New-Item -ItemType Directory -Path "dist/zxp" -Force | Out-Null
           $zxpPath = Join-Path $workspacePath "dist/zxp/com.youtubetoPremiereV2.cep.zxp"
           
-          # Use zip command to preserve permissions
-          Push-Location $outputDir
-          & "bash" "-c" "zip -r -X -y '$zxpPath' *"
-          Pop-Location
-          
-          # If zip failed, try PowerShell
-          if (-not (Test-Path $zxpPath)) {
-            Write-Host "Zip command failed, using PowerShell..."
-            Compress-Archive -Path "$outputDir\*" -DestinationPath "$zxpPath" -Force
+          # First try with zip command to preserve permissions (macOS compatible)
+          $zipSuccess = $false
+          try {
+            Push-Location $outputDir
+            $zipExitCode = (Start-Process -FilePath "bash" -ArgumentList "-c", "zip -r -X -y '$zxpPath' *" -NoNewWindow -PassThru -Wait).ExitCode
+            if ($zipExitCode -eq 0) {
+              $zipSuccess = $true
+              Write-Host "✅ Created ZXP package using zip command"
+            } else {
+              Write-Host "⚠️ Zip command returned non-zero exit code: $zipExitCode"
+            }
+            Pop-Location
+          } catch {
+            Write-Host "⚠️ Zip command failed: $_"
           }
           
-          Write-Host "Created ZXP package at: $zxpPath"
+          # If zip fails, fall back to PowerShell Compress-Archive
+          if (-not $zipSuccess) {
+            Write-Host "Falling back to PowerShell compression..."
+            Push-Location $outputDir
+            try {
+              Compress-Archive -Path "*" -DestinationPath "$zxpPath" -Force
+              if (Test-Path $zxpPath) {
+                Write-Host "✅ Created ZXP package using PowerShell Compress-Archive"
+              } else {
+                Write-Host "❌ PowerShell Compress-Archive failed to create the ZXP package"
+              }
+            } catch {
+              Write-Host "❌ PowerShell Compress-Archive error: $_"
+            }
+            Pop-Location
+          }
+          
+          # Verify the ZXP was created
+          if (Test-Path $zxpPath) {
+            Write-Host "✅ ZXP package created: $zxpPath"
+            Write-Host "ZXP file size: $((Get-Item $zxpPath).Length) bytes"
+          } else {
+            Write-Host "❌ Failed to create ZXP package"
+          }
           
           # Verify ZXP contents
           $tempExtractDir = Join-Path $workspacePath "verify_zxp"
-          Remove-Item -Path $tempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+          if (Test-Path $tempExtractDir) {
+            Remove-Item -Path $tempExtractDir -Recurse -Force
+          }
           New-Item -ItemType Directory -Path $tempExtractDir -Force | Out-Null
           
-          # Extract and verify
+          # Copy and extract for verification
           Copy-Item -Path $zxpPath -Destination "$tempExtractDir/package.zip" -Force
-          & "bash" "-c" "unzip -q '$tempExtractDir/package.zip' -d '$tempExtractDir/contents' || true"
           
-          # If unzip failed, use PowerShell
-          if (-not (Test-Path "$tempExtractDir/contents/exec")) {
-            Expand-Archive -Path "$tempExtractDir/package.zip" -DestinationPath "$tempExtractDir/contents" -Force
+          # Try to extract with unzip command first
+          $unzipSuccess = $false
+          try {
+            $unzipExitCode = (Start-Process -FilePath "bash" -ArgumentList "-c", "unzip -q '$tempExtractDir/package.zip' -d '$tempExtractDir/contents'" -NoNewWindow -PassThru -Wait).ExitCode
+            if ($unzipExitCode -eq 0 -or $unzipExitCode -eq 1) {  # unzip returns 1 for warnings
+              $unzipSuccess = $true
+              Write-Host "✅ Extracted ZXP package for verification using unzip"
+            } else {
+              Write-Host "⚠️ Unzip command returned error code: $unzipExitCode"
+            }
+          } catch {
+            Write-Host "⚠️ Unzip command failed: $_"
+          }
+          
+          # Fall back to Expand-Archive if unzip fails
+          if (-not $unzipSuccess) {
+            try {
+              Expand-Archive -Path "$tempExtractDir/package.zip" -DestinationPath "$tempExtractDir/contents" -Force
+              Write-Host "✅ Extracted ZXP package for verification using PowerShell"
+            } catch {
+              Write-Host "❌ Failed to extract ZXP for verification: $_"
+            }
           }
           
           # Run permission fix script
@@ -1138,27 +1273,93 @@ jobs:
             & "bash" "-c" "chmod +x '$tempExtractDir/contents/exec/fix-permissions.sh' && '$tempExtractDir/contents/exec/fix-permissions.sh'"
           }
           
+          # Check executables in the extracted ZXP
+          $missingFiles = @()
+          
+          # Check Windows executable
+          if (Test-Path "$tempExtractDir/contents/exec/YoutubetoPremiere.exe") {
+            Write-Host "✅ Windows executable found in ZXP"
+          } else {
+            Write-Host "❌ Windows executable NOT found in ZXP"
+            $missingFiles += "YoutubetoPremiere.exe"
+          }
+          
           # Check macOS executable
           if (Test-Path "$tempExtractDir/contents/exec/YoutubetoPremiere") {
             Write-Host "✅ macOS executable found in ZXP"
-            & "bash" "-c" "ls -la '$tempExtractDir/contents/exec/YoutubetoPremiere'"
             & "bash" "-c" "chmod 755 '$tempExtractDir/contents/exec/YoutubetoPremiere'"
-            
-            $isExecutable = & "bash" "-c" "test -x '$tempExtractDir/contents/exec/YoutubetoPremiere' && echo 'true' || echo 'false'"
-            if ($isExecutable -eq "true") {
-              Write-Host "✅ macOS executable permission is fixed"
-            } else {
-              Write-Host "⚠️ macOS executable permission could not be set"
-            }
           } else {
-            Write-Host "⚠️ macOS executable not found in ZXP"
+            Write-Host "❌ macOS executable NOT found in ZXP"
+            $missingFiles += "YoutubetoPremiere (macOS)"
+          }
+          
+          # Check Windows FFmpeg
+          if (Test-Path "$tempExtractDir/contents/exec/ffmpeg.exe") {
+            Write-Host "✅ Windows FFmpeg found in ZXP"
+          } else {
+            Write-Host "❌ Windows FFmpeg NOT found in ZXP"
+            $missingFiles += "ffmpeg.exe"
           }
           
           # Check macOS FFmpeg
           if (Test-Path "$tempExtractDir/contents/exec/ffmpeg") {
             Write-Host "✅ macOS FFmpeg found in ZXP"
+            & "bash" "-c" "chmod 755 '$tempExtractDir/contents/exec/ffmpeg'"
           } else {
-            Write-Host "⚠️ macOS FFmpeg not found in ZXP"
+            Write-Host "❌ macOS FFmpeg NOT found in ZXP"
+            $missingFiles += "ffmpeg (macOS)"
+          }
+          
+          # Report missing files if any
+          if ($missingFiles.Count -gt 0) {
+            Write-Host "❌ The following files are missing from the ZXP package:"
+            foreach ($file in $missingFiles) {
+              Write-Host "   - $file"
+            }
+            
+            # Force direct copy of all executables to the ZXP as a last resort
+            Write-Host "Attempting direct file inclusion as a fallback..."
+            
+            # Extract the ZXP again
+            Remove-Item -Path "$tempExtractDir/contents" -Recurse -Force -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Path "$tempExtractDir/contents/exec" -Force | Out-Null
+            
+            # Copy the contents from our outputDir
+            Copy-Item -Path "$outputDir/*" -Destination "$tempExtractDir/contents" -Recurse -Force
+            
+            # Make sure exec directory exists
+            if (-not (Test-Path "$tempExtractDir/contents/exec")) {
+              New-Item -ItemType Directory -Path "$tempExtractDir/contents/exec" -Force | Out-Null
+            }
+            
+            # Force copy all executables
+            if (Test-Path $winExeSource) {
+              Copy-Item -Path $winExeSource -Destination "$tempExtractDir/contents/exec/YoutubetoPremiere.exe" -Force
+            }
+            if (Test-Path $macExeSource) {
+              Copy-Item -Path $macExeSource -Destination "$tempExtractDir/contents/exec/YoutubetoPremiere" -Force
+              & "bash" "-c" "chmod 755 '$tempExtractDir/contents/exec/YoutubetoPremiere'"
+            }
+            if (Test-Path $winFfmpegSource) {
+              Copy-Item -Path $winFfmpegSource -Destination "$tempExtractDir/contents/exec/ffmpeg.exe" -Force
+            }
+            if (Test-Path $macFfmpegSource) {
+              Copy-Item -Path $macFfmpegSource -Destination "$tempExtractDir/contents/exec/ffmpeg" -Force
+              & "bash" "-c" "chmod 755 '$tempExtractDir/contents/exec/ffmpeg'"
+            }
+            
+            # Repackage
+            Remove-Item -Path $zxpPath -Force -ErrorAction SilentlyContinue
+            
+            Push-Location "$tempExtractDir/contents"
+            try {
+              & "bash" "-c" "zip -r -X -y '$zxpPath' *"
+            } catch {
+              Compress-Archive -Path "*" -DestinationPath "$zxpPath" -Force
+            }
+            Pop-Location
+            
+            Write-Host "✅ Recreated ZXP package with direct file inclusion"
           }
           
           # Clean up
