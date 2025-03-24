@@ -132,26 +132,37 @@ jobs:
           # Create informative version resource
           $VERSION = "${{ needs.check-version.outputs.version }}"
           
-          # Create a version file in the format PyInstaller expects (simple txt version)
+          # Parse version components properly and create version.txt directly
           $versionParts = $VERSION.Split('.')
           # Ensure we have at least 4 parts, pad with zeros if needed
           while ($versionParts.Count -lt 4) {
             $versionParts += "0"
           }
           
-          # Create a temporary Python script to generate the version file
-          $scriptContent = "import sys`n"
-          $scriptContent += "version_tuple = (${versionParts[0]}, ${versionParts[1]}, ${versionParts[2]}, ${versionParts[3]})`n"
-          $scriptContent += "version_str = '${VERSION}'`n"
-          $scriptContent += "template = '''VSVersionInfo(ffi=FixedFileInfo(filevers=version_tuple, prodvers=version_tuple, mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)), kids=[StringFileInfo([StringTable(u'040904B0', [StringStruct(u'CompanyName', u'YoutubetoPremiere'), StringStruct(u'FileDescription', u'YouTube to Premiere Pro Extension'), StringStruct(u'FileVersion', u'version_str'), StringStruct(u'InternalName', u'YoutubetoPremiere'), StringStruct(u'LegalCopyright', u'(c) 2024 YoutubetoPremiere'), StringStruct(u'OriginalFilename', u'YoutubetoPremiere.exe'), StringStruct(u'ProductName', u'YouTube to Premiere Pro'), StringStruct(u'ProductVersion', u'version_str')])])]), VarFileInfo([VarStruct(u'Translation', [1033, 1200])])]'''`n"
-          $scriptContent += "with open('version.txt', 'w') as f:`n"
-          $scriptContent += "    f.write(template.replace('version_tuple', str(version_tuple)).replace('version_str', version_str))`n"
+          # Extract specific version parts
+          $part0 = $versionParts[0]
+          $part1 = $versionParts[1]
+          $part2 = $versionParts[2]
+          $part3 = $versionParts[3]
           
-          # Save the script to a file
-          Set-Content -Path "create_version.py" -Value $scriptContent
+          Write-Host "Creating PyInstaller version file with version: $VERSION ($part0.$part1.$part2.$part3)"
           
-          # Run the Python script to create the version.txt file
+          # Create simple Python script to generate version file correctly
+          $pythonScript = "import sys`nwith open('version.txt', 'w') as f:`n    f.write('VSVersionInfo(ffi=FixedFileInfo(filevers=($part0, $part1, $part2, $part3),prodvers=($part0, $part1, $part2, $part3),mask=0x3f,flags=0x0,OS=0x40004,fileType=0x1,subtype=0x0,date=(0, 0)),kids=[StringFileInfo([StringTable(u`'040904B0`',[StringStruct(u`'CompanyName`', u`'YoutubetoPremiere`'),StringStruct(u`'FileDescription`', u`'YouTube to Premiere Pro Extension`'),StringStruct(u`'FileVersion`', u`'$VERSION`'),StringStruct(u`'InternalName`', u`'YoutubetoPremiere`'),StringStruct(u`'LegalCopyright`', u`'(c) 2024 YoutubetoPremiere`'),StringStruct(u`'OriginalFilename`', u`'YoutubetoPremiere.exe`'),StringStruct(u`'ProductName`', u`'YouTube to Premiere Pro`'),StringStruct(u`'ProductVersion`', u`'$VERSION`')])])]),VarFileInfo([VarStruct(u`'Translation`', [1033, 1200])])])')"
+          
+          # Save Python script
+          Set-Content -Path "create_version.py" -Value $pythonScript
+          
+          # Execute Python script to create version file
           python create_version.py
+          
+          # Verify the version file was created
+          if (Test-Path "version.txt") {
+            Write-Host "Version file successfully created with size: $(Get-Item -Path version.txt | Select-Object -ExpandProperty Length) bytes"
+          } else {
+            Write-Error "Failed to create version.txt file"
+            exit 1
+          }
           
           # Ensure sounds directory exists
           if (!(Test-Path "app/sounds")) {
