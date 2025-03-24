@@ -230,26 +230,37 @@ jobs:
           # Create dist directory
           New-Item -ItemType Directory -Force -Path "dist/cep/exec"
           
+          Write-Host "Contents of build/executables before copying:"
+          Get-ChildItem -Path "build/executables" -Recurse
+          
           # Copy Windows executable and ffmpeg
           if (Test-Path "build/executables/YoutubetoPremiere.exe") {
             Copy-Item -Path "build/executables/YoutubetoPremiere.exe" -Destination "dist/cep/exec/YoutubetoPremiere.exe" -Force
             Write-Host "Copied Windows executable"
+          } else {
+            Write-Host "WARNING: Windows executable not found!" -ForegroundColor Yellow
           }
           
           if (Test-Path "build/executables/ffmpeg.exe") {
             Copy-Item -Path "build/executables/ffmpeg.exe" -Destination "dist/cep/exec/ffmpeg.exe" -Force
             Write-Host "Copied Windows ffmpeg"
+          } else {
+            Write-Host "WARNING: Windows ffmpeg not found!" -ForegroundColor Yellow
           }
           
           # Copy macOS executable and ffmpeg
           if (Test-Path "build/executables/YoutubetoPremiere") {
             Copy-Item -Path "build/executables/YoutubetoPremiere" -Destination "dist/cep/exec/YoutubetoPremiere" -Force
             Write-Host "Copied macOS executable"
+          } else {
+            Write-Host "WARNING: macOS executable not found!" -ForegroundColor Yellow
           }
           
           if (Test-Path "build/executables/ffmpeg") {
             Copy-Item -Path "build/executables/ffmpeg" -Destination "dist/cep/exec/ffmpeg" -Force
             Write-Host "Copied macOS ffmpeg"
+          } else {
+            Write-Host "WARNING: macOS ffmpeg not found!" -ForegroundColor Yellow
           }
           
           # Copy Python files
@@ -271,7 +282,7 @@ jobs:
           }
           
           # List the contents of the directory
-          Write-Host "Contents of dist/cep/exec:"
+          Write-Host "Contents of dist/cep/exec after copying:"
           Get-ChildItem -Path "dist/cep/exec" -Recurse
 
       - name: List contents to verify
@@ -285,11 +296,103 @@ jobs:
           SKIP_PYTHON_BUILD: true
           NO_PYTHON: true
           ZXP_PACKAGE: true
-        run: yarn zxp
+        run: |
+          # Ensure the build/executables directory has our files
+          Write-Host "Contents of build/executables before ZXP packaging:"
+          Get-ChildItem -Path build/executables -Recurse
+          
+          # Create dist/cep/exec if it doesn't exist (it may have been removed by yarn clean)
+          New-Item -ItemType Directory -Force -Path dist/cep/exec
+          
+          # Copy the files again directly before yarn zxp
+          if (Test-Path "build/executables/YoutubetoPremiere.exe") {
+            Copy-Item -Path "build/executables/YoutubetoPremiere.exe" -Destination "dist/cep/exec/YoutubetoPremiere.exe" -Force
+            Write-Host "Pre-ZXP: Copied Windows executable"
+          }
+          
+          if (Test-Path "build/executables/ffmpeg.exe") {
+            Copy-Item -Path "build/executables/ffmpeg.exe" -Destination "dist/cep/exec/ffmpeg.exe" -Force
+            Write-Host "Pre-ZXP: Copied Windows ffmpeg"
+          }
+          
+          if (Test-Path "build/executables/YoutubetoPremiere") {
+            Copy-Item -Path "build/executables/YoutubetoPremiere" -Destination "dist/cep/exec/YoutubetoPremiere" -Force
+            Write-Host "Pre-ZXP: Copied macOS executable"
+          }
+          
+          if (Test-Path "build/executables/ffmpeg") {
+            Copy-Item -Path "build/executables/ffmpeg" -Destination "dist/cep/exec/ffmpeg" -Force
+            Write-Host "Pre-ZXP: Copied macOS ffmpeg"
+          }
+          
+          # Run yarn zxp (note: this will clean the dist directory first)
+          yarn zxp
+          
+          # After yarn zxp, copy the files again to ensure they are in the ZXP package
+          New-Item -ItemType Directory -Force -Path dist/cep/exec
+          
+          if (Test-Path "build/executables/YoutubetoPremiere.exe") {
+            Copy-Item -Path "build/executables/YoutubetoPremiere.exe" -Destination "dist/cep/exec/YoutubetoPremiere.exe" -Force
+            Write-Host "Post-ZXP: Copied Windows executable"
+          }
+          
+          if (Test-Path "build/executables/ffmpeg.exe") {
+            Copy-Item -Path "build/executables/ffmpeg.exe" -Destination "dist/cep/exec/ffmpeg.exe" -Force
+            Write-Host "Post-ZXP: Copied Windows ffmpeg"
+          }
+          
+          if (Test-Path "build/executables/YoutubetoPremiere") {
+            Copy-Item -Path "build/executables/YoutubetoPremiere" -Destination "dist/cep/exec/YoutubetoPremiere" -Force
+            Write-Host "Post-ZXP: Copied macOS executable"
+          }
+          
+          if (Test-Path "build/executables/ffmpeg") {
+            Copy-Item -Path "build/executables/ffmpeg" -Destination "dist/cep/exec/ffmpeg" -Force
+            Write-Host "Post-ZXP: Copied macOS ffmpeg"
+          }
+          
+          # Remove the ZXP file
+          Remove-Item -Path "dist/zxp/*.zxp" -Force
+          
+          # Create the ZXP package again manually after copying all files
+          npx vite-cep-plugin package
+          
+          Write-Host "Contents of dist/cep/exec after manual ZXP packaging:"
+          Get-ChildItem -Path dist/cep/exec -Recurse
 
       - name: Verify ZXP Package
         shell: pwsh
         run: |
+          # Check if the /dist/cep/exec directory has the correct files after the build
+          Write-Host "Contents of dist/cep/exec after ZXP build:"
+          Get-ChildItem -Path "dist/cep/exec" -Recurse
+          
+          # Ensure our files are still there, copy them again if needed
+          Write-Host "Ensuring executables are in place before final check..."
+          
+          # Re-copy Windows executable and ffmpeg if needed
+          if (-not (Test-Path "dist/cep/exec/YoutubetoPremiere.exe") -and (Test-Path "build/executables/YoutubetoPremiere.exe")) {
+              Copy-Item -Path "build/executables/YoutubetoPremiere.exe" -Destination "dist/cep/exec/YoutubetoPremiere.exe" -Force
+              Write-Host "Re-copied Windows executable"
+          }
+          
+          if (-not (Test-Path "dist/cep/exec/ffmpeg.exe") -and (Test-Path "build/executables/ffmpeg.exe")) {
+              Copy-Item -Path "build/executables/ffmpeg.exe" -Destination "dist/cep/exec/ffmpeg.exe" -Force
+              Write-Host "Re-copied Windows ffmpeg"
+          }
+          
+          # Re-copy macOS executable and ffmpeg if needed
+          if (-not (Test-Path "dist/cep/exec/YoutubetoPremiere") -and (Test-Path "build/executables/YoutubetoPremiere")) {
+              Copy-Item -Path "build/executables/YoutubetoPremiere" -Destination "dist/cep/exec/YoutubetoPremiere" -Force
+              Write-Host "Re-copied macOS executable"
+          }
+          
+          if (-not (Test-Path "dist/cep/exec/ffmpeg") -and (Test-Path "build/executables/ffmpeg")) {
+              Copy-Item -Path "build/executables/ffmpeg" -Destination "dist/cep/exec/ffmpeg" -Force
+              Write-Host "Re-copied macOS ffmpeg"
+          }
+          
+          # Check if ZXP package exists
           if (-not (Test-Path "dist/zxp/*.zxp")) {
               Write-Error "ZXP package was not created!"
               exit 1
