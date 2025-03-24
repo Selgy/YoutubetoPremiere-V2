@@ -93,14 +93,68 @@ jobs:
       macos_ffmpeg_path: ${{ steps.output_paths.outputs.mac_ffmpeg_path }}
     steps:
       - name: Check FFmpeg cache
-        id: ffmpeg-cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ffmpeg${{ matrix.os == 'windows-latest' && '.exe' || '' }}
-          key: ffmpeg-${{ matrix.os }}-v2
+        id: check_artifacts
+        run: |
+          # First check if artifacts exist from previous successful runs
+          ARTIFACT_EXISTS=false
+
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            ARTIFACT_NAME="ffmpeg-windows-latest"
+          else
+            ARTIFACT_NAME="ffmpeg-macos-13"
+          fi
+
+          echo "Checking for artifact: $ARTIFACT_NAME"
+          
+          # Try to download the artifact using GitHub API
+          ARTIFACTS_RESPONSE=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts?name=$ARTIFACT_NAME")
+          
+          # Check if artifacts exist and are not expired
+          ARTIFACT_COUNT=$(echo $ARTIFACTS_RESPONSE | jq '.total_count')
+          
+          if [[ "$ARTIFACT_COUNT" -gt 0 ]]; then
+            echo "Found $ARTIFACT_COUNT existing artifact(s)"
+            ARTIFACT_EXISTS=true
+          else
+            echo "No existing artifacts found"
+          fi
+          
+          echo "artifact_exists=$ARTIFACT_EXISTS" >> $GITHUB_OUTPUT
+        shell: bash
       
-      - name: Output FFmpeg paths
+      - name: Download existing artifact
+        if: steps.check_artifacts.outputs.artifact_exists == 'true'
+        uses: dawidd6/action-download-artifact@v2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          workflow: main.yml
+          workflow_conclusion: success
+          name: ${{ matrix.os == 'windows-latest' && 'ffmpeg-windows-latest' || 'ffmpeg-macos-13' }}
+          path: existing-artifact
+      
+      - name: Verify downloaded artifact
+        if: steps.check_artifacts.outputs.artifact_exists == 'true'
+        id: verify_artifact
+        run: |
+          ARTIFACT_VALID=false
+          
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            if [ -f "existing-artifact/ffmpeg.exe" ]; then
+              echo "Found valid Windows FFmpeg in artifact"
+              ARTIFACT_VALID=true
+            fi
+          else
+            if [ -f "existing-artifact/ffmpeg" ]; then
+              echo "Found valid macOS FFmpeg in artifact"
+              ARTIFACT_VALID=true
+            fi
+          fi
+          
+          echo "artifact_valid=$ARTIFACT_VALID" >> $GITHUB_OUTPUT
+        shell: bash
+      
+      - name: Output paths
         id: output_paths
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
@@ -109,124 +163,222 @@ jobs:
             echo "mac_ffmpeg_path=ffmpeg" >> $GITHUB_OUTPUT
           fi
         shell: bash
-
-      - name: Download and process FFmpeg
-        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+      
+      # Only run the rest of the steps if artifacts don't exist or are invalid
+      - name: Checkout repository
+        if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
         uses: actions/checkout@v4
-        
-      - name: Download FFmpeg for Windows
-        if: matrix.os == 'windows-latest' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+      
+      - name: Install FFmpeg through package manager
+        if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
+        id: package_install
         run: |
-          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-          Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
-          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_temp
-          Get-ChildItem -Path ffmpeg_temp -Recurse -Filter "ffmpeg.exe" | 
-            Select-Object -First 1 | 
-            ForEach-Object { Copy-Item $_.FullName -Destination "ffmpeg.exe" }
-          Remove-Item -Path ffmpeg.zip -Force
-          Remove-Item -Path ffmpeg_temp -Recurse -Force
-        shell: pwsh
-
-      - name: Download FFmpeg for macOS
-        if: matrix.os == 'macos-13' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
-        run: |
-          curl -L https://evermeet.cx/ffmpeg/ffmpeg-6.1.zip -o ffmpeg.zip
-          unzip ffmpeg.zip
-          chmod +x ffmpeg
-          rm -f ffmpeg.zip
-
-      - name: Sign FFmpeg (macOS)
-        if: matrix.os == 'macos-13' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
-        env:
-          CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
-          CERTIFICATE_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          echo $CERTIFICATE_BASE64 | base64 --decode > certificate.p12
-          security create-keychain -p "" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "" build.keychain
-          security import certificate.p12 -k build.keychain -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
-          /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime ffmpeg
-          rm -f certificate.p12
-
-      - name: Upload FFmpeg artifact
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            choco install ffmpeg -y
+            cp "C:/ProgramData/chocolatey/bin/ffmpeg.exe" ./ffmpeg.exe
+          else
+            brew install ffmpeg
+            cp "$(which ffmpeg)" ./ffmpeg
+          fi
+          echo "FFmpeg installed successfully"
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            ls -la ./ffmpeg.exe || echo "Windows FFmpeg not found"
+          else
+            ls -la ./ffmpeg || echo "macOS FFmpeg not found"
+          fi
+        shell: bash
+      
+      - name: Upload FFmpeg
+        if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ffmpeg-${{ matrix.os }}
-          path: ffmpeg${{ matrix.os == 'windows-latest' && '.exe' || '' }}
-          retention-days: 7
+          path: ${{ matrix.os == 'windows-latest' && 'ffmpeg.exe' || 'ffmpeg' }}
+          retention-days: 90
+      
+      # Use existing artifact if it exists and is valid
+      - name: Prepare existing artifact for upload
+        if: steps.check_artifacts.outputs.artifact_exists == 'true' && steps.verify_artifact.outputs.artifact_valid == 'true'
+        run: |
+          mkdir -p .
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            cp existing-artifact/ffmpeg.exe ./
+            echo "Reusing existing Windows FFmpeg"
+          else
+            cp existing-artifact/ffmpeg ./
+            echo "Reusing existing macOS FFmpeg"
+          fi
+          echo "Content of current directory:"
+          ls -la .
+        shell: bash
+      
+      - name: Re-upload existing artifact
+        if: steps.check_artifacts.outputs.artifact_exists == 'true' && steps.verify_artifact.outputs.artifact_valid == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-${{ matrix.os }}
+          path: ${{ matrix.os == 'windows-latest' && 'ffmpeg.exe' || 'ffmpeg' }}
+          retention-days: 90
 
   build-executables:
     needs: check-changes
     if: ${{ needs.check-changes.outputs.app_changed == 'true' && github.event.inputs.package_only != 'true' }}
-    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [windows-latest, macos-13]
       fail-fast: false
-    outputs:
-      win_exe_path: ${{ steps.output_paths.outputs.win_exe_path }}
-      mac_exe_path: ${{ steps.output_paths.outputs.mac_exe_path }}
+    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Output executable paths
-        id: output_paths
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Check for existing artifacts
+        id: check_artifacts
         run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            echo "win_exe_path=YoutubetoPremiere.exe" >> $GITHUB_OUTPUT
+          # First check if artifacts exist from previous successful runs
+          ARTIFACT_EXISTS=false
+
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            ARTIFACT_NAME="executable-windows-latest"
           else
-            echo "mac_exe_path=YoutubetoPremiere" >> $GITHUB_OUTPUT
+            ARTIFACT_NAME="executable-macos-13"
           fi
+
+          echo "Checking for artifact: $ARTIFACT_NAME"
+          
+          # Try to download the artifact using GitHub API
+          ARTIFACTS_RESPONSE=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts?name=$ARTIFACT_NAME")
+          
+          # Check if artifacts exist and are not expired
+          ARTIFACT_COUNT=$(echo $ARTIFACTS_RESPONSE | jq '.total_count')
+          
+          if [[ "$ARTIFACT_COUNT" -gt 0 ]]; then
+            echo "Found $ARTIFACT_COUNT existing artifact(s)"
+            ARTIFACT_EXISTS=true
+          else
+            echo "No existing artifacts found"
+          fi
+          
+          echo "artifact_exists=$ARTIFACT_EXISTS" >> $GITHUB_OUTPUT
         shell: bash
       
+      - name: Download existing artifact
+        if: steps.check_artifacts.outputs.artifact_exists == 'true'
+        uses: dawidd6/action-download-artifact@v2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          workflow: main.yml
+          workflow_conclusion: success
+          name: ${{ matrix.os == 'windows-latest' && 'executable-windows-latest' || 'executable-macos-13' }}
+          path: existing-artifact
+      
+      - name: Verify downloaded artifact
+        if: steps.check_artifacts.outputs.artifact_exists == 'true'
+        id: verify_artifact
+        run: |
+          ARTIFACT_VALID=false
+          
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            if [ -f "existing-artifact/YoutubetoPremiere.exe" ]; then
+              echo "Found valid Windows executable in artifact"
+              ARTIFACT_VALID=true
+            fi
+          else
+            if [ -f "existing-artifact/YoutubetoPremiere" ]; then
+              echo "Found valid macOS executable in artifact"
+              ARTIFACT_VALID=true
+            fi
+          fi
+          
+          echo "artifact_valid=$ARTIFACT_VALID" >> $GITHUB_OUTPUT
+        shell: bash
+      
+      # Only run the rest of the steps if artifacts don't exist or are invalid
       - name: Setup Python
+        if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.9'
           cache: 'pip'
-          cache-dependency-path: '**/requirements.txt'
-      
+          
       - name: Install Python dependencies
+        if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install pyinstaller pygame
-        
-      - name: Build executable
-        shell: bash
-        run: |
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            python -m PyInstaller YoutubetoPremiere.spec -y --workpath build/work --distpath ./
-          else
-            python -m PyInstaller YoutubetoPremiere.local.spec -y --workpath build/work --distpath ./
-          fi
+          pip install pyinstaller python-socketio requests pillow
       
-      - name: Sign executable (macOS)
-        if: matrix.os == 'macos-13'
-        env:
-          CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
-          CERTIFICATE_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      - name: Check Platform
+        if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
+        id: platform
         run: |
-          echo $CERTIFICATE_BASE64 | base64 --decode > certificate.p12
-          security create-keychain -p "" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "" build.keychain
-          security import certificate.p12 -k build.keychain -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
-          /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime YoutubetoPremiere
-          find . -name "*.dylib" -exec /usr/bin/codesign --force -s "Developer ID Application: mickael ducatez (9H8DB46V75)" --options runtime {} \;
-          rm -f certificate.p12
+          echo "Building for ${{ matrix.os }}"
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            echo "is_windows=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_windows=false" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+      
+      - name: Clean Python caches on Windows
+        if: ${{ steps.platform.outputs.is_windows == 'true' && (steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true') }}
+        run: |
+          Remove-Item -Path $env:LOCALAPPDATA\pip\Cache -Recurse -Force -ErrorAction SilentlyContinue
+          Write-Host "Cleared pip cache"
+        shell: pwsh
 
-      - name: Upload executable
+      - name: Build executable with PyInstaller
+        if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
+        run: |
+          echo "Working directory: $(pwd)"
+          echo "Content of app directory:"
+          ls -la app/
+          
+          # Create the spec file based on the platform
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            # Windows spec
+            python -m PyInstaller --name YoutubetoPremiere --onefile app/YoutubetoPremiere.py
+          else
+            # macOS spec
+            python -m PyInstaller --name YoutubetoPremiere --onefile app/YoutubetoPremiere.py
+          fi
+          
+          echo "PyInstaller completed"
+          echo "Content of dist directory:"
+          ls -la dist/
+        shell: bash
+      
+      - name: Upload executable artifact
+        if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: executable-${{ matrix.os }}
-          path: |
-            ${{ matrix.os == 'windows-latest' && 'YoutubetoPremiere.exe' || 'YoutubetoPremiere' }}
-          retention-days: 7
-          if-no-files-found: error
+          path: dist/YoutubetoPremiere*
+          retention-days: 90
+      
+      # Use existing artifact if it exists and is valid
+      - name: Prepare existing artifact for upload
+        if: steps.check_artifacts.outputs.artifact_exists == 'true' && steps.verify_artifact.outputs.artifact_valid == 'true'
+        run: |
+          mkdir -p dist
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            cp existing-artifact/YoutubetoPremiere.exe dist/
+            echo "Reusing existing Windows executable"
+          else
+            cp existing-artifact/YoutubetoPremiere dist/
+            echo "Reusing existing macOS executable"
+          fi
+          echo "Content of dist directory:"
+          ls -la dist/
+        shell: bash
+      
+      - name: Re-upload existing artifact
+        if: steps.check_artifacts.outputs.artifact_exists == 'true' && steps.verify_artifact.outputs.artifact_valid == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: executable-${{ matrix.os }}
+          path: dist/YoutubetoPremiere*
+          retention-days: 90
 
   package-zxp:
     needs: [check-changes, build-ffmpeg, build-executables]
@@ -317,20 +469,20 @@ jobs:
           echo "Copying executables and FFmpeg..."
           
           # Windows executable
-          copy_artifact "artifacts/executable-windows-latest/YoutubetoPremiere.exe" "dist/cep/exec/" "Windows executable"
-          copy_artifact "artifacts/executable-windows-latest/YoutubetoPremiere.exe" "backup/exec/" "Windows executable (backup)"
+          copy_artifact "executable-windows-latest/YoutubetoPremiere.exe" "dist/cep/exec/" "Windows executable"
+          copy_artifact "executable-windows-latest/YoutubetoPremiere.exe" "backup/exec/" "Windows executable (backup)"
           
           # Windows FFmpeg
-          copy_artifact "artifacts/ffmpeg-windows-latest/ffmpeg.exe" "dist/cep/exec/" "Windows FFmpeg"
-          copy_artifact "artifacts/ffmpeg-windows-latest/ffmpeg.exe" "backup/exec/" "Windows FFmpeg (backup)"
+          copy_artifact "ffmpeg-windows-latest/ffmpeg.exe" "dist/cep/exec/" "Windows FFmpeg"
+          copy_artifact "ffmpeg-windows-latest/ffmpeg.exe" "backup/exec/" "Windows FFmpeg (backup)"
           
           # macOS executable
-          copy_artifact "artifacts/executable-macos-13/YoutubetoPremiere" "dist/cep/exec/" "macOS executable"
-          copy_artifact "artifacts/executable-macos-13/YoutubetoPremiere" "backup/exec/" "macOS executable (backup)"
+          copy_artifact "executable-macos-13/YoutubetoPremiere" "dist/cep/exec/" "macOS executable"
+          copy_artifact "executable-macos-13/YoutubetoPremiere" "backup/exec/" "macOS executable (backup)"
           
           # macOS FFmpeg
-          copy_artifact "artifacts/ffmpeg-macos-13/ffmpeg" "dist/cep/exec/" "macOS FFmpeg"
-          copy_artifact "artifacts/ffmpeg-macos-13/ffmpeg" "backup/exec/" "macOS FFmpeg (backup)"
+          copy_artifact "ffmpeg-macos-13/ffmpeg" "dist/cep/exec/" "macOS FFmpeg"
+          copy_artifact "ffmpeg-macos-13/ffmpeg" "backup/exec/" "macOS FFmpeg (backup)"
           
           # Verify files are in place
           echo "Verifying files in dist/cep/exec before yarn zxp:"
