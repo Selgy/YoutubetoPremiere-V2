@@ -586,7 +586,11 @@ jobs:
           Write-Host "Windows FFmpeg: $winFfmpegSource"
           Write-Host "macOS FFmpeg: $macFfmpegSource"
           
-          # Create exec directory if it doesn't exist
+          # Run yarn zxp to create the initial package
+          Write-Host "Running yarn zxp to create initial package..."
+          yarn zxp
+          
+          # Create exec directory if it doesn't exist (should already exist from yarn zxp)
           $execDir = Join-Path $workspacePath "dist/cep/exec"
           if (-not (Test-Path $execDir)) {
             New-Item -ItemType Directory -Path $execDir -Force | Out-Null
@@ -627,84 +631,98 @@ jobs:
             }
           }
           
-          # Copy executables to dist/cep/exec
-          $winExeCopied = Copy-FileWithCheck -Source $winExeSource -Destination "$execDir/YoutubetoPremiere.exe"
-          $macExeCopied = Copy-FileWithCheck -Source $macExeSource -Destination "$execDir/YoutubetoPremiere"
-          $winFfmpegCopied = Copy-FileWithCheck -Source $winFfmpegSource -Destination "$execDir/ffmpeg.exe"
-          $macFfmpegCopied = Copy-FileWithCheck -Source $macFfmpegSource -Destination "$execDir/ffmpeg"
+          # Create a temporary directory to extract the ZXP 
+          $tempDir = Join-Path $workspacePath "temp_zxp"
+          if (Test-Path $tempDir) {
+            Remove-Item -Path $tempDir -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+          Write-Host "Created temporary directory: $tempDir"
           
-          # Set permissions for macOS executables
-          if ($macExeCopied) {
-            Write-Host "Setting execute permissions for macOS executable"
-            & "bash" "-c" "chmod +x `"$execDir/YoutubetoPremiere`""
+          # Copy the ZXP to the temp directory
+          $zxpPath = Join-Path $workspacePath "dist/zxp/com.youtubetoPremiereV2.cep.zxp"
+          $tempZxpPath = Join-Path $tempDir "package.zip"  # Rename to .zip for extraction
+          Copy-Item -Path $zxpPath -Destination $tempZxpPath -Force
+          Write-Host "Copied ZXP to temporary location: $tempZxpPath"
+          
+          # Extract the ZXP (ZIP) to a subdirectory
+          $extractDir = Join-Path $tempDir "extracted"
+          New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
+          Write-Host "Extracting ZXP to: $extractDir"
+          Expand-Archive -Path $tempZxpPath -DestinationPath $extractDir -Force
+          
+          # Make sure the exec directory exists in the extracted contents
+          $extractedExecDir = Join-Path $extractDir "exec"
+          if (-not (Test-Path $extractedExecDir)) {
+            New-Item -ItemType Directory -Path $extractedExecDir -Force | Out-Null
+            Write-Host "Created exec directory in extracted package: $extractedExecDir"
           }
           
-          if ($macFfmpegCopied) {
-            Write-Host "Setting execute permissions for macOS FFmpeg"
-            & "bash" "-c" "chmod +x `"$execDir/ffmpeg`""
-          }
+          # Copy the executables to the extracted exec directory
+          Copy-FileWithCheck -Source $winExeSource -Destination "$extractedExecDir/YoutubetoPremiere.exe"
+          Copy-FileWithCheck -Source $macExeSource -Destination "$extractedExecDir/YoutubetoPremiere"
+          Copy-FileWithCheck -Source $winFfmpegSource -Destination "$extractedExecDir/ffmpeg.exe"
+          Copy-FileWithCheck -Source $macFfmpegSource -Destination "$extractedExecDir/ffmpeg"
+          
+          # Set permissions for macOS files
+          Write-Host "Setting permissions for macOS files..."
+          & "bash" "-c" "chmod +x `"$extractedExecDir/YoutubetoPremiere`" 2>/dev/null || true"
+          & "bash" "-c" "chmod +x `"$extractedExecDir/ffmpeg`" 2>/dev/null || true"
           
           # List contents of exec directory
-          Write-Host "Contents of $execDir directory:"
-          Get-ChildItem -Path $execDir | ForEach-Object { Write-Host "  - $($_.Name) ($($_.Length) bytes)" }
+          Write-Host "Contents of $extractedExecDir directory:"
+          Get-ChildItem -Path $extractedExecDir | ForEach-Object { Write-Host "  - $($_.Name) ($($_.Length) bytes)" }
           
-          # Create the ZXP package directly from the dist/cep directory
-          Write-Host "Creating ZXP file..."
-          $cepPath = Join-Path $workspacePath "dist/cep"
-          Write-Host "Moving to directory: $cepPath"
-          Set-Location $cepPath
+          # Create a new ZXP from the extracted directory using standard .NET ZIP functionality
+          Write-Host "Creating new ZXP with all executables..."
+          $newZxpPath = Join-Path $workspacePath "dist/zxp/com.youtubetoPremiereV2.cep.zxp"
           
-          # Create new ZXP using 7-Zip with maximum compression
-          $zxpPath = Join-Path $workspacePath "dist/zxp/com.youtubetoPremiereV2.cep.zxp"
-          Write-Host "Creating ZXP at: $zxpPath"
-          & "C:\Program Files\7-Zip\7z.exe" a -tzip -mx=9 -mfb=258 -mpass=15 $zxpPath *
+          # Delete the existing ZXP if it exists
+          if (Test-Path $newZxpPath) {
+            Remove-Item -Path $newZxpPath -Force
+          }
           
-          # Return to original directory
-          Set-Location $workspacePath
+          # Create the new ZXP using simple ZIP compression to ensure it completes quickly
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($extractDir, $newZxpPath)
           
           # Verify the ZXP was created
-          if (Test-Path $zxpPath) {
-            $fileSize = (Get-Item $zxpPath).Length / 1MB
-            Write-Host "✓ ZXP package created successfully: $fileSize MB"
+          if (Test-Path $newZxpPath) {
+            $fileSize = (Get-Item $newZxpPath).Length / 1MB
+            Write-Host "✓ New ZXP package created successfully: $fileSize MB"
             
-            # Examine contents using 7-Zip
-            Write-Host "Examining ZXP contents..."
-            $listOutput = & "C:\Program Files\7-Zip\7z.exe" l $zxpPath "exec/*"
+            # List the contents of the ZXP to verify
+            Write-Host "Verifying executables in the ZXP package:"
+            $zipFile = [System.IO.Compression.ZipFile]::OpenRead($newZxpPath)
+            $execFiles = $zipFile.Entries | Where-Object { $_.FullName -like "exec/*" -and $_.Name -match "(YoutubetoPremiere|ffmpeg)($|\.exe$)" }
             
-            # Check for executables
-            $execFound = $false
-            $foundExecutables = @()
-            
-            foreach ($line in $listOutput -split "`n") {
-              if ($line -match "exec/(YoutubetoPremiere\.exe|YoutubetoPremiere|ffmpeg\.exe|ffmpeg)$") {
-                $execFound = $true
-                $foundExecutables += $matches[0]
-              }
-            }
-            
-            if ($execFound) {
+            if ($execFiles.Count -gt 0) {
               Write-Host "✓ Found executables in ZXP:"
-              foreach ($exec in $foundExecutables) {
-                Write-Host "  - $exec"
+              foreach ($file in $execFiles) {
+                Write-Host "  - $($file.FullName)"
+              }
+              
+              $macFiles = $execFiles | Where-Object { $_.Name -notmatch "\.exe$" }
+              if ($macFiles.Count -gt 0) {
+                Write-Host "✓ Found macOS executables in ZXP:"
+                foreach ($file in $macFiles) {
+                  Write-Host "  - $($file.FullName)"
+                }
+              } else {
+                Write-Host "✗ WARNING: No macOS executables found in ZXP!"
               }
             } else {
               Write-Host "✗ WARNING: No executables found in ZXP!"
             }
             
-            # Additional verification for macOS executables
-            $macExecutablesFound = $foundExecutables | Where-Object { $_ -notmatch '\.exe$' }
-            if ($macExecutablesFound.Count -gt 0) {
-              Write-Host "✓ Found macOS executables:"
-              foreach ($exec in $macExecutablesFound) {
-                Write-Host "  - $exec"
-              }
-            } else {
-              Write-Host "✗ WARNING: No macOS executables found in ZXP!"
-            }
+            $zipFile.Dispose()
           } else {
             Write-Error "Failed to create ZXP package!"
             exit 1
           }
+          
+          # Clean up the temporary directory
+          Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
           
           Write-Host "===== FINAL ZXP PACKAGING COMPLETED ====="
 
