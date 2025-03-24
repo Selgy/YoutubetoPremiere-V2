@@ -270,106 +270,43 @@ jobs:
           echo "Building TypeScript..."
           yarn tsc -p "tsconfig-build.json"
           
-          # Create temp directory with the full extension structure
-          echo "Creating temp directory with complete extension structure..."
-          mkdir -p temp_extension
+          # We'll use a simpler approach - use yarn zxp to create the package, then modify it
+          echo "Running initial yarn zxp..."
+          yarn zxp
           
-          # Prepare structure for package without running yarn zxp
-          echo "Building extension without yarn zxp..."
-          export SKIP_PYTHON_BUILD=true
-          export NO_PYTHON=true
-          export ZXP_PACKAGE=true
-          
-          # Copy core extension files from existing dist/cep if they exist
-          if [ -d "dist/cep" ]; then
-            echo "Copying existing dist/cep files..."
-            cp -r dist/cep/* temp_extension/ 2>/dev/null || echo "No existing dist/cep files"
+          # Verify the ZXP exists
+          if [ ! -f "dist/zxp/com.youtubetoPremiereV2.cep.zxp" ]; then
+            echo "ERROR: yarn zxp did not create the ZXP package"
+            exit 1
           fi
           
-          # Run vite build to generate required files
-          echo "Running vite build for required files..."
-          cross-env ZXP_PACKAGE=true SKIP_PYTHON_BUILD=true NO_PYTHON=true vite build --force --watch=false
-          
-          # Copy all assets to temp_extension
-          echo "Copying all assets to temp_extension..."
-          mkdir -p temp_extension/CSXS
-          cp -r dist/cep/CSXS/* temp_extension/CSXS/ 2>/dev/null || echo "No CSXS files"
-          cp -r dist/cep/assets temp_extension/ 2>/dev/null || echo "No assets files"
-          cp dist/cep/.debug temp_extension/ 2>/dev/null || echo "No .debug file"
-          cp -r dist/cep/main temp_extension/ 2>/dev/null || echo "No main files"
-          cp -r dist/cep/settings temp_extension/ 2>/dev/null || echo "No settings files"
-          cp -r dist/cep/js temp_extension/ 2>/dev/null || echo "No js files"
-          cp -r dist/cep/jsx temp_extension/ 2>/dev/null || echo "No jsx files"
-          
-          # Create exec directory if it doesn't exist
-          mkdir -p temp_extension/exec/sounds
-          
-          # Copy executables from backup to temp_extension
-          echo "Copying executables to temp_extension/exec..."
-          cp backup/exec/* temp_extension/exec/ 2>/dev/null || echo "No executables found in backup"
-          
-          # Copy Python files to temp_extension/exec
-          echo "Copying Python files to temp_extension/exec..."
-          cp app/*.py temp_extension/exec/ 2>/dev/null || echo "No Python files found"
-          cp -r app/sounds/* temp_extension/exec/sounds/ 2>/dev/null || echo "No sound files found"
-          
-          # Verify executables are in temp_extension/exec
-          echo "Verifying files in temp_extension/exec:"
-          ls -la temp_extension/exec
-          
-          # Create ZXP package with temp_extension contents
-          echo "Creating ZXP package with temp_extension contents..."
-          mkdir -p dist/zxp
-          cd temp_extension
-          
-          # Use ZXPSignCmd directly to create ZXP
-          echo "Using ZXPSignCmd to create ZXP..."
-          
-          # Copy existing certificate from node_modules if available
-          if [ -f "../node_modules/vite-cep-plugin/lib/.tmp/com.youtubetoPremiereV2.cep-cert.p12" ]; then
-            echo "Using existing certificate from vite-cep-plugin..."
-            mkdir -p ../certs
-            cp "../node_modules/vite-cep-plugin/lib/.tmp/com.youtubetoPremiereV2.cep-cert.p12" ../certs/
-          else
-            echo "Creating new certificate..."
-            mkdir -p ../certs
-            npx ZXPSignCmd -selfSignedCert FR CA Selgy com.youtubetoPremiereV2.cep test ../certs/com.youtubetoPremiereV2.cep-cert.p12
-          fi
-          
-          # Create ZXP with all contents including executables
-          echo "Creating final ZXP with executables included..."
-          npx ZXPSignCmd -sign ./ ../dist/zxp/com.youtubetoPremiereV2.cep.zxp ../certs/com.youtubetoPremiereV2.cep-cert.p12 test -tsa http://timestamp.digicert.com/
-          
+          echo "Extracting the ZXP package..."
+          mkdir -p zxp_extract
+          cp dist/zxp/com.youtubetoPremiereV2.cep.zxp zxp_extract/
+          cd zxp_extract
+          unzip -q com.youtubetoPremiereV2.cep.zxp -d contents || echo "Could not extract ZXP"
           cd ..
           
-          # Verify executables are in temp_extension after signing
-          echo "Verifying files in temp_extension/exec after signing:"
-          ls -la temp_extension/exec
+          echo "Creating exec directory in the extracted package..."
+          mkdir -p zxp_extract/contents/exec
           
-          # Fallback to yarn zxp if manual packaging failed
-          if [ ! -f "dist/zxp/com.youtubetoPremiereV2.cep.zxp" ]; then
-            echo "Manual ZXP creation failed, falling back to yarn zxp..."
-            yarn zxp
-            
-            # Create exec directory if it doesn't exist
-            mkdir -p dist/cep/exec
-            
-            # Restore executables from backup
-            echo "Restoring executables from backup..."
-            cp backup/exec/* dist/cep/exec/ 2>/dev/null || echo "No backup files found to restore"
-            
-            # Verify files are in place after yarn zxp and restoring backup
-            echo "Verifying files after yarn zxp and restoring backup:"
-            ls -la dist/cep/exec
-            
-            # Try to resign the package
-            echo "Trying to resign the package with restored executables..."
-            npx vite-cep-plugin package
-          fi
+          echo "Copying executables to the extracted package..."
+          cp backup/exec/* zxp_extract/contents/exec/ 2>/dev/null || echo "No executables found in backup"
+          cp app/*.py zxp_extract/contents/exec/ 2>/dev/null || echo "No Python files found"
+          mkdir -p zxp_extract/contents/exec/sounds
+          cp -r app/sounds/* zxp_extract/contents/exec/sounds/ 2>/dev/null || echo "No sound files found"
           
-          # Verify ZXP was created
+          echo "Verifying executables are in the extracted package:"
+          ls -la zxp_extract/contents/exec
+          
+          echo "Recreating the ZXP with executables included..."
+          cd zxp_extract/contents
+          zip -r ../../dist/zxp/com.youtubetoPremiereV2.cep.zxp ./* || echo "Failed to create ZIP file"
+          cd ../..
+          
+          # Verify ZXP was recreated
           if [ -f "dist/zxp/com.youtubetoPremiereV2.cep.zxp" ]; then
-            echo "✓ ZXP package created successfully at: dist/zxp/com.youtubetoPremiereV2.cep.zxp"
+            echo "✓ ZXP package recreated successfully at: dist/zxp/com.youtubetoPremiereV2.cep.zxp"
             echo "  Size: $(du -h dist/zxp/com.youtubetoPremiereV2.cep.zxp | cut -f1)"
             
             # Examine ZXP contents to verify executables are included
@@ -382,64 +319,11 @@ jobs:
             unzip -l com.youtubetoPremiereV2.cep.zxp | grep -i "ffmpeg" || echo "WARNING: No ffmpeg files found in ZXP!"
             cd ..
           else
-            echo "✗ ERROR: ZXP package was not created!"
+            echo "✗ ERROR: ZXP package was not recreated!"
             exit 1
           fi
           
           echo "===== ZXP PACKAGING COMPLETED ====="
-
-      - name: Create ZXP with Executables
-        shell: bash
-        run: |
-          echo "===== CREATING FINAL ZXP WITH EXECUTABLES ====="
-          
-          # Create a temporary directory for final ZXP contents
-          mkdir -p final_zxp/exec
-          
-          # Extract the current ZXP
-          echo "Extracting current ZXP..."
-          mkdir -p extracted_zxp
-          cp dist/zxp/com.youtubetoPremiereV2.cep.zxp extracted_zxp/
-          cd extracted_zxp
-          unzip -q com.youtubetoPremiereV2.cep.zxp -d contents || echo "Could not extract ZXP"
-          cd ..
-          
-          # Copy the contents to final directory
-          echo "Copying ZXP contents..."
-          cp -r extracted_zxp/contents/* final_zxp/ 2>/dev/null || echo "No ZXP contents to copy"
-          
-          # Create exec directory if it doesn't exist
-          mkdir -p final_zxp/exec
-          
-          # Copy executables from backup
-          echo "Adding executables to final ZXP..."
-          cp backup/exec/* final_zxp/exec/ 2>/dev/null || echo "No executables found in backup"
-          
-          # Verify executables are in place
-          echo "Verifying executables in final ZXP:"
-          ls -la final_zxp/exec
-          
-          # Package the final ZXP
-          echo "Packaging final ZXP..."
-          mkdir -p dist/final_zxp
-          cd final_zxp
-          zip -r ../dist/final_zxp/YoutubetoPremiere-with-execs.zxp * || echo "Failed to create ZIP file"
-          cd ..
-          
-          # Replace the original ZXP with the new one
-          echo "Replacing original ZXP with the new one containing executables..."
-          cp dist/final_zxp/YoutubetoPremiere-with-execs.zxp dist/zxp/com.youtubetoPremiereV2.cep.zxp || echo "Failed to replace ZXP"
-          
-          # Verify final ZXP was created
-          if [ -f "dist/zxp/com.youtubetoPremiereV2.cep.zxp" ]; then
-            echo "✓ Final ZXP package created successfully"
-            echo "  Size: $(du -h dist/zxp/com.youtubetoPremiereV2.cep.zxp | cut -f1)"
-          else
-            echo "✗ ERROR: Final ZXP package was not created!"
-            exit 1
-          fi
-          
-          echo "===== FINAL ZXP PACKAGING COMPLETED ====="
 
       - name: Verify and Rename ZXP Package
         shell: pwsh
