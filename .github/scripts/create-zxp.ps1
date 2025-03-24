@@ -1,232 +1,171 @@
-# Create a .zip file with platform-specific tools to preserve attributes
-if ($IsWindows -or $env:OS -like "*Windows*") {
-  Write-Host "Running on Windows - trying various ZIP methods..."
-  
-  # Try 7-Zip first (installed on GitHub runners)
-  $sevenZipPath = "C:\Program Files\7-Zip\7z.exe"
-  if (Test-Path $sevenZipPath) {
-    Write-Host "Using 7-Zip to create archive..."
-    
-    # Change to output directory before running 7-Zip to avoid path issues
-    $currentLocation = Get-Location
-    Set-Location -Path $outputDir
-    
-    try {
-      # Run 7-Zip from the directory to avoid path issues with wildcards
-      & "$sevenZipPath" a -tzip -mx=9 "$zxpPath" "*" -r
-      
-      if (Test-Path $zxpPath) {
-        Write-Host "✅ Successfully created ZXP package using 7-Zip"
-      } else {
-        Write-Host "❌ 7-Zip failed to create ZXP package"
-      }
-    }
-    finally {
-      # Restore original location
-      Set-Location -Path $currentLocation
-    }
-  } else {
-    Write-Host "7-Zip not found at expected location: $sevenZipPath"
-  }
-  
-  # If 7-Zip failed or not found, try .NET methods
-  if (-not (Test-Path $zxpPath)) {
-    Write-Host "Trying .NET method for ZIP creation"
-    Try {
-      Add-Type -AssemblyName System.IO.Compression.FileSystem
-      [System.IO.Compression.CompressionLevel]$compressionLevel = [System.IO.Compression.CompressionLevel]::Optimal
-      [System.IO.Compression.ZipFile]::CreateFromDirectory($outputDir, $zxpPath, $compressionLevel, $false)
-      if (Test-Path $zxpPath) {
-        Write-Host "✅ Successfully created ZXP package using .NET"
-      }
-    } Catch {
-      Write-Host "❌ .NET ZIP creation failed: $_"
-    }
-  }
-  
-  # Last resort: PowerShell's Compress-Archive
-  if (-not (Test-Path $zxpPath)) {
-    Write-Host "Trying PowerShell Compress-Archive as last resort"
-    Try {
-      Compress-Archive -Path "$outputDir\*" -DestinationPath $zxpPath -Force
-      if (Test-Path $zxpPath) {
-        Write-Host "✅ Successfully created ZXP package using Compress-Archive"
-      } else {
-        Write-Error "All ZIP methods failed!"
-      }
-    } Catch {
-      Write-Error "PowerShell Compress-Archive failed: $_"
-    }
-  }
-  
-  # Final verification
-  if (Test-Path $zxpPath) {
-    $fileInfo = Get-Item $zxpPath
-    Write-Host "ZXP created successfully! Size: $($fileInfo.Length) bytes"
-  } else {
-    Write-Error "Failed to create ZXP package with any method!"
-    # List all available command line tools for diagnostics
-    Write-Host "Available command line tools:"
-    Get-Command 7z*, zip*, compress* | Format-Table -AutoSize
-    exit 1
-  }
+#!/usr/bin/env pwsh
+Write-Host "===== CREATING FINAL ZXP WITH EXECUTABLES ====="
+
+# Get paths
+$workspacePath = Get-Location
+$winExeSource = Join-Path $workspacePath "executable-windows-latest/YoutubetoPremiere.exe"
+$macExeSource = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere"
+$winFfmpegSource = Join-Path $workspacePath "ffmpeg-windows-latest/ffmpeg.exe"
+$macFfmpegSource = Join-Path $workspacePath "ffmpeg-macos-13/ffmpeg"
+$tempNotarizedDir = Join-Path $workspacePath "temp_notarized"
+
+Write-Host "Windows FFmpeg source: $winFfmpegSource"
+Write-Host "macOS FFmpeg source: $macFfmpegSource"
+
+# Prepare directory for executables
+$execDir = "dist/cep/exec"
+if (-not (Test-Path $execDir)) {
+    New-Item -ItemType Directory -Path $execDir -Force | Out-Null
+    Write-Host "Created exec directory: $execDir"
+}
+
+# Ensure dist/cep exists - copy from dist/cep if needed
+if (Test-Path "dist/cep") {
+    Write-Host "dist/cep directory exists"
 } else {
-  # On macOS runner, use ditto if available, otherwise zip
-  Write-Host "Running on macOS - using ditto for ZXP creation if available"
-  $tempZipPath = Join-Path $workspacePath "temp_zxp.zip"
-  
-  $dittoCmdExists = & "bash" "-c" "command -v ditto >/dev/null 2>&1 && echo 'true' || echo 'false'"
-  if ($dittoCmdExists -eq "true") {
-    & "bash" "-c" "ditto -c -k --keepParent \"$outputDir\" \"$tempZipPath\" && mv \"$tempZipPath\" \"$zxpPath\" || echo 'Ditto failed'"
-    Write-Host "Created ZXP package using ditto (preserves all file attributes)"
-  } else {
-    & "bash" "-c" "cd \"$outputDir\" && zip -r -y -X \"$zxpPath\" * || echo 'Zip command failed'"
-    Write-Host "Created ZXP package using zip with attributes preserved"
-  }
+    Write-Host "Creating dist/cep directory structure"
+    New-Item -ItemType Directory -Path "dist/cep" -Force | Out-Null
+    New-Item -ItemType Directory -Path "dist/cep/js" -Force | Out-Null
+    New-Item -ItemType Directory -Path "dist/cep/jsx" -Force | Out-Null
+    New-Item -ItemType Directory -Path "dist/cep/assets" -Force | Out-Null
+    New-Item -ItemType Directory -Path "dist/cep/CSXS" -Force | Out-Null
+    New-Item -ItemType Directory -Path "dist/cep/exec" -Force | Out-Null
+    New-Item -ItemType Directory -Path "dist/cep/main" -Force | Out-Null
+    New-Item -ItemType Directory -Path "dist/cep/settings" -Force | Out-Null
 }
 
-Write-Host "Created ZXP package at: $zxpPath"
-
-# Helper function to list archive contents using 7-Zip
-function List-Archive {
-  param (
-    [string]$ArchivePath
-  )
-  
-  $sevenZipPath = "C:\Program Files\7-Zip\7z.exe"
-  if (Test-Path $sevenZipPath) {
-    Write-Host "Listing archive contents using 7-Zip: $ArchivePath"
-    & "$sevenZipPath" l "$ArchivePath"
-  } else {
-    Write-Host "7-Zip not available to list archive contents"
-  }
-}
-
-# Verify ZXP exists before continuing
-if (-not (Test-Path $zxpPath)) {
-  Write-Error "ZXP file not found after creation: $zxpPath"
-  # List the directory to see what's there
-  $zxpDir = Split-Path -Parent $zxpPath
-  Write-Host "Contents of the ZXP directory:"
-  Get-ChildItem -Path $zxpDir -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $_" }
-  exit 1
-}
-
-# Get ZXP file info
-$zxpInfo = Get-Item $zxpPath
-Write-Host "ZXP file details: $($zxpInfo.Name), Size: $($zxpInfo.Length) bytes, LastWriteTime: $($zxpInfo.LastWriteTime)"
-
-# List archive contents with 7-Zip if available
-List-Archive -ArchivePath $zxpPath
-
-# Verify ZXP contents
-$tempExtractDir = Join-Path $workspacePath "verify_zxp"
-if (Test-Path $tempExtractDir) {
-  Remove-Item -Path $tempExtractDir -Recurse -Force
-}
-New-Item -ItemType Directory -Path $tempExtractDir -Force | Out-Null
-
-Write-Host "Verifying ZXP contents..."
-try {
-  # Make sure the ZXP file exists and has content
-  if (-not (Test-Path $zxpPath) -or (Get-Item $zxpPath).Length -eq 0) {
-    Write-Error "ZXP file is missing or empty: $zxpPath"
-    exit 1
-  }
-  
-  # Copy ZXP to a zip file for extraction
-  $packageZip = Join-Path -Path $tempExtractDir -ChildPath "package.zip"
-  Copy-Item -Path $zxpPath -Destination $packageZip -Force
-  
-  # Verify the copy succeeded
-  if (-not (Test-Path $packageZip) -or (Get-Item $packageZip).Length -eq 0) {
-    Write-Error "Failed to copy ZXP to temporary location for verification"
-    exit 1
-  }
-  
-  # Extract the ZIP
-  $contentsDir = Join-Path -Path $tempExtractDir -ChildPath "contents"
-  Write-Host "Extracting ZXP for verification..."
-  Expand-Archive -Path $packageZip -DestinationPath $contentsDir -Force
-  
-  # Check if extraction succeeded
-  if (-not (Test-Path $contentsDir)) {
-    Write-Error "Failed to extract ZXP contents for verification"
-    exit 1
-  }
-  
-  # List extracted contents
-  Write-Host "Extracted ZXP contents:"
-  Get-ChildItem -Path $contentsDir -Recurse | Select-Object -First 20 | ForEach-Object { Write-Host "  $_" }
-  
-  # Now verify specific files
-  $macExePath = Join-Path -Path $contentsDir -ChildPath "exec/YoutubetoPremiere"
-  $macFfmpegPath = Join-Path -Path $contentsDir -ChildPath "exec/ffmpeg"
-  
-  if (Test-Path $macExePath) {
-    Write-Host "✅ macOS executable found in ZXP"
-    # Show file details
-    & "bash" "-c" "file ""$macExePath"" 2>/dev/null || echo 'File command not available'"
-    & "bash" "-c" "ls -la ""$macExePath"" || echo 'ls command failed'"
-    
-    # Verify executable permission is preserved
-    $isExecutable = & "bash" "-c" "test -x ""$macExePath"" && echo 'true' || echo 'false'"
-    if ($isExecutable -eq "true") {
-        Write-Host "✅ macOS executable permission is preserved"
-    } else {
-        Write-Host "❌ macOS executable permission is NOT preserved!"
+# Copy Python files for both platforms
+if (Test-Path "app/*.py") {
+    Get-ChildItem -Path "app/*.py" | ForEach-Object {
+        Copy-Item -Path $_.FullName -Destination "$execDir/" -Force
+        Write-Host "Copied Python file: $($_.Name)"
     }
-  } else {
-    Write-Host "❌ ERROR: macOS executable not found in ZXP!"
-    # List the exec directory to see what's there
-    $extractedExecDir = Join-Path -Path $contentsDir -ChildPath "exec"
-    Write-Host "Contents of the exec directory in ZXP:"
-    Get-ChildItem -Path $extractedExecDir -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $_" }
-  }
-  
-  if (Test-Path $macFfmpegPath) {
-    Write-Host "✅ macOS FFmpeg found in ZXP"
-  } else {
-    Write-Host "❌ ERROR: macOS FFmpeg not found in ZXP!"
-  }
-}
-catch {
-  Write-Error "Error during ZXP verification: $_"
-  exit 1
 }
 
-# Create ZXP package
-Write-Host "Creating ZXP package..."
-$zxpDir = Split-Path -Parent $zxpPath
-if (-not (Test-Path $zxpDir)) {
-  New-Item -ItemType Directory -Path $zxpDir -Force | Out-Null
-  Write-Host "Created ZXP directory: $zxpDir"
+# Create sounds directory and copy sounds
+$soundsDir = "$execDir/sounds"
+if (-not (Test-Path $soundsDir)) {
+    New-Item -ItemType Directory -Path $soundsDir -Force | Out-Null
+    Write-Host "Created sounds directory: $soundsDir"
 }
 
-# Verify source directory has content before proceeding
-if (-not (Test-Path $outputDir)) {
-  Write-Error "Output directory not found: $outputDir"
-  exit 1
+if (Test-Path "app/sounds") {
+    Get-ChildItem -Path "app/sounds/*" | ForEach-Object {
+        Copy-Item -Path $_.FullName -Destination "$soundsDir/" -Force
+        Write-Host "Copied sound file: $($_.Name)"
+    }
 }
 
-# Check that we have files to package
-$fileCount = (Get-ChildItem -Path $outputDir -Recurse -File).Count
-if ($fileCount -eq 0) {
-  Write-Error "Output directory is empty! Nothing to package."
-  exit 1
+# Copy Windows executable
+if (Test-Path $winExeSource) {
+    Copy-Item -Path $winExeSource -Destination "$execDir/YoutubetoPremiere.exe" -Force
+    Write-Host "Copied Windows executable"
+} else {
+    Write-Host "WARNING: Windows executable not found at $winExeSource"
 }
 
-Write-Host "Found $fileCount files to package in $outputDir"
-Write-Host "Top-level directories in output folder:"
-Get-ChildItem -Path $outputDir | ForEach-Object { Write-Host "  $($_.Name)" }
+# Check for notarized macOS executable ZIP
+$notarizedZipPath = Join-Path $workspacePath "executable-macos-13/YoutubetoPremiere-notarized.zip"
+if (Test-Path $notarizedZipPath) {
+    Write-Host "Found notarized macOS executable ZIP"
+    
+    # Create temp directory for extraction
+    if (-not (Test-Path $tempNotarizedDir)) {
+        New-Item -ItemType Directory -Path $tempNotarizedDir -Force | Out-Null
+    }
+    
+    # Extract using Expand-Archive
+    Expand-Archive -Path $notarizedZipPath -DestinationPath $tempNotarizedDir -Force
+    
+    # Copy notarized executable if found
+    if (Test-Path "$tempNotarizedDir/YoutubetoPremiere") {
+        Copy-Item -Path "$tempNotarizedDir/YoutubetoPremiere" -Destination "$execDir/YoutubetoPremiere" -Force
+        Write-Host "Copied notarized macOS executable"
+    } else {
+        Write-Host "WARNING: Notarized macOS executable not found in ZIP"
+    }
+}
 
-# Check if exec directory contains the expected files
-$execDir = Join-Path -Path $outputDir -ChildPath "exec"
-$execFiles = Get-ChildItem -Path $execDir -ErrorAction SilentlyContinue
-Write-Host "Files in exec directory:"
-$execFiles | ForEach-Object { Write-Host "  $($_.Name) - $($_.Length) bytes" }
+# Fallback to regular macOS executable if not already copied
+if (-not (Test-Path "$execDir/YoutubetoPremiere") -and (Test-Path $macExeSource)) {
+    Copy-Item -Path $macExeSource -Destination "$execDir/YoutubetoPremiere" -Force
+    Write-Host "Copied macOS executable (fallback)"
+}
 
+# Copy FFmpeg executables
+if (Test-Path $winFfmpegSource) {
+    Copy-Item -Path $winFfmpegSource -Destination "$execDir/ffmpeg.exe" -Force
+    Write-Host "Copied Windows FFmpeg"
+} else {
+    Write-Host "WARNING: Windows FFmpeg not found at $winFfmpegSource"
+}
+
+if (Test-Path $macFfmpegSource) {
+    Copy-Item -Path $macFfmpegSource -Destination "$execDir/ffmpeg" -Force
+    Write-Host "Copied macOS FFmpeg"
+} else {
+    Write-Host "WARNING: macOS FFmpeg not found at $macFfmpegSource"
+}
+
+# Set permissions for macOS executables
+Write-Host "Setting executable permissions for macOS files..."
+try {
+    & "bash" "-c" "chmod +x \"$execDir/YoutubetoPremiere\" 2>/dev/null || true"
+    & "bash" "-c" "chmod +x \"$execDir/ffmpeg\" 2>/dev/null || true"
+    
+    # Verify permissions
+    & "bash" "-c" "ls -la \"$execDir\" | grep -E 'YoutubetoPremiere|ffmpeg'" 2>$null
+} catch {
+    Write-Host "WARNING: Error setting permissions: $_"
+}
+
+# Run yarn zxp command to create the ZXP package
+Write-Host "Creating ZXP package using yarn zxp..."
+
+# Check if package.json exists and has zxp script
+if (Test-Path "package.json") {
+    try {
+        # Run yarn zxp
+        yarn zxp
+        
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "✅ yarn zxp completed successfully!"
+        } else {
+            Write-Error "yarn zxp failed with exit code $LASTEXITCODE"
+            exit 1
+        }
+    } catch {
+        Write-Error "Error running yarn zxp: $_"
+        exit 1
+    }
+} else {
+    Write-Error "package.json not found. Cannot run yarn zxp."
+    exit 1
+}
+
+# Verify ZXP exists
+$zxpPath = "dist/zxp/com.youtubetoPremiereV2.cep.zxp"
 if (Test-Path $zxpPath) {
-  Remove-Item -Path $zxpPath -Force
-  Write-Host "Removed existing ZXP file"
-} 
+    $fileInfo = Get-Item $zxpPath
+    Write-Host "✅ ZXP package created: $zxpPath (Size: $($fileInfo.Length) bytes)"
+} else {
+    Write-Error "ZXP package not found at expected location: $zxpPath"
+    
+    # Check for ZXP in other locations
+    $foundZxps = Get-ChildItem -Path "dist" -Recurse -Filter "*.zxp" -ErrorAction SilentlyContinue
+    if ($foundZxps.Count -gt 0) {
+        Write-Host "Found ZXP files in other locations:"
+        $foundZxps | ForEach-Object { Write-Host "  $($_.FullName)" }
+    } else {
+        Write-Host "No ZXP files found in dist directory"
+    }
+    
+    exit 1
+}
+
+# Clean up
+if (Test-Path $tempNotarizedDir) {
+    Remove-Item -Path $tempNotarizedDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+Write-Host "===== FINAL ZXP PACKAGING COMPLETED =====" 
