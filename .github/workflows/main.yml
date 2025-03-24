@@ -574,10 +574,9 @@ jobs:
             Write-Host "✗ WARNING: macOS FFmpeg not found!"
           }
           
-          # Create the new ZXP file
-          Write-Host "Creating ZXP file..."
-          Add-Type -Assembly System.IO.Compression.FileSystem
-          $compressionLevel = [System.IO.Compression.CompressionLevel]::Optimal
+          # Install 7-Zip using Chocolatey
+          Write-Host "Installing 7-Zip..."
+          choco install 7zip.install -y
           
           # Make sure the destination directory exists
           if (-Not (Test-Path "dist/zxp")) {
@@ -589,45 +588,40 @@ jobs:
             Remove-Item "dist/zxp/com.youtubetoPremiereV2.cep.zxp" -Force
           }
           
-          # Create new ZXP
-          [System.IO.Compression.ZipFile]::CreateFromDirectory(
-            "zxp_extract/contents", 
-            "dist/zxp/com.youtubetoPremiereV2.cep.zxp", 
-            $compressionLevel, 
-            $false,
-            [System.Text.Encoding]::UTF8
-          )
+          # Create new ZXP using 7-Zip
+          Write-Host "Creating ZXP file..."
+          $currentLocation = Get-Location
+          Set-Location "zxp_extract/contents"
+          & "C:\Program Files\7-Zip\7z.exe" a -tzip -mx=9 "$currentLocation\dist\zxp\com.youtubetoPremiereV2.cep.zxp" *
+          Set-Location $currentLocation
           
           # Verify the ZXP was created
           if (Test-Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp") {
             $fileSize = (Get-Item "dist/zxp/com.youtubetoPremiereV2.cep.zxp").Length / 1MB
             Write-Host "✓ ZXP package created successfully: $fileSize MB"
             
-            # Examine contents
+            # Examine contents using 7-Zip
             Write-Host "Examining ZXP contents..."
-            try {
-              $zip = [System.IO.Compression.ZipFile]::OpenRead("dist/zxp/com.youtubetoPremiereV2.cep.zxp")
-              
-              # Look for all executables in exec directory
-              $execFiles = $zip.Entries | Where-Object { 
-                $_.FullName -like "exec/*" -and (
-                  $_.Name -eq "YoutubetoPremiere.exe" -or 
-                  $_.Name -eq "YoutubetoPremiere" -or 
-                  $_.Name -eq "ffmpeg.exe" -or 
-                  $_.Name -eq "ffmpeg"
-                )
+            $listOutput = & "C:\Program Files\7-Zip\7z.exe" l "dist/zxp/com.youtubetoPremiereV2.cep.zxp" "exec/*"
+            
+            # Check for executables
+            $execFound = $false
+            $foundExecutables = @()
+            
+            foreach ($line in $listOutput -split "`n") {
+              if ($line -match "exec/(YoutubetoPremiere\.exe|YoutubetoPremiere|ffmpeg\.exe|ffmpeg)$") {
+                $execFound = $true
+                $foundExecutables += $matches[0]
               }
-              
-              if ($execFiles.Count -gt 0) {
-                Write-Host "✓ Found executables in ZXP:"
-                $execFiles | ForEach-Object { Write-Host "  - $($_.FullName)" }
-              } else {
-                Write-Host "✗ WARNING: No executables found in ZXP!"
+            }
+            
+            if ($execFound) {
+              Write-Host "✓ Found executables in ZXP:"
+              foreach ($exec in $foundExecutables) {
+                Write-Host "  - $exec"
               }
-              
-              $zip.Dispose()
-            } catch {
-              Write-Host "Error examining ZXP content: $_"
+            } else {
+              Write-Host "✗ WARNING: No executables found in ZXP!"
             }
           } else {
             Write-Error "Failed to create ZXP package!"
