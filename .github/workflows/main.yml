@@ -1013,21 +1013,53 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ needs.check-changes.outputs.tag_version }}"
+          Write-Host "Using version: $version"
           
-          if (Test-Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp") {
-            # Rename the ZXP file to include the version
-            $newName = "YoutubetoPremiere-v$version.zxp"
-            Copy-Item -Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp" -Destination "dist/zxp/$newName" -Force
-            Write-Host "Renamed ZXP package to: $newName"
+          # First check for ZXP location
+          $zxpPath = "dist/zxp/com.youtubetoPremiereV2.cep.zxp"
+          
+          # Check directory contents if file is not found
+          if (-not (Test-Path $zxpPath)) {
+            Write-Host "ZXP not found at expected location. Checking all files in dist/zxp:"
+            Get-ChildItem -Path "dist/zxp" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $_" }
+            
+            # Look for any ZXP files in the directory
+            $zxpFiles = Get-ChildItem -Path "dist/zxp" -Filter "*.zxp" -ErrorAction SilentlyContinue
+            if ($zxpFiles.Count -gt 0) {
+              Write-Host "Found alternative ZXP files. Using first one found:"
+              $zxpPath = $zxpFiles[0].FullName
+              Write-Host "Using ZXP file: $zxpPath"
+            } else {
+              Write-Error "No ZXP package was found in dist/zxp directory!"
+              # Check the parent directory
+              Write-Host "Checking parent directory for ZXP files:"
+              Get-ChildItem -Path "dist" -Recurse -Filter "*.zxp" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $_" }
+              exit 1
+            }
+          }
+          
+          # Rename the ZXP file to include the version
+          $newName = "YoutubetoPremiere-v$version.zxp"
+          $newPath = "dist/zxp/$newName"
+          
+          Write-Host "Renaming ZXP package from '$zxpPath' to '$newPath'"
+          Copy-Item -Path $zxpPath -Destination $newPath -Force
+          
+          if (Test-Path $newPath) {
+            Write-Host "✅ Successfully renamed ZXP package to: $newName"
+            # Get file size
+            $fileInfo = Get-Item $newPath
+            Write-Host "File details: Size: $($fileInfo.Length) bytes, Last Modified: $($fileInfo.LastWriteTime)"
             
             # Remove the original file
-            Remove-Item -Path "dist/zxp/com.youtubetoPremiereV2.cep.zxp" -Force
+            Remove-Item -Path $zxpPath -Force -ErrorAction SilentlyContinue
             
-            # List the files
+            # List the files in the directory
+            Write-Host "Final ZXP directory contents:"
             Get-ChildItem -Path dist/zxp
           } else {
-            Write-Error "ZXP package was not found!"
-              exit 1
+            Write-Error "Failed to rename ZXP package! Check permissions and disk space."
+            exit 1
           }
 
       - name: Create Release
