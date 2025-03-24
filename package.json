@@ -1,6 +1,6 @@
 {
   "name": "bolt-cep",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "scripts": {
     "version": "cross-env-shell \"node scripts/version-update.js $npm_package_version && git add -A && (git commit -m v$npm_package_version || true) && git tag -f v$npm_package_version\" && git push && git push --tags -f",
     "postversion": "",
@@ -13,7 +13,7 @@
     "build-cross-platform": "cross-env BUILD_FOR_MAC=true yarn build",
     "dev": "vite",
     "watch": "yarn clean && tsc -p \"tsconfig.json\" && vite build --force --watch",
-    "zxp": "yarn clean && tsc -p \"tsconfig-build.json\" && cross-env SKIP_PYTHON_BUILD=true yarn build-python && cross-env ZXP_PACKAGE=true vite build --force",
+    "zxp": "yarn clean && tsc -p \"tsconfig-build.json\" && cross-env SKIP_PYTHON_BUILD=true yarn build-python && cross-env ZXP_PACKAGE=true vite build --force --watch=false",
     "zip": "yarn clean && tsc -p \"tsconfig-build.json\" && yarn build-python && cross-env ZIP_PACKAGE=true vite build --force",
     "serve": "cross-env SERVE_PANEL=true vite preview",
     "symlink": "cross-env ACTION=symlink vite",
