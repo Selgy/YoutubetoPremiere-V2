@@ -332,8 +332,24 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.9'
-          cache: 'pip'
+          cache: pip
+          cache-dependency-path: |
+            app/requirements.txt
+            app/pyproject.toml
+            requirements*.txt
+            pyproject.toml
       
+      # Ensure pip cache directory exists to prevent warnings
+      - name: Ensure pip cache directory exists
+        if: (steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true') && runner.os == 'Windows'
+        run: |
+          $pipCacheDir = "$env:LOCALAPPDATA\pip\cache"
+          if (!(Test-Path $pipCacheDir)) {
+            New-Item -Path $pipCacheDir -ItemType Directory -Force | Out-Null
+            Write-Host "Created pip cache directory: $pipCacheDir"
+          }
+        shell: pwsh
+
       - name: Install Python dependencies
         if: steps.check_artifacts.outputs.artifact_exists != 'true' || steps.verify_artifact.outputs.artifact_valid != 'true'
         run: |
