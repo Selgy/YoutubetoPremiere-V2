@@ -17,8 +17,29 @@ const dirs = [
   'app/sounds'
 ];
 
+// Ensure all directories exist
 dirs.forEach(dir => {
   const dirPath = path.resolve(__dirname, '..', dir);
   fs.ensureDirSync(dirPath);
   console.log(`Created directory: ${dirPath}`);
+});
+
+// Create placeholder files in empty directories that need to exist
+const placeholderDirs = [
+  'app/sounds',
+  'src/exec/sounds',
+  'dist/cep/sounds'
+];
+
+placeholderDirs.forEach(dir => {
+  const dirPath = path.resolve(__dirname, '..', dir);
+  const placeholderPath = path.join(dirPath, '.gitkeep');
+  
+  // Only create placeholder if directory is empty
+  fs.ensureDirSync(dirPath);
+  const files = fs.readdirSync(dirPath);
+  if (files.length === 0 || (files.length === 1 && files[0] === '.gitkeep')) {
+    fs.writeFileSync(placeholderPath, '# This file ensures the directory is not empty\n');
+    console.log(`Created placeholder file in ${dirPath}`);
+  }
 }); 

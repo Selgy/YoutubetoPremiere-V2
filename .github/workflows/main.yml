@@ -258,6 +258,14 @@ jobs:
           mkdir -p dist/YoutubetoPremiere/CEP
           mkdir -p dist/bin
           
+          # Create sounds directory with placeholder to avoid PyInstaller error
+          mkdir -p app/sounds
+          touch app/sounds/.gitkeep
+          
+          # Verify sounds directory exists and is accessible
+          echo "Checking app/sounds directory:"
+          ls -la app/sounds
+          
           # Download FFmpeg for macOS explicitly
           echo "Downloading FFmpeg for macOS..."
           curl -L https://evermeet.cx/ffmpeg/ffmpeg-6.1.1.zip -o ffmpeg.zip
@@ -279,7 +287,7 @@ jobs:
           
           # Build the Python executable with PyInstaller
           echo "Building Python executable with PyInstaller..."
-          pyinstaller --name YoutubetoPremiere --onefile \
+          pyinstaller --name YoutubetoPremiere --onedir --debug=all \
             --add-data "app/sounds:sounds" \
             --hidden-import engineio.async_drivers.threading \
             --hidden-import socketio.async_drivers.threading \
@@ -291,8 +299,11 @@ jobs:
           mkdir -p dist/YoutubetoPremiere.app/Contents/MacOS
           mkdir -p dist/YoutubetoPremiere.app/Contents/Resources/sounds
           
-          # Copy files to app bundle
-          cp dist/YoutubetoPremiere dist/YoutubetoPremiere.app/Contents/MacOS/
+          # Copy files to app bundle - adjust for onedir structure
+          cp dist/YoutubetoPremiere/YoutubetoPremiere dist/YoutubetoPremiere.app/Contents/MacOS/
+          
+          # Copy resources from onedir build to app bundle
+          cp -r dist/YoutubetoPremiere/* dist/YoutubetoPremiere.app/Contents/Resources/ || echo "No resources to copy"
           
           # Copy Python files
           mkdir -p dist/YoutubetoPremiere/app
@@ -300,7 +311,7 @@ jobs:
           
           # Copy Python executable to CEP dir
           mkdir -p dist/cep/exec
-          cp dist/YoutubetoPremiere dist/cep/exec/
+          cp dist/YoutubetoPremiere/YoutubetoPremiere dist/cep/exec/
           chmod +x dist/cep/exec/YoutubetoPremiere
           
           # Copy sounds directory if it exists
@@ -371,12 +382,21 @@ jobs:
           # Final check of the distribution directory
           echo "Distribution directory contents:"
           find dist/YoutubetoPremiere -type f | sort
+          
+          # Debug - Check PyInstaller output directory
+          echo "Checking PyInstaller output directory:"
+          ls -la dist/
+          ls -la dist/YoutubetoPremiere/ || echo "YoutubetoPremiere directory not found in dist/"
         shell: bash
 
       - name: Prepare CEP Extension Files for macOS
         if: matrix.os == 'macos-13'
         run: |
           echo "Preparing CEP extension files for macOS package..."
+          
+          # Ensure app/sounds directory exists to prevent PyInstaller errors
+          mkdir -p app/sounds
+          touch app/sounds/.gitkeep
           
           # First verify if dist/cep exists and has files
           if [ -d "dist/cep" ] && [ "$(ls -A dist/cep 2>/dev/null)" ]; then

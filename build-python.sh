@@ -9,6 +9,11 @@ echo "Building Python app for macOS..."
 mkdir -p dist/cep/exec
 mkdir -p dist/cep/sounds
 
+# Ensure app/sounds directory exists to prevent PyInstaller errors
+mkdir -p app/sounds
+touch app/sounds/.gitkeep
+echo "Created app/sounds directory with placeholder"
+
 # Check if ffmpeg exists in the expected location
 FFMPEG_PATH="dist/cep/exec/ffmpeg"
 if [ ! -f "$FFMPEG_PATH" ]; then
@@ -37,7 +42,7 @@ fi
 
 # Build the Python app with PyInstaller
 echo "Building with PyInstaller..."
-pyinstaller --onefile \
+pyinstaller --onedir \
   --name YoutubetoPremiere \
   --add-data "app/sounds:sounds" \
   --hidden-import engineio.async_drivers.threading \
@@ -46,9 +51,9 @@ pyinstaller --onefile \
   app/YoutubetoPremiere.py
 
 # Copy the executable to CEP directory
-if [ -f "dist/YoutubetoPremiere" ]; then
+if [ -f "dist/YoutubetoPremiere/YoutubetoPremiere" ]; then
   echo "Copying executable to dist/cep/exec/YoutubetoPremiere"
-  cp "dist/YoutubetoPremiere" "dist/cep/exec/YoutubetoPremiere"
+  cp "dist/YoutubetoPremiere/YoutubetoPremiere" "dist/cep/exec/YoutubetoPremiere"
   chmod +x "dist/cep/exec/YoutubetoPremiere"
 else
   echo "ERROR: PyInstaller failed to create the executable"
@@ -61,7 +66,7 @@ mkdir -p dist/cep/exec/app
 cp app/*.py dist/cep/exec/app/
 
 # Copy sounds if they exist
-if [ -d "app/sounds" ] && [ "$(ls -A app/sounds 2>/dev/null)" ]; then
+if [ -d "app/sounds" ] && [ "$(ls -A app/sounds 2>/dev/null | grep -v .gitkeep)" ]; then
   echo "Copying sound files..."
   mkdir -p dist/cep/sounds
   cp -r app/sounds/* dist/cep/sounds/ || echo "Note: No sound files copied (directory may be empty)"

@@ -7,6 +7,13 @@ if (!(Test-Path "dist\cep\exec")) {
     New-Item -Path "dist\cep\exec" -ItemType Directory -Force
 }
 
+# Ensure app/sounds directory exists to prevent PyInstaller errors
+if (!(Test-Path "app\sounds")) {
+    Write-Host "Creating app\sounds directory with placeholder..."
+    New-Item -Path "app\sounds" -ItemType Directory -Force
+    New-Item -Path "app\sounds\.gitkeep" -ItemType File -Force
+}
+
 # Detect OS
 $isWindows = $false
 $isMacOS = $false
@@ -23,7 +30,7 @@ if ($PSVersionTable.Platform -eq "Win32NT" -or $env:OS -like "*Windows*") {
 Write-Host "Building with PyInstaller..."
 if ($isWindows) {
     # Windows build command
-    pyinstaller --name YoutubetoPremiere --onefile `
+    pyinstaller --name YoutubetoPremiere --onedir `
         --add-data "app/sounds;sounds" `
         --hidden-import engineio.async_drivers.threading `
         --hidden-import socketio.async_drivers.threading `
@@ -31,16 +38,16 @@ if ($isWindows) {
         app/YoutubetoPremiere.py
 } else {
     # macOS build command - use bash for compatibility
-    bash -c "pyinstaller --name YoutubetoPremiere --onefile --add-data 'app/sounds:sounds' --hidden-import engineio.async_drivers.threading --hidden-import socketio.async_drivers.threading --hidden-import pkg_resources.py2_warn app/YoutubetoPremiere.py"
+    bash -c "pyinstaller --name YoutubetoPremiere --onedir --add-data 'app/sounds:sounds' --hidden-import engineio.async_drivers.threading --hidden-import socketio.async_drivers.threading --hidden-import pkg_resources.py2_warn app/YoutubetoPremiere.py"
 }
 
 # Copy the build output to the CEP directory
-if (Test-Path "dist/YoutubetoPremiere" -PathType Leaf) {
+if (Test-Path "dist/YoutubetoPremiere/YoutubetoPremiere" -PathType Leaf) {
     Write-Host "Copying built executable to dist/cep/exec"
-    Copy-Item -Path "dist/YoutubetoPremiere" -Destination "dist/cep/exec/" -Force
-} elseif (Test-Path "dist/YoutubetoPremiere.exe" -PathType Leaf) {
+    Copy-Item -Path "dist/YoutubetoPremiere/YoutubetoPremiere" -Destination "dist/cep/exec/" -Force
+} elseif (Test-Path "dist/YoutubetoPremiere/YoutubetoPremiere.exe" -PathType Leaf) {
     Write-Host "Copying built executable to dist/cep/exec"
-    Copy-Item -Path "dist/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -Force
+    Copy-Item -Path "dist/YoutubetoPremiere/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -Force
 }
 
 # Copy ffmpeg if available
