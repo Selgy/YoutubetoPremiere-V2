@@ -36,15 +36,15 @@ jobs:
         run: |
           if [[ "${{ github.event.inputs.package_only }}" == "true" && -n "${{ github.event.inputs.version }}" ]]; then
             echo "Version spécifiée manuellement: ${{ github.event.inputs.version }}"
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+              echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
           elif [[ "${{ github.event_name }}" == "push" && "${{ startsWith(github.ref, 'refs/tags/v') }}" == "true" ]]; then
             VERSION=${GITHUB_REF#refs/tags/v}
             echo "Version extraite du tag: $VERSION"
             echo "version=$VERSION" >> $GITHUB_OUTPUT
-          else
+            else
             echo "Aucune version spécifiée, utilisation de la valeur par défaut"
             echo "version=0.0.0" >> $GITHUB_OUTPUT
-          fi
+            fi
       
       - name: Check if build is needed
         id: check_build
@@ -114,7 +114,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+        
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -178,7 +178,7 @@ jobs:
             --hidden-import socketio.async_drivers.threading `
             --hidden-import pkg_resources.py2_warn `
             --version-file version.txt `
-            app/YoutubetoPremiere.py
+              app/YoutubetoPremiere.py
           
           # Create output directory for Python files
           New-Item -Path "dist/YoutubetoPremiere" -ItemType Directory -Force
@@ -202,11 +202,11 @@ jobs:
         if: matrix.os == 'macos-13'
         run: |
           # Create bundle structure
-          mkdir -p dist/YoutubetoPremiere.app/Contents/MacOS
-          mkdir -p dist/YoutubetoPremiere.app/Contents/Resources/Python
-          mkdir -p dist/YoutubetoPremiere.app/Contents/Resources/sounds
-          
-          # Create Info.plist
+            mkdir -p dist/YoutubetoPremiere.app/Contents/MacOS
+            mkdir -p dist/YoutubetoPremiere.app/Contents/Resources/Python
+            mkdir -p dist/YoutubetoPremiere.app/Contents/Resources/sounds
+            
+            # Create Info.plist
           cat > dist/YoutubetoPremiere.app/Contents/Info.plist << EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -259,10 +259,10 @@ jobs:
           # Copy Python files and resources
           cp app/*.py dist/YoutubetoPremiere.app/Contents/Resources/Python/
           cp -r app/sounds/* dist/YoutubetoPremiere.app/Contents/Resources/sounds/ || true
-          
-          # Make script executable
-          chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
-          
+            
+            # Make script executable
+            chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            
           # Create a single binary executable for CLI use
           cat > dist/YoutubetoPremiere << EOF
           #!/bin/bash
@@ -297,7 +297,7 @@ jobs:
           
           chmod +x dist/YoutubetoPremiere
         shell: bash
-      
+        
       - name: Sign and Notarize macOS App
         if: matrix.os == 'macos-13' && env.APPLE_ID != ''
         env:
@@ -375,126 +375,28 @@ jobs:
             echo "No signing identity found, skipping signing and notarization"
           fi
         shell: bash
-      
-      - name: Create Windows Installer
+        
+      - name: Create Windows installer
         if: matrix.os == 'windows-latest'
         run: |
-          # Install NSIS directly using Chocolatey
-          Write-Host "Installing NSIS using Chocolatey..."
+          # Install NSIS
           choco install nsis -y
-          $NsisPath = "C:\Program Files (x86)\NSIS\makensis.exe"
           
-          # Verify NSIS installation
-          if (!(Test-Path $NsisPath)) {
-            Write-Error "Error: NSIS not found at expected path after installation: $NsisPath"
-            exit 1
-          } else {
-            Write-Host "NSIS installed successfully at: $NsisPath"
-          }
+          # Set version variable for NSIS
+          $version = "${{ needs.check-version.outputs.version }}"
+          $env:VERSION = $version
           
-          # Create installer script (with no icon definitions to avoid errors)
-          $InstallerScript = @"
-          !include "MUI2.nsh"
-          !include "FileFunc.nsh"
+          # Run NSIS compiler with our script
+          makensis installer.nsi
           
-          Name "YouTube to Premiere Pro"
-          OutFile "YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe"
-          InstallDir "\$PROGRAMFILES\YoutubetoPremiere"
-          
-          # Skip icon definition entirely to avoid errors
-          
-          !insertmacro MUI_PAGE_WELCOME
-          !insertmacro MUI_PAGE_DIRECTORY
-          !insertmacro MUI_PAGE_INSTFILES
-          !insertmacro MUI_PAGE_FINISH
-          
-          !insertmacro MUI_UNPAGE_CONFIRM
-          !insertmacro MUI_UNPAGE_INSTFILES
-          
-          !insertmacro MUI_LANGUAGE "English"
-          
-          Section "Install"
-            SetOutPath "\$INSTDIR"
-            
-            # Main executable
-            File "dist\YoutubetoPremiere.exe"
-            
-            # Additional files if they exist
-            !if /FileExists "dist\YoutubetoPremiere\*.*"
-              File /r "dist\YoutubetoPremiere\*.*"
-            !endif
-            
-            # Add the ZXP to the installer if it exists
-            CreateDirectory "\$INSTDIR\zxp"
-            !if /FileExists "dist\zxp\YoutubetoPremiere-v${{ needs.check-version.outputs.version }}.zxp"
-              File /oname="\$INSTDIR\zxp\YoutubetoPremiere-${{ needs.check-version.outputs.version }}.zxp" "dist\zxp\YoutubetoPremiere-v${{ needs.check-version.outputs.version }}.zxp"
-            !endif
-            
-            # Create shortcut
-            CreateDirectory "\$SMPROGRAMS\YouTube to Premiere Pro"
-            CreateShortcut "\$SMPROGRAMS\YouTube to Premiere Pro\YouTube to Premiere Pro.lnk" "\$INSTDIR\YoutubetoPremiere.exe"
-            
-            # Create uninstaller
-            WriteUninstaller "\$INSTDIR\uninstall.exe"
-            
-            # Add uninstall information to Add/Remove Programs
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "DisplayName" "YouTube to Premiere Pro"
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "UninstallString" '"\$INSTDIR\uninstall.exe"'
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "DisplayIcon" '"\$INSTDIR\YoutubetoPremiere.exe"'
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "Publisher" "YoutubetoPremiere"
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "DisplayVersion" "${{ needs.check-version.outputs.version }}"
-            
-            # Get install size
-            \${GetSize} "\$INSTDIR" "/S=0K" \$0 \$1 \$2
-            IntFmt \$0 "0x%08X" \$0
-            WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "EstimatedSize" "\$0"
-          SectionEnd
-          
-          Section "Uninstall"
-            # Remove application files
-            RMDir /r "\$INSTDIR\*.*"
-            
-            # Remove shortcuts
-            Delete "\$SMPROGRAMS\YouTube to Premiere Pro\*.*"
-            RMDir "\$SMPROGRAMS\YouTube to Premiere Pro"
-            
-            # Remove registry entries
-            DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere"
-            
-            # Remove install directory if empty
-            RMDir "\$INSTDIR"
-          SectionEnd
-"@
-          
-          # Create the installer script file
-          Set-Content -Path "installer.nsi" -Value $InstallerScript
-          
-          # Create output directory
-          New-Item -ItemType Directory -Path "dist\installer" -Force | Out-Null
-          
-          # Check if YoutubetoPremiere.exe exists
-          if (!(Test-Path "dist\YoutubetoPremiere.exe")) {
-            Write-Error "Error: YoutubetoPremiere.exe not found in dist directory. Installer creation failed."
+          # Verify installer was created
+          if (!(Test-Path "YoutubetoPremiere-${version}-Setup.exe")) {
+            Write-Error "Failed to create installer"
             exit 1
           }
           
-          # Run NSIS to create installer
-          Write-Host "Running NSIS to create installer..."
-          if (Test-Path $NsisPath) {
-            # Execute NSIS command
-            & $NsisPath "installer.nsi"
-            
-            if (Test-Path "YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe") {
-              Move-Item -Path "YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe" -Destination "dist\installer\" -Force
-              Write-Host "Installer created: dist\installer\YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe"
-            } else {
-              Write-Error "Error: Installer was not created. Check NSIS output for errors."
-              exit 1
-            }
-          } else {
-            Write-Error "Error: NSIS not found at $NsisPath. Installer creation failed."
-            exit 1
-          }
+          # Move installer to dist directory
+          Move-Item "YoutubetoPremiere-${version}-Setup.exe" "dist/installer/"
         shell: pwsh
       
       - name: Upload Windows executable
@@ -544,16 +446,16 @@ jobs:
         with:
           node-version: '18'
           cache: 'yarn'
-      
+
       - name: Install dependencies
         run: |
           yarn install --frozen-lockfile
           yarn global add cross-env
-      
+
       - name: Add global yarn bin to PATH
         run: echo "$(yarn global bin)" >> $GITHUB_PATH
         shell: bash
-      
+
       - name: Download Executables
         uses: actions/download-artifact@v4
         with:
@@ -593,7 +495,7 @@ jobs:
           # Check macOS FFmpeg
           if (Test-Path "artifacts/ffmpeg-macos-13/ffmpeg") {
             Write-Host "✅ macOS FFmpeg found"
-          } else {
+            } else {
             Write-Host "❌ macOS FFmpeg NOT found" -ForegroundColor Red
           }
         shell: pwsh
@@ -616,7 +518,7 @@ jobs:
           if (Test-Path "artifacts/executable-macos-13/YoutubetoPremiere") {
             Copy-Item -Path "artifacts/executable-macos-13/YoutubetoPremiere" -Destination "dist/cep/exec/" -Force
             Write-Host "✅ Copied macOS executable to dist/cep/exec/"
-          } else {
+            } else {
             Write-Host "❌ macOS executable NOT found" -ForegroundColor Red
             exit 1
           }
@@ -625,7 +527,7 @@ jobs:
           if (Test-Path "artifacts/ffmpeg-windows-latest/ffmpeg.exe") {
             Copy-Item -Path "artifacts/ffmpeg-windows-latest/ffmpeg.exe" -Destination "dist/cep/exec/" -Force
             Write-Host "✅ Copied Windows FFmpeg to dist/cep/exec/"
-          } else {
+              } else {
             Write-Host "❌ Windows FFmpeg NOT found" -ForegroundColor Red
             exit 1
           }
@@ -733,7 +635,7 @@ jobs:
             exit 1
           }
         shell: pwsh
-      
+
       - name: Verify ZXP Contents
         run: |
           pwsh verify-zxp-contents.ps1 "dist/zxp/YoutubetoPremiere-v${{ needs.check-version.outputs.version }}.zxp"
@@ -745,7 +647,7 @@ jobs:
           name: zxp-package
           path: dist/zxp/YoutubetoPremiere-v${{ needs.check-version.outputs.version }}.zxp
           retention-days: 90
-      
+
       - name: Create Release
         if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
         uses: softprops/action-gh-release@v1
@@ -756,4 +658,4 @@ jobs:
             artifacts/installer-macos/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.dmg
           name: YoutubetoPremiere v${{ needs.check-version.outputs.version }}
           tag_name: v${{ needs.check-version.outputs.version }}
-          generate_release_notes: true 
+          generate_release_notes: true
