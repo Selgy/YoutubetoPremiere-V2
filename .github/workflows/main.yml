@@ -831,182 +831,158 @@ jobs:
           fi
         shell: bash
 
-      - name: Prepare Windows Installer Script
+      - name: Create Windows Installer Script
         if: matrix.os == 'windows-latest'
         env:
           VERSION: ${{ needs.check-version.outputs.version }}
         run: |
-          # Create a script file for the NSIS installer setup
-          New-Item -Path create_windows_installer.ps1 -ItemType File -Force
+          # Create NSIS script file directly using echo commands
+          echo '!include "MUI2.nsh"' > installer_script.nsi
+          echo '!include "FileFunc.nsh"' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '; Define constants' >> installer_script.nsi
+          echo '!define VERSION "${{ needs.check-version.outputs.version }}"' >> installer_script.nsi
+          echo '!define APP_NAME "YoutubetoPremiere"' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '; Define paths with escaped backslashes' >> installer_script.nsi
+          echo '!define INSTALL_DIR "$PROGRAMFILES\YoutubetoPremiere"' >> installer_script.nsi
+          echo '!define CEP_DIR "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '; The name of the installer' >> installer_script.nsi
+          echo 'Name "YouTube to Premiere Pro ${{ needs.check-version.outputs.version }}"' >> installer_script.nsi
+          echo 'OutFile "YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe"' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '; Request application privileges for Windows Vista and higher' >> installer_script.nsi
+          echo 'RequestExecutionLevel admin' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '; Set the compression algorithm' >> installer_script.nsi
+          echo 'SetCompressor /FINAL /SOLID lzma' >> installer_script.nsi
+          echo 'SetCompressorDictSize 64' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '; The default installation directory' >> installer_script.nsi
+          echo 'InstallDir "$PROGRAMFILES\YoutubetoPremiere"' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '; Interface Settings' >> installer_script.nsi
+          echo '!define MUI_ABORTWARNING' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '; Pages' >> installer_script.nsi
+          echo '!insertmacro MUI_PAGE_WELCOME' >> installer_script.nsi
+          echo '!insertmacro MUI_PAGE_DIRECTORY' >> installer_script.nsi
+          echo '!insertmacro MUI_PAGE_INSTFILES' >> installer_script.nsi
+          echo '!insertmacro MUI_PAGE_FINISH' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '!insertmacro MUI_UNPAGE_CONFIRM' >> installer_script.nsi
+          echo '!insertmacro MUI_UNPAGE_INSTFILES' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '; Languages' >> installer_script.nsi
+          echo '!insertmacro MUI_LANGUAGE "English"' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '; The main installation section' >> installer_script.nsi
+          echo 'Section "MainSection" SEC01' >> installer_script.nsi
+          echo '  ; Set output path to the installation directory' >> installer_script.nsi
+          echo '  SetOutPath "$INSTDIR"' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '  ; Create directories by using SetOutPath' >> installer_script.nsi
+          echo '  SetOutPath "$INSTDIR\exec"' >> installer_script.nsi
+          echo '  SetOutPath "$INSTDIR\sounds"' >> installer_script.nsi
+          echo '  SetOutPath "$INSTDIR"' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '  ; Copy application files' >> installer_script.nsi
+          echo '  File /r "dist\YoutubetoPremiere\*.*"' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '  ; Create CEP extension directory by setting the output path' >> installer_script.nsi
+          echo '  SetOutPath "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '  ; Copy CEP extension files to Adobe CEP directory' >> installer_script.nsi
+          echo '  File /r "dist\YoutubetoPremiere\CEP\*.*"' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '  ; Return to installation directory for remainder of install' >> installer_script.nsi
+          echo '  SetOutPath "$INSTDIR"' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '  ; Write uninstaller' >> installer_script.nsi
+          echo '  WriteUninstaller "$INSTDIR\uninstall.exe"' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '  ; Create shortcuts' >> installer_script.nsi
+          echo '  CreateDirectory "$SMPROGRAMS\YoutubetoPremiere"' >> installer_script.nsi
+          echo '  CreateShortCut "$SMPROGRAMS\YoutubetoPremiere\YoutubetoPremiere.lnk" "$INSTDIR\exec\YoutubetoPremiere.exe"' >> installer_script.nsi
+          echo '  CreateShortCut "$SMPROGRAMS\YoutubetoPremiere\Uninstall.lnk" "$INSTDIR\uninstall.exe"' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '  ; Write registry entries for Add/Remove Programs' >> installer_script.nsi
+          echo '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "DisplayName" "YouTube to Premiere Pro"' >> installer_script.nsi
+          echo '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""' >> installer_script.nsi
+          echo '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "DisplayIcon" "$INSTDIR\exec\YoutubetoPremiere.exe"' >> installer_script.nsi
+          echo '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "DisplayVersion" "${{ needs.check-version.outputs.version }}"' >> installer_script.nsi
+          echo '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "Publisher" "YoutubetoPremiere"' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '  ; Get the size of the install directory' >> installer_script.nsi
+          echo '  ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2' >> installer_script.nsi
+          echo '  IntFmt $0 "0x%08X" $0' >> installer_script.nsi
+          echo '  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "EstimatedSize" "$0"' >> installer_script.nsi
+          echo 'SectionEnd' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '; Uninstallation section' >> installer_script.nsi
+          echo 'Section "Uninstall"' >> installer_script.nsi
+          echo '  ; Remove shortcuts first' >> installer_script.nsi
+          echo '  Delete "$SMPROGRAMS\YoutubetoPremiere\YoutubetoPremiere.lnk"' >> installer_script.nsi
+          echo '  Delete "$SMPROGRAMS\YoutubetoPremiere\Uninstall.lnk"' >> installer_script.nsi
+          echo '  RMDir "$SMPROGRAMS\YoutubetoPremiere"' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '  ; Remove installed files and directories' >> installer_script.nsi
+          echo '  RMDir /r "$INSTDIR"' >> installer_script.nsi
+          echo '  RMDir /r "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '  ; Remove registry entries' >> installer_script.nsi
+          echo '  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere"' >> installer_script.nsi
+          echo 'SectionEnd' >> installer_script.nsi
           
-          # Write PowerShell script with nested here-strings
-          $script = @'
-          param($version)
-          
+          # Also create a simpler script as fallback
+          echo 'OutFile "YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe"' > simple_installer.nsi
+          echo 'RequestExecutionLevel admin' >> simple_installer.nsi
+          echo '' >> simple_installer.nsi
+          echo 'Section' >> simple_installer.nsi
+          echo '  SetOutPath "$PROGRAMFILES\YoutubetoPremiere"' >> simple_installer.nsi
+          echo '  File /r "dist\YoutubetoPremiere\*.*"' >> simple_installer.nsi
+          echo '' >> simple_installer.nsi
+          echo '  SetOutPath "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"' >> simple_installer.nsi
+          echo '  File /r "dist\YoutubetoPremiere\CEP\*.*"' >> simple_installer.nsi
+          echo '' >> simple_installer.nsi
+          echo '  SetOutPath "$PROGRAMFILES\YoutubetoPremiere"' >> simple_installer.nsi
+          echo '  WriteUninstaller "$PROGRAMFILES\YoutubetoPremiere\uninstall.exe"' >> simple_installer.nsi
+          echo 'SectionEnd' >> simple_installer.nsi
+          echo '' >> simple_installer.nsi
+          echo 'Section "Uninstall"' >> simple_installer.nsi
+          echo '  RMDir /r "$PROGRAMFILES\YoutubetoPremiere"' >> simple_installer.nsi
+          echo '  RMDir /r "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"' >> simple_installer.nsi
+          echo 'SectionEnd' >> simple_installer.nsi
+        shell: pwsh
+        
+      - name: Create Windows Installer
+        if: matrix.os == 'windows-latest'
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
           # Install NSIS
           choco install nsis -y
           
-          # Create a temporary NSIS script with the version
-          $nsiContent = @"
-          !include "MUI2.nsh"
-          !include "FileFunc.nsh"
-
-          ; Define constants
-          !define VERSION "${VERSION}"
-          !define APP_NAME "YoutubetoPremiere"
-
-          ; Define paths with escaped backslashes
-          !define INSTALL_DIR "$PROGRAMFILES\YoutubetoPremiere"
-          !define CEP_DIR "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"
-
-          ; The name of the installer
-          Name "YouTube to Premiere Pro ${VERSION}"
-          OutFile "YoutubetoPremiere-${VERSION}-Setup.exe"
-
-          ; Request application privileges for Windows Vista and higher
-          RequestExecutionLevel admin
-
-          ; Set the compression algorithm 
-          SetCompressor /FINAL /SOLID lzma
-          SetCompressorDictSize 64
-
-          ; The default installation directory
-          InstallDir "$PROGRAMFILES\YoutubetoPremiere"
-
-          ; Interface Settings
-          !define MUI_ABORTWARNING
-
-          ; Pages
-          !insertmacro MUI_PAGE_WELCOME
-          !insertmacro MUI_PAGE_DIRECTORY
-          !insertmacro MUI_PAGE_INSTFILES
-          !insertmacro MUI_PAGE_FINISH
-
-          !insertmacro MUI_UNPAGE_CONFIRM
-          !insertmacro MUI_UNPAGE_INSTFILES
-
-          ; Languages
-          !insertmacro MUI_LANGUAGE "English"
-
-          ; The main installation section
-          Section "MainSection" SEC01
-            ; Set output path to the installation directory
-            SetOutPath "$INSTDIR"
-            
-            ; Create directories by using SetOutPath instead of CreateDirectory
-            SetOutPath "$INSTDIR\exec"
-            SetOutPath "$INSTDIR\sounds"
-            SetOutPath "$INSTDIR"
-            
-            ; Copy application files
-            File /r "dist\YoutubetoPremiere\*.*"
-            
-            ; Create CEP extension directory by setting the output path
-            SetOutPath "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"
-            
-            ; Copy CEP extension files to Adobe CEP directory
-            File /r "dist\YoutubetoPremiere\CEP\*.*"
-            
-            ; Return to installation directory for remainder of install
-            SetOutPath "$INSTDIR"
-            
-            ; Write uninstaller
-            WriteUninstaller "$INSTDIR\uninstall.exe"
-            
-            ; Create program shortcuts directory - use SetOutPath instead
-            SetOutPath "$SMPROGRAMS\YoutubetoPremiere"
-            SetOutPath "$INSTDIR"
-            
-            ; Create shortcuts
-            CreateShortCut "$SMPROGRAMS\YoutubetoPremiere\YoutubetoPremiere.lnk" "$INSTDIR\exec\YoutubetoPremiere.exe"
-            CreateShortCut "$SMPROGRAMS\YoutubetoPremiere\Uninstall.lnk" "$INSTDIR\uninstall.exe"
-            
-            ; Write registry entries for Add/Remove Programs
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "DisplayName" "YouTube to Premiere Pro"
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "DisplayIcon" "$INSTDIR\exec\YoutubetoPremiere.exe"
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "DisplayVersion" "${VERSION}"
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "Publisher" "YoutubetoPremiere"
-            
-            ; Get the size of the install directory
-            $${GetSize} "$INSTDIR" "/S=0K" $$0 $$1 $$2
-            IntFmt $$0 "0x%08X" $$0
-            WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "EstimatedSize" "$$0"
-          SectionEnd
-
-          ; Uninstallation section
-          Section "Uninstall"
-            ; Remove shortcuts first
-            Delete "$SMPROGRAMS\YoutubetoPremiere\YoutubetoPremiere.lnk"
-            Delete "$SMPROGRAMS\YoutubetoPremiere\Uninstall.lnk"
-            RMDir "$SMPROGRAMS\YoutubetoPremiere"
-            
-            ; Remove installed files and directories
-            RMDir /r "$INSTDIR"
-            RMDir /r "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"
-            
-            ; Remove registry entries
-            DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere"
-          SectionEnd
-          "@
-
-          # Replace version variable in the script
-          $nsiContent = $nsiContent.Replace('${VERSION}', $version)
-
-          # Save the NSIS script
-          Set-Content -Path "installer_temp.nsi" -Value $nsiContent
-          
-          # Display the contents of the NSIS script for debugging
-          Write-Host "Contents of NSIS script:"
-          Get-Content -Path "installer_temp.nsi"
-
-          # Run NSIS compiler with our script
-          Write-Host "Running NSIS compiler..."
+          # Display NSIS version
           $nsisMakePath = "C:\Program Files (x86)\NSIS\makensis.exe"
           
-          # Check NSIS version
           if (Test-Path $nsisMakePath) {
             Write-Host "Found NSIS at: $nsisMakePath"
             & $nsisMakePath /VERSION
             
-            # Try compile with strict verbosity
-            Write-Host "Compiling NSIS script with verbose output..."
-            & $nsisMakePath /V4 "installer_temp.nsi"
+            # Compile with verbose output
+            Write-Host "Compiling NSIS script..."
+            & $nsisMakePath /V4 "installer_script.nsi"
           } else {
             Write-Host "NSIS not found at expected path, trying PATH environment variable..."
             makensis /VERSION
-            makensis /V4 "installer_temp.nsi"
+            makensis /V4 "installer_script.nsi"
           }
           
-          $nsisExitCode = $LASTEXITCODE
-          if ($nsisExitCode -ne 0) {
-            Write-Host "NSIS compilation failed with exit code: $nsisExitCode"
-            
-            # Try a simpler NSIS script as a fallback
-            Write-Host "Trying with a simpler NSIS script..."
-            
-            $simpleNsiContent = @"
-            OutFile "YoutubetoPremiere-${version}-Setup.exe"
-            RequestExecutionLevel admin
-            
-            Section
-              SetOutPath "$PROGRAMFILES\YoutubetoPremiere"
-              File /r "dist\YoutubetoPremiere\*.*"
-              
-              SetOutPath "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"
-              File /r "dist\YoutubetoPremiere\CEP\*.*"
-              
-              SetOutPath "$PROGRAMFILES\YoutubetoPremiere"
-              WriteUninstaller "$PROGRAMFILES\YoutubetoPremiere\uninstall.exe"
-            SectionEnd
-            
-            Section "Uninstall"
-              RMDir /r "$PROGRAMFILES\YoutubetoPremiere"
-              RMDir /r "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"
-            SectionEnd
-            "@
-            
-            Set-Content -Path "simple_installer.nsi" -Value $simpleNsiContent
+          # If the normal script fails, try the simpler script
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "NSIS compilation failed, trying simpler script..."
             
             if (Test-Path $nsisMakePath) {
               & $nsisMakePath /V4 "simple_installer.nsi"
@@ -1014,49 +990,30 @@ jobs:
               makensis /V4 "simple_installer.nsi"
             }
             
-            $simpleNsisExitCode = $LASTEXITCODE
-            if ($simpleNsisExitCode -ne 0) {
-              Write-Error "All NSIS compilation attempts failed. Exit code: $simpleNsisExitCode"
-              exit $simpleNsisExitCode
+            if ($LASTEXITCODE -ne 0) {
+              Write-Error "All NSIS compilation attempts failed. Exit code: $LASTEXITCODE"
+              exit 1
             }
           }
 
           # Verify installer was created
-          $installerPath = "YoutubetoPremiere-$version-Setup.exe"
+          $installerPath = "YoutubetoPremiere-$env:VERSION-Setup.exe"
           if (!(Test-Path $installerPath)) {
             Write-Error "Failed to create installer"
             exit 1
           }
 
-          # Create installer directory if it doesn't exist
+          # Create installer directory and move installer
           New-Item -Path "dist/installer" -ItemType Directory -Force -ErrorAction SilentlyContinue
-
-          # Move installer to dist directory
           Move-Item $installerPath "dist/installer/" -Force
 
-          # Clean up temporary files
-          Remove-Item "installer_temp.nsi" -ErrorAction SilentlyContinue
+          # Clean up files
+          Remove-Item "installer_script.nsi" -ErrorAction SilentlyContinue
           Remove-Item "simple_installer.nsi" -ErrorAction SilentlyContinue
 
           # Show installer size
-          $installerSize = (Get-Item "dist/installer/YoutubetoPremiere-$version-Setup.exe").Length
+          $installerSize = (Get-Item "dist/installer/YoutubetoPremiere-$env:VERSION-Setup.exe").Length
           Write-Host "Installer created successfully. Size: $($installerSize / 1MB) MB"
-          '@
-          
-          # Write script to file
-          Set-Content -Path create_windows_installer.ps1 -Value $script
-        shell: pwsh
-
-      - name: Create Windows Installer
-        if: matrix.os == 'windows-latest'
-        env:
-          VERSION: ${{ needs.check-version.outputs.version }}
-        run: |
-          # Run the installer creation script
-          .\create_windows_installer.ps1 -version "$env:VERSION"
-          
-          # Clean up script
-          Remove-Item create_windows_installer.ps1 -ErrorAction SilentlyContinue
         shell: pwsh
 
       - name: Upload Windows executable
