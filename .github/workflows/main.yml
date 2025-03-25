@@ -342,7 +342,7 @@ jobs:
           echo "Distribution directory contents:"
           find dist/YoutubetoPremiere -type f | sort
         shell: bash
-        
+
       - name: Import Certificate
         if: matrix.os == 'macos-13'
         env:
