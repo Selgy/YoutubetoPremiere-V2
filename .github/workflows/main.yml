@@ -893,18 +893,18 @@ jobs:
             ; Set output path to the installation directory
             SetOutPath "$INSTDIR"
             
-            ; First create app directories with full paths
-            CreateDirectory "$INSTDIR\exec"
-            CreateDirectory "$INSTDIR\sounds"
+            ; Create directories by using SetOutPath instead of CreateDirectory
+            SetOutPath "$INSTDIR\exec"
+            SetOutPath "$INSTDIR\sounds"
+            SetOutPath "$INSTDIR"
             
             ; Copy application files
             File /r "dist\YoutubetoPremiere\*.*"
             
-            ; Create CEP extension directory
-            CreateDirectory "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"
+            ; Create CEP extension directory by setting the output path
+            SetOutPath "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"
             
             ; Copy CEP extension files to Adobe CEP directory
-            SetOutPath "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"
             File /r "dist\YoutubetoPremiere\CEP\*.*"
             
             ; Return to installation directory for remainder of install
@@ -913,8 +913,9 @@ jobs:
             ; Write uninstaller
             WriteUninstaller "$INSTDIR\uninstall.exe"
             
-            ; Create program shortcuts directory
-            CreateDirectory "$SMPROGRAMS\YoutubetoPremiere"
+            ; Create program shortcuts directory - use SetOutPath instead
+            SetOutPath "$SMPROGRAMS\YoutubetoPremiere"
+            SetOutPath "$INSTDIR"
             
             ; Create shortcuts
             CreateShortCut "$SMPROGRAMS\YoutubetoPremiere\YoutubetoPremiere.lnk" "$INSTDIR\exec\YoutubetoPremiere.exe"
@@ -935,14 +936,14 @@ jobs:
 
           ; Uninstallation section
           Section "Uninstall"
-            ; Remove installed files
-            RMDir /r "$INSTDIR"
-            RMDir /r "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"
-            
-            ; Remove shortcuts
+            ; Remove shortcuts first
             Delete "$SMPROGRAMS\YoutubetoPremiere\YoutubetoPremiere.lnk"
             Delete "$SMPROGRAMS\YoutubetoPremiere\Uninstall.lnk"
             RMDir "$SMPROGRAMS\YoutubetoPremiere"
+            
+            ; Remove installed files and directories
+            RMDir /r "$INSTDIR"
+            RMDir /r "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"
             
             ; Remove registry entries
             DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere"
@@ -962,20 +963,67 @@ jobs:
           # Run NSIS compiler with our script
           Write-Host "Running NSIS compiler..."
           $nsisMakePath = "C:\Program Files (x86)\NSIS\makensis.exe"
+          
+          # Check NSIS version
           if (Test-Path $nsisMakePath) {
-            & $nsisMakePath "installer_temp.nsi"
+            Write-Host "Found NSIS at: $nsisMakePath"
+            & $nsisMakePath /VERSION
+            
+            # Try compile with strict verbosity
+            Write-Host "Compiling NSIS script with verbose output..."
+            & $nsisMakePath /V4 "installer_temp.nsi"
           } else {
-            makensis "installer_temp.nsi"
+            Write-Host "NSIS not found at expected path, trying PATH environment variable..."
+            makensis /VERSION
+            makensis /V4 "installer_temp.nsi"
           }
           
           $nsisExitCode = $LASTEXITCODE
           if ($nsisExitCode -ne 0) {
             Write-Host "NSIS compilation failed with exit code: $nsisExitCode"
-            exit $nsisExitCode
+            
+            # Try a simpler NSIS script as a fallback
+            Write-Host "Trying with a simpler NSIS script..."
+            
+            $simpleNsiContent = @"
+            OutFile "YoutubetoPremiere-${version}-Setup.exe"
+            RequestExecutionLevel admin
+            
+            Section
+              SetOutPath "$PROGRAMFILES\YoutubetoPremiere"
+              File /r "dist\YoutubetoPremiere\*.*"
+              
+              SetOutPath "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"
+              File /r "dist\YoutubetoPremiere\CEP\*.*"
+              
+              SetOutPath "$PROGRAMFILES\YoutubetoPremiere"
+              WriteUninstaller "$PROGRAMFILES\YoutubetoPremiere\uninstall.exe"
+            SectionEnd
+            
+            Section "Uninstall"
+              RMDir /r "$PROGRAMFILES\YoutubetoPremiere"
+              RMDir /r "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"
+            SectionEnd
+            "@
+            
+            Set-Content -Path "simple_installer.nsi" -Value $simpleNsiContent
+            
+            if (Test-Path $nsisMakePath) {
+              & $nsisMakePath /V4 "simple_installer.nsi"
+            } else {
+              makensis /V4 "simple_installer.nsi"
+            }
+            
+            $simpleNsisExitCode = $LASTEXITCODE
+            if ($simpleNsisExitCode -ne 0) {
+              Write-Error "All NSIS compilation attempts failed. Exit code: $simpleNsisExitCode"
+              exit $simpleNsisExitCode
+            }
           }
 
           # Verify installer was created
-          if (!(Test-Path "YoutubetoPremiere-$version-Setup.exe")) {
+          $installerPath = "YoutubetoPremiere-$version-Setup.exe"
+          if (!(Test-Path $installerPath)) {
             Write-Error "Failed to create installer"
             exit 1
           }
@@ -984,10 +1032,11 @@ jobs:
           New-Item -Path "dist/installer" -ItemType Directory -Force -ErrorAction SilentlyContinue
 
           # Move installer to dist directory
-          Move-Item "YoutubetoPremiere-$version-Setup.exe" "dist/installer/" -Force
+          Move-Item $installerPath "dist/installer/" -Force
 
-          # Clean up temporary file
+          # Clean up temporary files
           Remove-Item "installer_temp.nsi" -ErrorAction SilentlyContinue
+          Remove-Item "simple_installer.nsi" -ErrorAction SilentlyContinue
 
           # Show installer size
           $installerSize = (Get-Item "dist/installer/YoutubetoPremiere-$version-Setup.exe").Length
