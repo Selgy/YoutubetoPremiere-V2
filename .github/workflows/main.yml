@@ -495,16 +495,75 @@ jobs:
           # Create directory for package components
           mkdir -p "dist/pkgbuild/flat"
           mkdir -p "dist/pkgbuild/root/Applications"
+          
+          # Create both system-wide and user-specific CEP extension directories
+          echo "Creating CEP extension directories..."
           mkdir -p "dist/pkgbuild/root/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere"
+          mkdir -p "dist/pkgbuild/root/Users/Shared/Adobe/CEP/extensions/com.youtubetopremiere"
           
           # Copy files to package root
           echo "Copying files to package root..."
           cp -R "dist/YoutubetoPremiere.app" "dist/pkgbuild/root/Applications/"
           cp -R "dist/YoutubetoPremiere/exec" "dist/pkgbuild/root/Applications/YoutubetoPremiere.app/Contents/Resources/" || echo "No exec files to copy"
           
-          # Copy CEP files to the correct system-wide location
+          # Copy CEP files to the system-wide location
           echo "Copying CEP files to /Library/Application Support/Adobe/CEP/extensions..."
-          cp -R "dist/YoutubetoPremiere/CEP/"* "dist/pkgbuild/root/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere/" 2>/dev/null || echo "No CEP files to copy"
+          cp -R "dist/YoutubetoPremiere/CEP/"* "dist/pkgbuild/root/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere/" 2>/dev/null || echo "No CEP files to copy to system location"
+          
+          # Also copy to the user-specific location as backup
+          echo "Copying CEP files to /Users/Shared/Adobe/CEP/extensions (shared user location)..."
+          cp -R "dist/YoutubetoPremiere/CEP/"* "dist/pkgbuild/root/Users/Shared/Adobe/CEP/extensions/com.youtubetopremiere/" 2>/dev/null || echo "No CEP files to copy to shared user location"
+          
+          # Create scripts directory for postinstall script
+          mkdir -p "dist/pkgbuild/scripts"
+          
+          # Create postinstall script to ensure CEP extension is accessible to all users
+          cat > "dist/pkgbuild/scripts/postinstall" << 'EOSCRIPT'
+          #!/bin/bash
+          
+          # Ensure the CEP extension is accessible to all users
+          # This script runs after installation to set up symlinks and permissions
+          
+          # System-wide location
+          SYSTEM_CEP_DIR="/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere"
+          # Shared user location as backup
+          SHARED_CEP_DIR="/Users/Shared/Adobe/CEP/extensions/com.youtubetopremiere"
+          
+          # Set permissions for system directory
+          if [ -d "$SYSTEM_CEP_DIR" ]; then
+            echo "Setting permissions for system CEP directory..."
+            chmod -R 755 "$SYSTEM_CEP_DIR"
+            chown -R root:wheel "$SYSTEM_CEP_DIR"
+          fi
+          
+          # Set permissions for shared user directory
+          if [ -d "$SHARED_CEP_DIR" ]; then
+            echo "Setting permissions for shared user CEP directory..."
+            chmod -R 755 "$SHARED_CEP_DIR"
+            # Use staff group for shared location
+            chown -R root:staff "$SHARED_CEP_DIR"
+          fi
+          
+          # Create user-specific CEP directory for current user if it doesn't exist
+          if [ -n "$USER" ] && [ "$USER" != "root" ]; then
+            USER_HOME=$(eval echo ~$USER)
+            USER_CEP_DIR="$USER_HOME/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere"
+            
+            echo "Creating user-specific CEP directory if needed..."
+            mkdir -p "$USER_CEP_DIR"
+            
+            if [ -d "$SYSTEM_CEP_DIR" ] && [ ! -L "$USER_CEP_DIR" ]; then
+              echo "Creating symlink from user directory to system directory..."
+              ln -sf "$SYSTEM_CEP_DIR"/* "$USER_CEP_DIR/"
+              chown -R $USER:staff "$USER_CEP_DIR"
+            fi
+          fi
+          
+          exit 0
+          EOSCRIPT
+          
+          # Make the postinstall script executable
+          chmod +x "dist/pkgbuild/scripts/postinstall"
           
           # If we have a signature, re-sign everything in the package root to ensure proper signing
           if [[ "$APP_SIGNATURE_ID" != "UNSIGNED" ]]; then
@@ -515,6 +574,9 @@ jobs:
             
             # Re-sign the main app bundle
             codesign --force --timestamp --options runtime --entitlements entitlements.plist --deep --sign "$APP_SIGNATURE_ID" "dist/pkgbuild/root/Applications/YoutubetoPremiere.app" || echo "Warning: Package app re-signing failed"
+            
+            # Sign the postinstall script
+            codesign --force --timestamp --sign "$APP_SIGNATURE_ID" "dist/pkgbuild/scripts/postinstall" || echo "Warning: Could not sign postinstall script"
           fi
           
           # Create distribution XML
@@ -592,6 +654,11 @@ jobs:
               <h1>Installation Complete</h1>
               <p>YouTube to Premiere Pro has been successfully installed.</p>
               <p>To use the extension, open Adobe Premiere Pro and look for the YouTube to Premiere Pro panel in the Extensions menu.</p>
+              <p>The extension has been installed in the following locations:</p>
+              <ul>
+                  <li>/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere</li>
+                  <li>/Users/Shared/Adobe/CEP/extensions/com.youtubetopremiere</li>
+              </ul>
           </body>
           </html>
           EOCONCLUSION
@@ -606,7 +673,7 @@ jobs:
                   --version "$VERSION" \
                   --install-location "/" \
                   --timestamp \
-                  --scripts /dev/null \
+                  --scripts "dist/pkgbuild/scripts" \
                   "dist/pkgbuild/flat/components.pkg" || {
                     ERROR_CODE=$?
                     echo "Failed to create component package, error code: $ERROR_CODE"
@@ -630,6 +697,7 @@ jobs:
                                 --identifier "com.mickael.YoutubetoPremiere" \
                                 --version "$VERSION" \
                                 --timestamp \
+                                --scripts "dist/pkgbuild/scripts" \
                                 "dist/YoutubetoPremiere-$VERSION-unsigned.pkg" || {
                                   ERROR_CODE=$?
                                   echo "All package creation attempts failed, error code: $ERROR_CODE"
@@ -697,6 +765,7 @@ jobs:
                    --identifier "com.mickael.YoutubetoPremiere" \
                    --version "$VERSION" \
                    --timestamp \
+                   --scripts "dist/pkgbuild/scripts" \
                    "dist/YoutubetoPremiere-$VERSION.pkg" || {
                       ERROR_CODE=$?
                       echo "All package creation attempts failed, error code: $ERROR_CODE"
