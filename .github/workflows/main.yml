@@ -83,6 +83,14 @@ jobs:
       - name: Build Windows executable
         if: matrix.os == 'windows-latest'
         run: |
+          # Install Node.js dependencies
+          echo "Installing Node.js dependencies..."
+          yarn install --frozen-lockfile
+
+          # Build the full application including the React UI
+          echo "Building the full application with yarn build..."
+          yarn build
+          
           # Create informative version resource
           $VERSION = "${{ needs.check-version.outputs.version }}"
           
@@ -146,9 +154,12 @@ jobs:
           New-Item -Path $cepPath -ItemType Directory -Force
           New-Item -Path $execPath -ItemType Directory -Force
           
-          # Copy extension files to CEP directory if they exist
-          if (Test-Path "extension") {
-            Copy-Item -Path "extension/*" -Destination $cepPath -Recurse -Force
+          # Copy from existing CEP build directory to the distribution directory
+          if (Test-Path "dist/cep") {
+            Write-Host "Copying built CEP extension files to distribution directory..."
+            Copy-Item -Path "dist/cep/*" -Destination $cepPath -Recurse -Force
+          } else {
+            Write-Host "WARNING: CEP extension build directory not found. The extension will not work properly."
           }
           
           # Copy main executable to exec directory
@@ -169,10 +180,19 @@ jobs:
           
           # Create sounds directory
           New-Item -Path "dist/YoutubetoPremiere/sounds" -ItemType Directory -Force
+          New-Item -Path "$execPath/sounds" -ItemType Directory -Force
           
           # Copy sound files if they exist
           if (Test-Path "app/sounds/*") {
             Copy-Item -Path "app/sounds/*" -Destination "dist/YoutubetoPremiere/sounds/" -Force
+            Copy-Item -Path "app/sounds/*" -Destination "$execPath/sounds/" -Force
+            Write-Host "Sound files copied to both locations"
+          }
+          
+          # Copy sound files from src/exec/sounds to ensure all sounds are included
+          if (Test-Path "src/exec/sounds/*") {
+            Copy-Item -Path "src/exec/sounds/*" -Destination "$execPath/sounds/" -Force
+            Write-Host "Sound files from src/exec/sounds copied to exec directory"
           }
           
           # Create version file for installer
@@ -183,6 +203,14 @@ jobs:
       - name: Build macOS executable
         if: matrix.os == 'macos-13'
         run: |
+          # Install Node.js dependencies
+          echo "Installing Node.js dependencies..."
+          yarn install --frozen-lockfile
+          
+          # Build the full application including the React UI
+          echo "Building the full application with yarn build-mac..."
+          yarn build-mac
+          
           # Create directory structure
           mkdir -p dist/YoutubetoPremiere/exec
           mkdir -p dist/YoutubetoPremiere/CEP
@@ -277,30 +305,49 @@ jobs:
             chmod +x dist/cep/exec/YoutubetoPremiere 2>/dev/null || true
           fi
           
-          # Copy sounds directory if it exists
+          # Copy sounds directory from multiple sources to ensure all sounds are included
+          echo "Copying sound files from all potential sources..."
+          
+          # Copy from app/sounds if they exist
           if [ -d "app/sounds" ] && [ "$(ls -A app/sounds 2>/dev/null)" ]; then
-            echo "Copying sound files..."
+            echo "Copying sound files from app/sounds..."
             cp -r app/sounds/* dist/YoutubetoPremiere.app/Contents/Resources/sounds/ || echo "Note: No sound files copied (directory may be empty)"
-            # Also copy to main app directory
             mkdir -p dist/YoutubetoPremiere/sounds
             cp -r app/sounds/* dist/YoutubetoPremiere/sounds/ || echo "Note: No sound files copied (directory may be empty)"
-            # Copy to CEP directory
             mkdir -p dist/cep/sounds
             cp -r app/sounds/* dist/cep/sounds/ || echo "Note: No sound files copied (directory may be empty)"
+          fi
+          
+          # Copy from src/exec/sounds if they exist
+          if [ -d "src/exec/sounds" ] && [ "$(ls -A src/exec/sounds 2>/dev/null)" ]; then
+            echo "Copying sound files from src/exec/sounds..."
+            cp -r src/exec/sounds/* dist/YoutubetoPremiere.app/Contents/Resources/sounds/ || echo "Note: Error copying src/exec/sounds"
+            cp -r src/exec/sounds/* dist/YoutubetoPremiere/sounds/ || echo "Note: Error copying src/exec/sounds"
+            cp -r src/exec/sounds/* dist/cep/sounds/ || echo "Note: Error copying src/exec/sounds"
+            
+            # Also copy to exec directory
+            mkdir -p dist/YoutubetoPremiere/exec/sounds
+            mkdir -p dist/cep/exec/sounds
+            cp -r src/exec/sounds/* dist/YoutubetoPremiere/exec/sounds/ || echo "Note: Error copying to exec/sounds"
+            cp -r src/exec/sounds/* dist/cep/exec/sounds/ || echo "Note: Error copying to exec/sounds"
           else
-            echo "Sound directory doesn't exist or is empty, creating empty directory"
-            mkdir -p app/sounds
-            touch app/sounds/.gitkeep
-            mkdir -p dist/YoutubetoPremiere/sounds
-            mkdir -p dist/cep/sounds
+            echo "No sound files found in src/exec/sounds"
+          fi
+          
+          # Copy built CEP extension files to YoutubetoPremiere/CEP directory
+          if [ -d "dist/cep" ] && [ "$(ls -A dist/cep 2>/dev/null)" ]; then
+            echo "Copying built CEP extension files to YoutubetoPremiere/CEP..."
+            cp -r dist/cep/* dist/YoutubetoPremiere/CEP/ || echo "Error copying CEP files"
+          else
+            echo "WARNING: CEP extension build directory not found. The extension will not work properly."
           fi
           
           # Create version file for installer
           echo "${{ needs.check-version.outputs.version }}" > dist/YoutubetoPremiere/version.txt
-          
+            
           # Make script executable
           if [ -f "dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere" ]; then
-            chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+          chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
           else
             echo "WARNING: Executable not found at dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere"
           fi
@@ -363,46 +410,49 @@ jobs:
           mkdir -p app/sounds
           touch app/sounds/.gitkeep
           
-          # First verify if dist/cep exists and has files
+          # Verify if the CEP extension was properly built in the previous step
           if [ -d "dist/cep" ] && [ "$(ls -A dist/cep 2>/dev/null)" ]; then
-            echo "Found CEP extension files in dist/cep directory."
+            echo "Found CEP extension files in dist/cep directory from the build step."
             ls -la dist/cep/
           else
-            echo "Building CEP extension files..."
-            # Attempt to build the CEP extension if it's not already built
-            npm install --legacy-peer-deps || yarn install --ignore-engines
+            echo "WARNING: CEP extension files not found from previous build step. This might indicate a build failure."
             
-            # Ensure our scripts are executable
-            chmod +x ./build-python.sh
-            chmod +x ./scripts/fix-macos-permissions.sh
-            
-            # Run the build using the macOS-specific build
-            npm run build-mac || yarn build-mac
-            
-            # Check if build was successful
-            if [ -d "dist/cep" ] && [ "$(ls -A dist/cep 2>/dev/null)" ]; then
-              echo "Successfully built CEP extension files."
-              ls -la dist/cep/
-            else
-              echo "WARNING: Could not find or build CEP extension files!"
-              mkdir -p dist/cep
-              echo "This is a placeholder. CEP extension files missing." > dist/cep/README.txt
+            # Check if we need to attempt a build (typically shouldn't get here if yarn build-mac worked)
+            if [ ! -d "dist/cep" ]; then
+              echo "Attempting to build CEP extension as fallback..."
+              # Ensure our scripts are executable
+              chmod +x ./build-python.sh
+              chmod +x ./scripts/fix-macos-permissions.sh
+              
+              # Try to build just the CEP part
+              SKIP_PYTHON_BUILD=true yarn build-mac
             fi
           fi
           
-          # Ensure CEP directory exists in the distribution
-          mkdir -p dist/YoutubetoPremiere/CEP
+          # Ensure the CEP extension files exist for the package
+          if [ ! -d "dist/cep" ] || [ ! "$(ls -A dist/cep 2>/dev/null)" ]; then
+            echo "ERROR: CEP extension files still not found. Creating placeholder."
+            mkdir -p dist/cep
+            echo "This is a placeholder. CEP extension files are missing." > dist/cep/README.txt
+          else
+            echo "CEP extension files ready for packaging."
+          fi
           
-          # Copy CEP files to the distribution directory
-          echo "Copying CEP extension files to distribution directory..."
-          cp -r dist/cep/* dist/YoutubetoPremiere/CEP/ || echo "Warning: Error copying CEP files"
+          # Ensure the sounds are in the CEP exec directory
+          mkdir -p dist/cep/exec/sounds
+          
+          # Copy from src/exec/sounds if they exist
+          if [ -d "src/exec/sounds" ] && [ "$(ls -A src/exec/sounds 2>/dev/null)" ]; then
+            echo "Copying sound files from src/exec/sounds to CEP exec/sounds..."
+            cp -r src/exec/sounds/* dist/cep/exec/sounds/ || echo "Note: Error copying to exec/sounds"
+          fi
+          
+          # Check if the sounds were copied
+          echo "Checking sounds in CEP extension directory:"
+          ls -la dist/cep/exec/sounds/ || echo "No sounds directory or files found"
           
           # Ensure all executables have proper permissions
-          find dist/YoutubetoPremiere -type f -name "ffmpeg" -o -name "YoutubetoPremiere" | xargs chmod +x
-          
-          # Check the result
-          echo "CEP extension files in distribution directory:"
-          ls -la dist/YoutubetoPremiere/CEP/
+          find dist -type f -name "ffmpeg" -o -name "YoutubetoPremiere" | xargs chmod +x 2>/dev/null || true
         shell: bash
 
       - name: Import Certificate
