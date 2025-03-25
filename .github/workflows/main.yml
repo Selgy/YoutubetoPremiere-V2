@@ -386,8 +386,13 @@ jobs:
           $version = "${{ needs.check-version.outputs.version }}"
           $env:VERSION = $version
           
+          # Create a temporary NSIS script with the version
+          $nsiContent = Get-Content "installer.nsi" -Raw
+          $nsiContent = $nsiContent.Replace('${VERSION}', $version)
+          Set-Content -Path "installer_temp.nsi" -Value $nsiContent
+          
           # Run NSIS compiler with our script
-          makensis installer.nsi
+          makensis installer_temp.nsi
           
           # Verify installer was created
           if (!(Test-Path "YoutubetoPremiere-${version}-Setup.exe")) {
@@ -397,6 +402,9 @@ jobs:
           
           # Move installer to dist directory
           Move-Item "YoutubetoPremiere-${version}-Setup.exe" "dist/installer/"
+          
+          # Clean up temporary file
+          Remove-Item "installer_temp.nsi"
         shell: pwsh
       
       - name: Upload Windows executable
