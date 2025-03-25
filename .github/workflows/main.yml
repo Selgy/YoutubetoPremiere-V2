@@ -223,14 +223,14 @@ jobs:
       - name: Build macOS executable
         if: matrix.os == 'macos-13'
         run: |
-          # Install Node.js dependencies
+          # Install Node.js dependencies first
           echo "Installing Node.js dependencies..."
           yarn install --frozen-lockfile
           
           # Install cross-env globally to ensure it's available
           npm install -g cross-env
           
-          # Run the yarn build process first to ensure the CEP extension files are created properly
+          # Build the full application with yarn build-mac FIRST to create CEP extension files
           echo "Building the full application with yarn build-mac to create CEP extension..."
           timeout 600 npx cross-env NO_WATCH=true yarn build-mac || {
             echo "Build process timed out or failed. This may happen if watch mode is stuck."
@@ -240,6 +240,14 @@ jobs:
           # Verify the CEP extension build results
           echo "Checking CEP extension files after build:"
           ls -la dist/cep/ || echo "dist/cep not found!"
+          find dist/cep -type f | sort || echo "No files found in dist/cep"
+          
+          # Back up CEP extension files to ensure they don't get lost during subsequent steps
+          echo "Backing up CEP extension files..."
+          mkdir -p dist/cep-backup
+          if [ -d "dist/cep" ]; then
+            cp -R dist/cep/* dist/cep-backup/ || echo "Failed to backup CEP files"
+          fi
           
           # Create directory structure
           mkdir -p dist/YoutubetoPremiere/exec
@@ -362,9 +370,29 @@ jobs:
             cp -r src/exec/sounds/* dist/cep/exec/sounds/ || echo "Note: Error copying to exec/sounds"
           fi
           
+          # Restore the backed up CEP extension files if they were cleared
+          echo "Checking if we need to restore CEP files from backup..."
+          if [ ! -d "dist/cep" ] || [ ! "$(ls -A dist/cep 2>/dev/null | grep -v -E '(exec|sounds)')" ]; then
+            echo "CEP files missing or only contain exec/sounds. Restoring from backup..."
+            if [ -d "dist/cep-backup" ] && [ "$(ls -A dist/cep-backup 2>/dev/null)" ]; then
+              mkdir -p dist/cep
+              cp -R dist/cep-backup/* dist/cep/ || echo "Failed to restore CEP files from backup"
+              echo "Restored CEP files from backup."
+              ls -la dist/cep/ || echo "Failed to list restored CEP files"
+            else
+              echo "WARNING: No backup CEP files found to restore"
+            fi
+          fi
+          
           # Copy built CEP extension files to YoutubetoPremiere/CEP directory
           echo "Copying CEP extension files to YoutubetoPremiere/CEP directory..."
-          cp -r dist/cep/* dist/YoutubetoPremiere/CEP/ || echo "Error copying CEP files"
+          if [ -d "dist/cep" ] && [ "$(ls -A dist/cep 2>/dev/null)" ]; then
+            cp -r dist/cep/* dist/YoutubetoPremiere/CEP/ || echo "Error copying CEP files"
+            echo "CEP files copied to YoutubetoPremiere/CEP directory."
+            ls -la dist/YoutubetoPremiere/CEP/ || echo "Failed to list copied CEP files"
+          else
+            echo "ERROR: No CEP files found to copy to YoutubetoPremiere/CEP directory"
+          fi
           
           # Create version file for installer
           echo "${{ needs.check-version.outputs.version }}" > dist/YoutubetoPremiere/version.txt
@@ -428,70 +456,10 @@ jobs:
           echo "Checking CEP directory contents:"
           ls -la dist/YoutubetoPremiere/CEP/ || echo "CEP directory not found in dist/YoutubetoPremiere/"
           ls -la dist/cep/ || echo "dist/cep directory not found"
-        shell: bash
-
-      - name: Prepare CEP Extension Files for macOS
-        if: matrix.os == 'macos-13'
-        run: |
-          echo "Preparing CEP extension files for macOS package..."
           
-          # Verify if the CEP extension was properly built in the previous step
-          if [ -d "dist/cep" ] && [ "$(ls -A dist/cep 2>/dev/null)" ]; then
-            echo "Found CEP extension files in dist/cep directory from the build step."
-            ls -la dist/cep/
-          else
-            echo "WARNING: CEP extension files not found from previous build step. This might indicate a build failure."
-            
-            # Check if we need to attempt a build (typically shouldn't get here if yarn build-mac worked)
-            if [ ! -d "dist/cep" ]; then
-              echo "Attempting to build CEP extension as fallback..."
-              # Ensure our scripts are executable
-              chmod +x ./build-python.sh
-              chmod +x ./scripts/fix-macos-permissions.sh
-              
-              # Try to build just the CEP part
-              SKIP_PYTHON_BUILD=true yarn build-mac
-            fi
-          fi
-          
-          # Ensure the CEP extension files exist for the package
-          if [ ! -d "dist/cep" ] || [ ! "$(ls -A dist/cep 2>/dev/null)" ]; then
-            echo "ERROR: CEP extension files still not found. Creating empty directory structure."
-            mkdir -p dist/cep/CSXS
-            mkdir -p dist/cep/js
-            mkdir -p dist/cep/jsx
-            mkdir -p dist/cep/exec/sounds
-            mkdir -p dist/cep/sounds
-          else
-            echo "CEP extension files ready for packaging."
-          fi
-          
-          # Ensure the sounds are in the CEP exec directory
-          mkdir -p dist/cep/exec/sounds
-          
-          # Copy from src/exec/sounds if they exist
-          if [ -d "src/exec/sounds" ] && [ "$(ls -A src/exec/sounds 2>/dev/null)" ]; then
-            echo "Copying sound files from src/exec/sounds to CEP exec/sounds..."
-            cp -r src/exec/sounds/* dist/cep/exec/sounds/ || echo "Note: Error copying to exec/sounds"
-          fi
-          
-          # Copy from app/sounds if they exist
-          if [ -d "app/sounds" ] && [ "$(ls -A app/sounds 2>/dev/null | grep -v .gitkeep)" ]; then
-            echo "Copying sound files from app/sounds to CEP sounds..."
-            cp -r app/sounds/* dist/cep/sounds/ || echo "Note: Error copying to sounds"
-            cp -r app/sounds/* dist/cep/exec/sounds/ || echo "Note: Error copying to exec/sounds"
-          fi
-          
-          # Check if the sounds were copied
-          echo "Checking sounds in CEP extension directory:"
-          ls -la dist/cep/exec/sounds/ || echo "No sounds directory or files found"
-          
-          # Ensure all executables have proper permissions
-          find dist -type f -name "ffmpeg" -o -name "YoutubetoPremiere" | xargs chmod +x 2>/dev/null || true
-          
-          # List CEP directory contents for debugging
-          echo "Final CEP directory contents:"
-          find dist/cep -type f | sort
+          # List all files in dist for debugging
+          echo "All files in dist directory:"
+          find dist -type f | sort
         shell: bash
 
       - name: Import Certificate
@@ -656,19 +624,32 @@ jobs:
           cp -R "dist/YoutubetoPremiere.app" "dist/pkgbuild/root/Applications/"
           cp -R "dist/YoutubetoPremiere/exec" "dist/pkgbuild/root/Applications/YoutubetoPremiere.app/Contents/Resources/" || echo "No exec files to copy"
           
-          # Copy CEP files to the system-wide location
-          echo "Copying CEP files to /Library/Application Support/Adobe/CEP/extensions..."
-          if [ -d "dist/YoutubetoPremiere/CEP" ] && [ "$(ls -A dist/YoutubetoPremiere/CEP 2>/dev/null | grep -v .placeholder)" ]; then
-            echo "Found CEP files to copy to system location"
+          # Check different possible locations for CEP files
+          echo "Checking for CEP files in different locations..."
+          
+          # First check the dist/cep directory (from yarn build)
+          if [ -d "dist/cep" ] && [ "$(ls -A dist/cep 2>/dev/null | grep -v .gitkeep)" ]; then
+            echo "Found CEP files in dist/cep (from yarn build) - using these files"
             mkdir -p "dist/pkgbuild/root/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere"
-            cp -R dist/YoutubetoPremiere/CEP/* "dist/pkgbuild/root/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere/" || echo "Warning: Error copying CEP files to system location"
-            echo "CEP extension files in system location:"
+            cp -R dist/cep/* "dist/pkgbuild/root/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere/" || echo "Warning: Error copying CEP files from dist/cep"
+            echo "CEP extension files in system location (from dist/cep):"
+            ls -la "dist/pkgbuild/root/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere/"
+          # Then check the YoutubetoPremiere/CEP directory
+          elif [ -d "dist/YoutubetoPremiere/CEP" ] && [ "$(ls -A dist/YoutubetoPremiere/CEP 2>/dev/null | grep -v .placeholder)" ]; then
+            echo "Found CEP files in dist/YoutubetoPremiere/CEP"
+            mkdir -p "dist/pkgbuild/root/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere"
+            cp -R dist/YoutubetoPremiere/CEP/* "dist/pkgbuild/root/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere/" || echo "Warning: Error copying CEP files from YoutubetoPremiere/CEP"
+            echo "CEP extension files in system location (from YoutubetoPremiere/CEP):"
             ls -la "dist/pkgbuild/root/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere/"
           else 
-            echo "No CEP files found to copy to system location. This will result in an empty extension."
+            echo "ERROR: No CEP files found in any location. This will result in an empty extension."
             # Create placeholder file to ensure directory exists
             mkdir -p "dist/pkgbuild/root/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere"
             echo "This is a placeholder. CEP extension files missing." > "dist/pkgbuild/root/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere/README.txt"
+            
+            # Attempt to list all files in dist to help debug
+            echo "All files in dist directory:"
+            find dist -type f | sort
           fi
           
           # Create scripts directory for postinstall script
