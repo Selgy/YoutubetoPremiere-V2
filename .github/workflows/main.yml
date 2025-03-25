@@ -851,8 +851,11 @@ jobs:
           !include "MUI2.nsh"
           !include "FileFunc.nsh"
 
+          ; Define constants
           !define VERSION "${VERSION}"
           !define APP_NAME "YoutubetoPremiere"
+
+          ; Define paths with escaped backslashes
           !define INSTALL_DIR "$PROGRAMFILES\YoutubetoPremiere"
           !define CEP_DIR "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"
 
@@ -868,7 +871,7 @@ jobs:
           SetCompressorDictSize 64
 
           ; The default installation directory
-          InstallDir "${INSTALL_DIR}"
+          InstallDir "$PROGRAMFILES\YoutubetoPremiere"
 
           ; Interface Settings
           !define MUI_ABORTWARNING
@@ -887,27 +890,33 @@ jobs:
 
           ; The main installation section
           Section "MainSection" SEC01
-            SectionIn RO
+            ; Set output path to the installation directory
             SetOutPath "$INSTDIR"
             
-            ; Create directories
+            ; First create app directories with full paths
             CreateDirectory "$INSTDIR\exec"
             CreateDirectory "$INSTDIR\sounds"
-            CreateDirectory "$CEP_DIR"
             
-            ; Copy all files from YoutubetoPremiere directory
+            ; Copy application files
             File /r "dist\YoutubetoPremiere\*.*"
             
+            ; Create CEP extension directory
+            CreateDirectory "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"
+            
             ; Copy CEP extension files to Adobe CEP directory
-            SetOutPath "$CEP_DIR"
+            SetOutPath "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"
             File /r "dist\YoutubetoPremiere\CEP\*.*"
             
-            ; Write uninstaller
+            ; Return to installation directory for remainder of install
             SetOutPath "$INSTDIR"
+            
+            ; Write uninstaller
             WriteUninstaller "$INSTDIR\uninstall.exe"
             
-            ; Create shortcuts
+            ; Create program shortcuts directory
             CreateDirectory "$SMPROGRAMS\YoutubetoPremiere"
+            
+            ; Create shortcuts
             CreateShortCut "$SMPROGRAMS\YoutubetoPremiere\YoutubetoPremiere.lnk" "$INSTDIR\exec\YoutubetoPremiere.exe"
             CreateShortCut "$SMPROGRAMS\YoutubetoPremiere\Uninstall.lnk" "$INSTDIR\uninstall.exe"
             
@@ -928,7 +937,7 @@ jobs:
           Section "Uninstall"
             ; Remove installed files
             RMDir /r "$INSTDIR"
-            RMDir /r "$CEP_DIR"
+            RMDir /r "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"
             
             ; Remove shortcuts
             Delete "$SMPROGRAMS\YoutubetoPremiere\YoutubetoPremiere.lnk"
@@ -945,9 +954,25 @@ jobs:
 
           # Save the NSIS script
           Set-Content -Path "installer_temp.nsi" -Value $nsiContent
+          
+          # Display the contents of the NSIS script for debugging
+          Write-Host "Contents of NSIS script:"
+          Get-Content -Path "installer_temp.nsi"
 
           # Run NSIS compiler with our script
-          makensis installer_temp.nsi
+          Write-Host "Running NSIS compiler..."
+          $nsisMakePath = "C:\Program Files (x86)\NSIS\makensis.exe"
+          if (Test-Path $nsisMakePath) {
+            & $nsisMakePath "installer_temp.nsi"
+          } else {
+            makensis "installer_temp.nsi"
+          }
+          
+          $nsisExitCode = $LASTEXITCODE
+          if ($nsisExitCode -ne 0) {
+            Write-Host "NSIS compilation failed with exit code: $nsisExitCode"
+            exit $nsisExitCode
+          }
 
           # Verify installer was created
           if (!(Test-Path "YoutubetoPremiere-$version-Setup.exe")) {
