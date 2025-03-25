@@ -334,6 +334,8 @@ jobs:
           # Copy executable to exec directory
           mkdir -p dist/YoutubetoPremiere/exec
           cp dist/bin/YoutubetoPremiere dist/YoutubetoPremiere/exec/
+          
+          # Create a copy in dist root for artifact upload, but don't try to copy to dist/YoutubetoPremiere directory directly
           cp dist/bin/YoutubetoPremiere dist/
           
           # Create version file for installer
