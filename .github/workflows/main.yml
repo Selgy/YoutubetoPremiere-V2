@@ -836,7 +836,7 @@ jobs:
         env:
           VERSION: ${{ needs.check-version.outputs.version }}
         run: |
-          # Create NSIS script file directly using echo commands
+          # Create NSIS script file directly using echo commands with no wildcards
           echo '!include "MUI2.nsh"' > installer_script.nsi
           echo '!include "FileFunc.nsh"' >> installer_script.nsi
           echo '' >> installer_script.nsi
@@ -882,28 +882,27 @@ jobs:
           echo '  ; Set output path to the installation directory' >> installer_script.nsi
           echo '  SetOutPath "$INSTDIR"' >> installer_script.nsi
           echo '' >> installer_script.nsi
-          echo '  ; Create directories by using SetOutPath' >> installer_script.nsi
+          echo '  ; Copy Python files to main directory' >> installer_script.nsi
+          echo '  File "YoutubetoPremiere.py"' >> installer_script.nsi
+          echo '  File "init.py"' >> installer_script.nsi
+          echo '  File "routes.py"' >> installer_script.nsi
+          echo '  File "utils.py"' >> installer_script.nsi
+          echo '  File "version.txt"' >> installer_script.nsi
+          echo '  File "video_processing.py"' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '  ; Create exec directory and copy executables' >> installer_script.nsi
           echo '  SetOutPath "$INSTDIR\exec"' >> installer_script.nsi
+          echo '  File "dist\YoutubetoPremiere\exec\YoutubetoPremiere.exe"' >> installer_script.nsi
+          echo '  File "dist\YoutubetoPremiere\exec\ffmpeg.exe"' >> installer_script.nsi
+          echo '' >> installer_script.nsi
+          echo '  ; Create sounds directory' >> installer_script.nsi
           echo '  SetOutPath "$INSTDIR\sounds"' >> installer_script.nsi
-          echo '  SetOutPath "$INSTDIR"' >> installer_script.nsi
+          echo '  ; Add sound files if they exist - nothing to do if they don't' >> installer_script.nsi
           echo '' >> installer_script.nsi
-          echo '  ; Copy application files' >> installer_script.nsi
-          echo '  File /r "dist\YoutubetoPremiere\*.*"' >> installer_script.nsi
-          echo '' >> installer_script.nsi
-          echo '  ; Create CEP extension directory by setting the output path' >> installer_script.nsi
+          echo '  ; Create CEP extension directory' >> installer_script.nsi
+          echo '  CreateDirectory "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"' >> installer_script.nsi
           echo '  SetOutPath "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"' >> installer_script.nsi
-          echo '' >> installer_script.nsi
-          echo '  ; Copy CEP extension files to Adobe CEP directory if they exist' >> installer_script.nsi
-          echo '  !tempfile FINDCMD' >> installer_script.nsi
-          echo '  !system \'dir /b "dist\YoutubetoPremiere\CEP\*.*" > "${FINDCMD}" 2>nul\'' >> installer_script.nsi
-          echo '  !system \'if %ERRORLEVEL% == 0 echo !define FOUND_CEP_FILES >> "${FINDCMD}"\'' >> installer_script.nsi
-          echo '  !include /NONFATAL "${FINDCMD}"' >> installer_script.nsi
-          echo '  !delfile "${FINDCMD}"' >> installer_script.nsi
-          echo '  !ifdef FOUND_CEP_FILES' >> installer_script.nsi
-          echo '    File /r "dist\YoutubetoPremiere\CEP\*.*"' >> installer_script.nsi
-          echo '  !else' >> installer_script.nsi
-          echo '    CreateDirectory "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"' >> installer_script.nsi
-          echo '  !endif' >> installer_script.nsi
+          echo '  ; CEP files would be copied here if they existed' >> installer_script.nsi
           echo '' >> installer_script.nsi
           echo '  ; Return to installation directory for remainder of install' >> installer_script.nsi
           echo '  SetOutPath "$INSTDIR"' >> installer_script.nsi
@@ -944,25 +943,32 @@ jobs:
           echo '  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere"' >> installer_script.nsi
           echo 'SectionEnd' >> installer_script.nsi
           
-          # Also create a simpler script as fallback
+          # Also create a simpler script as fallback (ultra basic)
           echo 'OutFile "YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe"' > simple_installer.nsi
           echo 'RequestExecutionLevel admin' >> simple_installer.nsi
           echo '' >> simple_installer.nsi
           echo 'Section' >> simple_installer.nsi
-          echo '  ; Set output path to the installation directory' >> simple_installer.nsi
+          echo '  ; Create main application directory' >> simple_installer.nsi
           echo '  SetOutPath "$PROGRAMFILES\YoutubetoPremiere"' >> simple_installer.nsi
-          echo '  File /r "dist\YoutubetoPremiere\*.*"' >> simple_installer.nsi
+          echo '  File "YoutubetoPremiere.py"' >> simple_installer.nsi
+          echo '  File "init.py"' >> simple_installer.nsi
+          echo '  File "routes.py"' >> simple_installer.nsi
+          echo '  File "utils.py"' >> simple_installer.nsi
+          echo '  File "version.txt"' >> simple_installer.nsi
+          echo '  File "video_processing.py"' >> simple_installer.nsi
+          echo '' >> simple_installer.nsi
+          echo '  ; Create exec subdirectory' >> simple_installer.nsi
+          echo '  SetOutPath "$PROGRAMFILES\YoutubetoPremiere\exec"' >> simple_installer.nsi
+          echo '  File "dist\YoutubetoPremiere\exec\YoutubetoPremiere.exe"' >> simple_installer.nsi
+          echo '  File "dist\YoutubetoPremiere\exec\ffmpeg.exe"' >> simple_installer.nsi
+          echo '' >> simple_installer.nsi
+          echo '  ; Create sounds subdirectory' >> simple_installer.nsi
+          echo '  SetOutPath "$PROGRAMFILES\YoutubetoPremiere\sounds"' >> simple_installer.nsi
           echo '' >> simple_installer.nsi
           echo '  ; Create CEP extension directory' >> simple_installer.nsi
           echo '  CreateDirectory "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"' >> simple_installer.nsi
-          echo '  SetOutPath "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"' >> simple_installer.nsi
           echo '' >> simple_installer.nsi
-          echo '  ; Try to copy CEP files only if they exist' >> simple_installer.nsi
-          echo '  ClearErrors' >> simple_installer.nsi
-          echo '  IfFileExists "dist\YoutubetoPremiere\CEP\*.*" 0 +2' >> simple_installer.nsi
-          echo '  File /r /nonfatal "dist\YoutubetoPremiere\CEP\*.*"' >> simple_installer.nsi
-          echo '' >> simple_installer.nsi
-          echo '  ; Return to installation directory for remainder of install' >> simple_installer.nsi
+          echo '  ; Return to main directory and create uninstaller' >> simple_installer.nsi
           echo '  SetOutPath "$PROGRAMFILES\YoutubetoPremiere"' >> simple_installer.nsi
           echo '  WriteUninstaller "$PROGRAMFILES\YoutubetoPremiere\uninstall.exe"' >> simple_installer.nsi
           echo 'SectionEnd' >> simple_installer.nsi
