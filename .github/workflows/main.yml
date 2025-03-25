@@ -91,9 +91,12 @@ jobs:
           # Install Node.js dependencies
           echo "Installing Node.js dependencies..."
           yarn install --frozen-lockfile
+          
+          # Install cross-env globally to ensure it's available
+          npm install -g cross-env
 
-          # Build the full application including the React UI FIRST
-          echo "Building the full React UI application first..."
+          # Build the full application including the React UI first
+          echo "Building the full application with yarn build to create CEP extension..."
           $buildProcess = Start-Process -FilePath "npx" -ArgumentList "cross-env", "NO_WATCH=true", "yarn", "build" -NoNewWindow -PassThru
           $timeoutSeconds = 600
           if (-not (Wait-Process -InputObject $buildProcess -Timeout $timeoutSeconds -ErrorAction SilentlyContinue)) {
@@ -105,9 +108,9 @@ jobs:
             Write-Host "Build completed successfully."
           }
           
-          # Debug - Check what files were built by yarn build
-          Write-Host "Checking what files were built in dist/cep:"
-          Get-ChildItem -Path "dist\cep" -Recurse -File | ForEach-Object { $_.FullName }
+          # Verify the CEP extension build results
+          echo "Checking CEP extension files after build:"
+          Get-ChildItem -Path "dist\cep" -Recurse | Select-Object FullName
           
           # Create informative version resource
           $VERSION = "${{ needs.check-version.outputs.version }}"
@@ -171,16 +174,9 @@ jobs:
           New-Item -Path $cepPath -ItemType Directory -Force
           New-Item -Path $execPath -ItemType Directory -Force
           
-          # Copy CEP extension files from yarn build output to dist/YoutubetoPremiere/CEP
-          Write-Host "Copying CEP extension files from yarn build output to dist/YoutubetoPremiere/CEP"
-          if (Test-Path "dist/cep") {
-            Write-Host "Found CEP extension files built by yarn, copying to distribution directory..."
-            Copy-Item -Path "dist/cep/*" -Destination $cepPath -Recurse -Force
-            Write-Host "Contents of $cepPath after copying:"
-            Get-ChildItem -Path $cepPath -Recurse | ForEach-Object { $_.FullName }
-          } else {
-            Write-Host "WARNING: CEP extension build directory not found. The extension will not work properly."
-          }
+          # Copy from existing CEP build directory (from yarn build) to the distribution directory
+          Write-Host "Copying built CEP extension files to distribution directory..."
+          Copy-Item -Path "dist/cep/*" -Destination $cepPath -Recurse -Force
           
           # Copy main executable to exec directory
           Copy-Item -Path "dist/YoutubetoPremiere.exe" -Destination $execPath -Force
@@ -218,6 +214,10 @@ jobs:
           # Create version file for installer
           $versionContent = "${{ needs.check-version.outputs.version }}"
           Set-Content -Path "dist/YoutubetoPremiere/version.txt" -Value $versionContent
+
+          # Show directory structure for debugging
+          Write-Host "Final distribution directory structure:"
+          Get-ChildItem -Path "dist/YoutubetoPremiere" -Recurse | Select-Object FullName
         shell: pwsh
 
       - name: Build macOS executable
@@ -227,16 +227,19 @@ jobs:
           echo "Installing Node.js dependencies..."
           yarn install --frozen-lockfile
           
-          # Build the full application including the React UI FIRST
-          echo "Building the full React UI application first..."
-          timeout 600 cross-env NO_WATCH=true yarn build-mac || {
+          # Install cross-env globally to ensure it's available
+          npm install -g cross-env
+          
+          # Run the yarn build process first to ensure the CEP extension files are created properly
+          echo "Building the full application with yarn build-mac to create CEP extension..."
+          timeout 600 npx cross-env NO_WATCH=true yarn build-mac || {
             echo "Build process timed out or failed. This may happen if watch mode is stuck."
             echo "Continuing with the available artifacts..."
           }
           
-          # Debug - Check what files were built by yarn build
-          echo "Checking what files were built in dist/cep:"
-          find dist/cep -type f | sort
+          # Verify the CEP extension build results
+          echo "Checking CEP extension files after build:"
+          ls -la dist/cep/ || echo "dist/cep not found!"
           
           # Create directory structure
           mkdir -p dist/YoutubetoPremiere/exec
@@ -357,21 +360,11 @@ jobs:
             mkdir -p dist/cep/exec/sounds
             cp -r src/exec/sounds/* dist/YoutubetoPremiere/exec/sounds/ || echo "Note: Error copying to exec/sounds"
             cp -r src/exec/sounds/* dist/cep/exec/sounds/ || echo "Note: Error copying to exec/sounds"
-          else
-            echo "No sound files found in src/exec/sounds"
           fi
           
-          # Copy CEP extension files from yarn build output to YoutubetoPremiere/CEP
-          echo "Copying CEP extension files from yarn build output to YoutubetoPremiere/CEP..."
-          mkdir -p dist/YoutubetoPremiere/CEP
-          if [ -d "dist/cep" ] && [ "$(ls -A dist/cep 2>/dev/null)" ]; then
-            echo "Found CEP extension files built by yarn, copying to YoutubetoPremiere/CEP..."
-            cp -r dist/cep/* dist/YoutubetoPremiere/CEP/ || echo "Error copying CEP files"
-            echo "Contents of YoutubetoPremiere/CEP after copying:"
-            ls -la dist/YoutubetoPremiere/CEP/
-          else
-            echo "WARNING: CEP extension build directory not found. The extension will not work properly."
-          fi
+          # Copy built CEP extension files to YoutubetoPremiere/CEP directory
+          echo "Copying CEP extension files to YoutubetoPremiere/CEP directory..."
+          cp -r dist/cep/* dist/YoutubetoPremiere/CEP/ || echo "Error copying CEP files"
           
           # Create version file for installer
           echo "${{ needs.check-version.outputs.version }}" > dist/YoutubetoPremiere/version.txt
@@ -442,20 +435,15 @@ jobs:
         run: |
           echo "Preparing CEP extension files for macOS package..."
           
-          # Ensure app/sounds directory exists to prevent PyInstaller errors
-          mkdir -p app/sounds
-          touch app/sounds/.gitkeep
-          
           # Verify if the CEP extension was properly built in the previous step
           if [ -d "dist/cep" ] && [ "$(ls -A dist/cep 2>/dev/null)" ]; then
-            echo "Found CEP extension files from yarn build-mac step."
-            echo "CEP extension files in dist/cep:"
-            find dist/cep -type f | sort
+            echo "Found CEP extension files in dist/cep directory from the build step."
+            ls -la dist/cep/
           else
-            echo "WARNING: CEP extension files not found from yarn build-mac. This might indicate a build failure."
+            echo "WARNING: CEP extension files not found from previous build step. This might indicate a build failure."
             
-            # If dist/cep doesn't exist or is empty, try running the build again
-            if [ ! -d "dist/cep" ] || [ ! "$(ls -A dist/cep 2>/dev/null)" ]; then
+            # Check if we need to attempt a build (typically shouldn't get here if yarn build-mac worked)
+            if [ ! -d "dist/cep" ]; then
               echo "Attempting to build CEP extension as fallback..."
               # Ensure our scripts are executable
               chmod +x ./build-python.sh
@@ -463,60 +451,35 @@ jobs:
               
               # Try to build just the CEP part
               SKIP_PYTHON_BUILD=true yarn build-mac
-              
-              # Check if the build was successful
-              if [ -d "dist/cep" ] && [ "$(ls -A dist/cep 2>/dev/null)" ]; then
-                echo "Successfully built CEP extension files as fallback."
-                echo "CEP extension files in dist/cep:"
-                find dist/cep -type f | sort
-              else
-                echo "WARNING: Failed to build CEP extension files even with fallback attempt."
-              fi
             fi
           fi
           
-          # Ensure sounds are properly copied to the CEP directory
-          mkdir -p dist/cep/exec/sounds
-          mkdir -p dist/cep/sounds
-          
-          # Copy from app/sounds if they exist
-          if [ -d "app/sounds" ] && [ "$(ls -A app/sounds 2>/dev/null | grep -v .gitkeep)" ]; then
-            echo "Copying sound files from app/sounds to CEP directories..."
-            cp -r app/sounds/* dist/cep/sounds/ || echo "Note: Error copying to sounds"
-            cp -r app/sounds/* dist/cep/exec/sounds/ || echo "Note: Error copying to exec/sounds"
+          # Ensure the CEP extension files exist for the package
+          if [ ! -d "dist/cep" ] || [ ! "$(ls -A dist/cep 2>/dev/null)" ]; then
+            echo "ERROR: CEP extension files still not found. Creating empty directory structure."
+            mkdir -p dist/cep/CSXS
+            mkdir -p dist/cep/js
+            mkdir -p dist/cep/jsx
+            mkdir -p dist/cep/exec/sounds
+            mkdir -p dist/cep/sounds
+          else
+            echo "CEP extension files ready for packaging."
           fi
+          
+          # Ensure the sounds are in the CEP exec directory
+          mkdir -p dist/cep/exec/sounds
           
           # Copy from src/exec/sounds if they exist
           if [ -d "src/exec/sounds" ] && [ "$(ls -A src/exec/sounds 2>/dev/null)" ]; then
-            echo "Copying sound files from src/exec/sounds to CEP directories..."
-            cp -r src/exec/sounds/* dist/cep/sounds/ || echo "Note: Error copying to sounds"
+            echo "Copying sound files from src/exec/sounds to CEP exec/sounds..."
             cp -r src/exec/sounds/* dist/cep/exec/sounds/ || echo "Note: Error copying to exec/sounds"
           fi
           
-          # Ensure the CEP CSXS directory exists and has a valid manifest.xml
-          if [ ! -d "dist/cep/CSXS" ] || [ ! -f "dist/cep/CSXS/manifest.xml" ]; then
-            echo "CSXS directory or manifest.xml missing, creating..."
-            mkdir -p dist/cep/CSXS
-            
-            # Use the script in build-python.sh to create the manifest
-            # This is simpler than including the full XML here
-            echo "Creating manifest.xml using build-python.sh..."
-            chmod +x ./build-python.sh
-            ./build-python.sh
-          fi
-          
-          # Make sure we have index.html and js/index.js
-          if [ ! -f "dist/cep/index.html" ]; then
-            echo "Creating simple index.html as it's missing..."
-            echo '<!DOCTYPE html>' > dist/cep/index.html
-            echo '<html><head><title>YouTube to Premiere Pro</title></head>' >> dist/cep/index.html
-            echo '<body><h1>YouTube to Premiere Pro</h1><script src="./js/index.js"></script></body></html>' >> dist/cep/index.html
-          fi
-          
-          if [ ! -f "dist/cep/js/index.js" ]; then
-            echo "Creating simple js/index.js as it's missing..."
-            mkdir -p dist/cep/js
-            echo 'console.log("YouTube to Premiere Pro extension loaded");' > dist/cep/js/index.js
+          # Copy from app/sounds if they exist
+          if [ -d "app/sounds" ] && [ "$(ls -A app/sounds 2>/dev/null | grep -v .gitkeep)" ]; then
+            echo "Copying sound files from app/sounds to CEP sounds..."
+            cp -r app/sounds/* dist/cep/sounds/ || echo "Note: Error copying to sounds"
+            cp -r app/sounds/* dist/cep/exec/sounds/ || echo "Note: Error copying to exec/sounds"
           fi
           
           # Check if the sounds were copied
