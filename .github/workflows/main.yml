@@ -292,7 +292,7 @@ jobs:
           # Signal to subsequent steps that certificate is imported
           echo "CERTIFICATE_IMPORTED=true" >> $GITHUB_ENV
         shell: bash
-          
+        
       - name: Create Entitlements File
         if: matrix.os == 'macos-13' && env.CERTIFICATE_IMPORTED == 'true'
         run: |
@@ -345,18 +345,27 @@ jobs:
             APP_SIGNATURE_ID=$(cat dist/signature.info)
             
             echo "Checking for installer signing identity"
+            # List all available certificates for debugging
+            echo "Available certificates:"
+          security find-identity -v -p codesigning
+          
             INSTALLER_SIGNATURE_ID=$(security find-identity -v -p codesigning | grep "Developer ID Installer" | head -1 | awk -F '"' '{print $2}')
             
             # If we don't have an installer identity, try creating unsigned package
             if [[ -z "$INSTALLER_SIGNATURE_ID" ]]; then
-              echo "No installer signing identity found, creating unsigned package"
+              echo "No Developer ID Installer certificate found, creating unsigned package"
               
               # Create PKG without signing
+              echo "Running: pkgbuild --component dist/YoutubetoPremiere.app --install-location /Applications --identifier com.mickael.YoutubetoPremiere --version $VERSION dist/YoutubetoPremiere-$VERSION.pkg"
+              
               pkgbuild --component "dist/YoutubetoPremiere.app" \
                      --install-location "/Applications" \
                      --identifier "com.mickael.YoutubetoPremiere" \
                      --version "$VERSION" \
-                     "dist/YoutubetoPremiere-$VERSION.pkg"
+                     "dist/YoutubetoPremiere-$VERSION.pkg" || {
+                        echo "Failed to create unsigned package, error code: $?"
+                        ls -la dist/
+                     }
             else
               echo "Creating PKG with installer signature: $INSTALLER_SIGNATURE_ID"
               
@@ -366,7 +375,14 @@ jobs:
                      --identifier "com.mickael.YoutubetoPremiere" \
                      --version "$VERSION" \
                      --sign "$INSTALLER_SIGNATURE_ID" \
-                     "dist/YoutubetoPremiere-$VERSION.pkg"
+                     "dist/YoutubetoPremiere-$VERSION.pkg" || {
+                        echo "Failed to create signed package, trying unsigned as fallback"
+                        pkgbuild --component "dist/YoutubetoPremiere.app" \
+                               --install-location "/Applications" \
+                               --identifier "com.mickael.YoutubetoPremiere" \
+                               --version "$VERSION" \
+                               "dist/YoutubetoPremiere-$VERSION.pkg"
+                     }
             fi
             
             # Check if pkg was created
@@ -374,7 +390,8 @@ jobs:
               echo "PKG created successfully"
               echo "PKG_CREATED=true" >> $GITHUB_ENV
             else
-              echo "Failed to create PKG"
+              echo "Failed to create PKG - file does not exist"
+              ls -la dist/
             fi
             
             # Remove signature info file
@@ -383,7 +400,7 @@ jobs:
             echo "No signature ID found, skipping package creation"
           fi
         shell: bash
-      
+        
       - name: Notarize and Staple macOS Package
         if: matrix.os == 'macos-13' && env.PKG_CREATED == 'true'
         env:
@@ -395,9 +412,9 @@ jobs:
           if [ -f "dist/YoutubetoPremiere-$VERSION.pkg" ]; then
             # Notarize the package
             xcrun notarytool submit "dist/YoutubetoPremiere-$VERSION.pkg" \
-              --apple-id "$APPLE_ID" \
-              --password "$APPLE_APP_PASSWORD" \
-              --team-id "$APPLE_TEAM_ID" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
               --wait
             
             # Staple the package
