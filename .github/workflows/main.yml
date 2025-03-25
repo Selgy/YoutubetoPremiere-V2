@@ -893,8 +893,17 @@ jobs:
           echo '  ; Create CEP extension directory by setting the output path' >> installer_script.nsi
           echo '  SetOutPath "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"' >> installer_script.nsi
           echo '' >> installer_script.nsi
-          echo '  ; Copy CEP extension files to Adobe CEP directory' >> installer_script.nsi
-          echo '  File /r "dist\YoutubetoPremiere\CEP\*.*"' >> installer_script.nsi
+          echo '  ; Copy CEP extension files to Adobe CEP directory if they exist' >> installer_script.nsi
+          echo '  !tempfile FINDCMD' >> installer_script.nsi
+          echo '  !system \'dir /b "dist\YoutubetoPremiere\CEP\*.*" > "${FINDCMD}" 2>nul\'' >> installer_script.nsi
+          echo '  !system \'if %ERRORLEVEL% == 0 echo !define FOUND_CEP_FILES >> "${FINDCMD}"\'' >> installer_script.nsi
+          echo '  !include /NONFATAL "${FINDCMD}"' >> installer_script.nsi
+          echo '  !delfile "${FINDCMD}"' >> installer_script.nsi
+          echo '  !ifdef FOUND_CEP_FILES' >> installer_script.nsi
+          echo '    File /r "dist\YoutubetoPremiere\CEP\*.*"' >> installer_script.nsi
+          echo '  !else' >> installer_script.nsi
+          echo '    CreateDirectory "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"' >> installer_script.nsi
+          echo '  !endif' >> installer_script.nsi
           echo '' >> installer_script.nsi
           echo '  ; Return to installation directory for remainder of install' >> installer_script.nsi
           echo '  SetOutPath "$INSTDIR"' >> installer_script.nsi
@@ -940,12 +949,20 @@ jobs:
           echo 'RequestExecutionLevel admin' >> simple_installer.nsi
           echo '' >> simple_installer.nsi
           echo 'Section' >> simple_installer.nsi
+          echo '  ; Set output path to the installation directory' >> simple_installer.nsi
           echo '  SetOutPath "$PROGRAMFILES\YoutubetoPremiere"' >> simple_installer.nsi
           echo '  File /r "dist\YoutubetoPremiere\*.*"' >> simple_installer.nsi
           echo '' >> simple_installer.nsi
+          echo '  ; Create CEP extension directory' >> simple_installer.nsi
+          echo '  CreateDirectory "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"' >> simple_installer.nsi
           echo '  SetOutPath "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"' >> simple_installer.nsi
-          echo '  File /r "dist\YoutubetoPremiere\CEP\*.*"' >> simple_installer.nsi
           echo '' >> simple_installer.nsi
+          echo '  ; Try to copy CEP files only if they exist' >> simple_installer.nsi
+          echo '  ClearErrors' >> simple_installer.nsi
+          echo '  IfFileExists "dist\YoutubetoPremiere\CEP\*.*" 0 +2' >> simple_installer.nsi
+          echo '  File /r /nonfatal "dist\YoutubetoPremiere\CEP\*.*"' >> simple_installer.nsi
+          echo '' >> simple_installer.nsi
+          echo '  ; Return to installation directory for remainder of install' >> simple_installer.nsi
           echo '  SetOutPath "$PROGRAMFILES\YoutubetoPremiere"' >> simple_installer.nsi
           echo '  WriteUninstaller "$PROGRAMFILES\YoutubetoPremiere\uninstall.exe"' >> simple_installer.nsi
           echo 'SectionEnd' >> simple_installer.nsi
