@@ -198,6 +198,7 @@ jobs:
           # Create CEP and exec directories
           mkdir -p dist/YoutubetoPremiere/CEP
           mkdir -p dist/YoutubetoPremiere/exec
+          mkdir -p dist/bin
           
           # Download FFmpeg for macOS
           echo "Downloading FFmpeg for macOS..."
@@ -206,11 +207,9 @@ jobs:
           
           # Move FFmpeg to the correct locations
           chmod +x ffmpeg_temp/ffmpeg
-          mkdir -p dist/YoutubetoPremiere/exec
           cp ffmpeg_temp/ffmpeg dist/YoutubetoPremiere/exec/
           
           # Also copy ffmpeg to the app bundle
-          mkdir -p dist/YoutubetoPremiere.app/Contents/MacOS/
           cp ffmpeg_temp/ffmpeg dist/YoutubetoPremiere.app/Contents/MacOS/
             
           # Create Info.plist
@@ -296,7 +295,6 @@ jobs:
           chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
             
           # Create a single binary executable for CLI use
-          mkdir -p dist/bin
           cat > dist/bin/YoutubetoPremiere << EOF
           #!/bin/bash
           set -e
@@ -331,12 +329,11 @@ jobs:
           
           chmod +x dist/bin/YoutubetoPremiere
           
-          # Copy executable to exec directory
-          mkdir -p dist/YoutubetoPremiere/exec
+          # Copy executable to appropriate locations (carefully avoiding overwriting directories)
           cp dist/bin/YoutubetoPremiere dist/YoutubetoPremiere/exec/
           
-          # Create a copy in dist root for artifact upload, but don't try to copy to dist/YoutubetoPremiere directory directly
-          cp dist/bin/YoutubetoPremiere dist/
+          # Create separate CLI executable in dist root
+          cp dist/bin/YoutubetoPremiere dist/YoutubetoPremiere-cli
           
           # Create version file for installer
           echo "${{ needs.check-version.outputs.version }}" > dist/YoutubetoPremiere/version.txt
@@ -430,6 +427,7 @@ jobs:
             echo "Signing app with identity: $SIGNATURE_ID"
             codesign --force --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/YoutubetoPremiere.app" || echo "Warning: App signing failed but continuing"
             codesign --force --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/bin/YoutubetoPremiere" || echo "Warning: CLI signing failed but continuing"
+            codesign --force --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/YoutubetoPremiere-cli" || echo "Warning: CLI (dist root) signing failed but continuing"
             
             # Create a simple temp file to track signature was successful
             echo "$SIGNATURE_ID" > dist/signature.info
@@ -810,13 +808,13 @@ jobs:
             ; Create directories
             CreateDirectory "$INSTDIR\exec"
             CreateDirectory "$INSTDIR\sounds"
-            CreateDirectory "${CEP_DIR}"
+            CreateDirectory "$CEP_DIR"
             
             ; Copy all files from YoutubetoPremiere directory
             File /r "dist\YoutubetoPremiere\*.*"
             
             ; Copy CEP extension files to Adobe CEP directory
-            SetOutPath "${CEP_DIR}"
+            SetOutPath "$CEP_DIR"
             File /r "dist\YoutubetoPremiere\CEP\*.*"
             
             ; Write uninstaller
@@ -845,7 +843,7 @@ jobs:
           Section "Uninstall"
             ; Remove installed files
             RMDir /r "$INSTDIR"
-            RMDir /r "${CEP_DIR}"
+            RMDir /r "$CEP_DIR"
             
             ; Remove shortcuts
             Delete "$SMPROGRAMS\YoutubetoPremiere\YoutubetoPremiere.lnk"
@@ -917,6 +915,7 @@ jobs:
           name: executable-macos-13
           path: |
             dist/bin/YoutubetoPremiere
+            dist/YoutubetoPremiere-cli
             dist/YoutubetoPremiere.app/**/*
             dist/YoutubetoPremiere/**/*
           retention-days: 90
