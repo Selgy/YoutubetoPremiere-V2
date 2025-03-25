@@ -501,6 +501,9 @@ jobs:
           echo "Copying files to package root..."
           cp -R "dist/YoutubetoPremiere.app" "dist/pkgbuild/root/Applications/"
           cp -R "dist/YoutubetoPremiere/exec" "dist/pkgbuild/root/Applications/YoutubetoPremiere.app/Contents/Resources/" || echo "No exec files to copy"
+          
+          # Copy CEP files to the correct system-wide location
+          echo "Copying CEP files to /Library/Application Support/Adobe/CEP/extensions..."
           cp -R "dist/YoutubetoPremiere/CEP/"* "dist/pkgbuild/root/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere/" 2>/dev/null || echo "No CEP files to copy"
           
           # If we have a signature, re-sign everything in the package root to ensure proper signing
