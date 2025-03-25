@@ -883,12 +883,12 @@ jobs:
           echo '  SetOutPath "$INSTDIR"' >> installer_script.nsi
           echo '' >> installer_script.nsi
           echo '  ; Copy Python files to main directory' >> installer_script.nsi
-          echo '  File "YoutubetoPremiere.py"' >> installer_script.nsi
-          echo '  File "init.py"' >> installer_script.nsi
-          echo '  File "routes.py"' >> installer_script.nsi
-          echo '  File "utils.py"' >> installer_script.nsi
-          echo '  File "version.txt"' >> installer_script.nsi
-          echo '  File "video_processing.py"' >> installer_script.nsi
+          echo '  File "dist\YoutubetoPremiere\YoutubetoPremiere.py"' >> installer_script.nsi
+          echo '  File "dist\YoutubetoPremiere\init.py"' >> installer_script.nsi
+          echo '  File "dist\YoutubetoPremiere\routes.py"' >> installer_script.nsi
+          echo '  File "dist\YoutubetoPremiere\utils.py"' >> installer_script.nsi
+          echo '  File "dist\YoutubetoPremiere\version.txt"' >> installer_script.nsi
+          echo '  File "dist\YoutubetoPremiere\video_processing.py"' >> installer_script.nsi
           echo '' >> installer_script.nsi
           echo '  ; Create exec directory and copy executables' >> installer_script.nsi
           echo '  SetOutPath "$INSTDIR\exec"' >> installer_script.nsi
@@ -950,12 +950,12 @@ jobs:
           echo 'Section' >> simple_installer.nsi
           echo '  ; Create main application directory' >> simple_installer.nsi
           echo '  SetOutPath "$PROGRAMFILES\YoutubetoPremiere"' >> simple_installer.nsi
-          echo '  File "YoutubetoPremiere.py"' >> simple_installer.nsi
-          echo '  File "init.py"' >> simple_installer.nsi
-          echo '  File "routes.py"' >> simple_installer.nsi
-          echo '  File "utils.py"' >> simple_installer.nsi
-          echo '  File "version.txt"' >> simple_installer.nsi
-          echo '  File "video_processing.py"' >> simple_installer.nsi
+          echo '  File "dist\YoutubetoPremiere\YoutubetoPremiere.py"' >> simple_installer.nsi
+          echo '  File "dist\YoutubetoPremiere\init.py"' >> simple_installer.nsi
+          echo '  File "dist\YoutubetoPremiere\routes.py"' >> simple_installer.nsi
+          echo '  File "dist\YoutubetoPremiere\utils.py"' >> simple_installer.nsi
+          echo '  File "dist\YoutubetoPremiere\version.txt"' >> simple_installer.nsi
+          echo '  File "dist\YoutubetoPremiere\video_processing.py"' >> simple_installer.nsi
           echo '' >> simple_installer.nsi
           echo '  ; Create exec subdirectory' >> simple_installer.nsi
           echo '  SetOutPath "$PROGRAMFILES\YoutubetoPremiere\exec"' >> simple_installer.nsi
