@@ -264,7 +264,7 @@ jobs:
       - name: Import Certificate
         if: matrix.os == 'macos-13'
         env:
-          SIGNING_CERTIFICATE: ${{ secrets.SIGNING_CERTIFICATE }}
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
         run: |
@@ -277,7 +277,7 @@ jobs:
           CERTIFICATE_PATH="$RUNNER_TEMP/certificate.p12"
           KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
           
-          echo -n "$SIGNING_CERTIFICATE" | base64 --decode -o "$CERTIFICATE_PATH"
+          echo -n "$MACOS_CERTIFICATE" | base64 --decode -o "$CERTIFICATE_PATH"
           
           # Create keychain
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
