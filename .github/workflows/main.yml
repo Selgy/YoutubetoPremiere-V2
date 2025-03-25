@@ -164,9 +164,19 @@ jobs:
           }
           
           # Copy Python files
-          if (Test-Path "app/*.py") {
-            Copy-Item -Path "app/*.py" -Destination "dist/YoutubetoPremiere/" -Force
-          }
+          mkdir -p dist/YoutubetoPremiere/app
+          cp app/*.py dist/YoutubetoPremiere/app/
+          
+          # Copy Python executable to CEP dir
+          mkdir -p dist/cep/exec
+          if [ -f "dist/YoutubetoPremiere/YoutubetoPremiere" ]; then
+            cp dist/YoutubetoPremiere/YoutubetoPremiere dist/cep/exec/
+            chmod +x dist/cep/exec/YoutubetoPremiere
+          else
+            echo "WARNING: Python executable not found for CEP dir. Using shell script as fallback."
+            cp dist/bin/YoutubetoPremiere dist/cep/exec/ || echo "Failed to copy fallback executable"
+            chmod +x dist/cep/exec/YoutubetoPremiere 2>/dev/null || true
+          fi
           
           # Copy sounds directory if it exists
           if [ -d "app/sounds" ] && [ "$(ls -A app/sounds 2>/dev/null)" ]; then
@@ -197,10 +207,18 @@ jobs:
             touch dist/YoutubetoPremiere/CEP/.placeholder
           fi
             
+          # Create version file for installer
+          echo "${{ needs.check-version.outputs.version }}" > dist/YoutubetoPremiere/version.txt
+          
           # Make script executable
-          chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+          if [ -f "dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere" ]; then
+            chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+          else
+            echo "WARNING: Executable not found at dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere"
+          fi
             
           # Create a single binary executable for CLI use
+          mkdir -p dist/bin
           cat > dist/bin/YoutubetoPremiere << EOF
           #!/bin/bash
           set -e
@@ -236,13 +254,11 @@ jobs:
           chmod +x dist/bin/YoutubetoPremiere
           
           # Copy executable to appropriate locations (carefully avoiding overwriting directories)
+          mkdir -p dist/YoutubetoPremiere/exec
           cp dist/bin/YoutubetoPremiere dist/YoutubetoPremiere/exec/
           
           # Create separate CLI executable in dist root
           cp dist/bin/YoutubetoPremiere dist/YoutubetoPremiere-cli
-          
-          # Create version file for installer
-          echo "${{ needs.check-version.outputs.version }}" > dist/YoutubetoPremiere/version.txt
           
           # Final check of the distribution directory
           echo "Distribution directory contents:"
@@ -305,13 +321,28 @@ jobs:
             --hidden-import engineio.async_drivers.threading \
             app/YoutubetoPremiere.py
             
+          # Debug - Check PyInstaller output directory right after building
+          echo "Checking PyInstaller output directories after build:"
+          ls -la dist/ || echo "dist directory not found"
+          ls -la dist/YoutubetoPremiere/ || echo "YoutubetoPremiere directory not found in dist/"
+          
           # Create app bundle structure
           echo "Creating app bundle structure..."
           mkdir -p dist/YoutubetoPremiere.app/Contents/MacOS
           mkdir -p dist/YoutubetoPremiere.app/Contents/Resources/sounds
           
-          # Copy files to app bundle - adjust for onedir structure
-          cp dist/YoutubetoPremiere/YoutubetoPremiere dist/YoutubetoPremiere.app/Contents/MacOS/
+          # Create the exec directory explicitly
+          mkdir -p dist/YoutubetoPremiere/exec
+          
+          # Check if the executable exists before copying
+          if [ -f "dist/YoutubetoPremiere/YoutubetoPremiere" ]; then
+            echo "Copying executable file to app bundle..."
+            cp dist/YoutubetoPremiere/YoutubetoPremiere dist/YoutubetoPremiere.app/Contents/MacOS/
+          else
+            echo "ERROR: PyInstaller executable not found at dist/YoutubetoPremiere/YoutubetoPremiere"
+            find dist -type f -name "YoutubetoPremiere" | sort
+            ls -la dist/YoutubetoPremiere/ || echo "YoutubetoPremiere directory not found or empty"
+          fi
           
           # Copy resources from onedir build to app bundle
           cp -r dist/YoutubetoPremiere/* dist/YoutubetoPremiere.app/Contents/Resources/ || echo "No resources to copy"
@@ -322,8 +353,14 @@ jobs:
           
           # Copy Python executable to CEP dir
           mkdir -p dist/cep/exec
-          cp dist/YoutubetoPremiere/YoutubetoPremiere dist/cep/exec/
-          chmod +x dist/cep/exec/YoutubetoPremiere
+          if [ -f "dist/YoutubetoPremiere/YoutubetoPremiere" ]; then
+            cp dist/YoutubetoPremiere/YoutubetoPremiere dist/cep/exec/
+            chmod +x dist/cep/exec/YoutubetoPremiere
+          else
+            echo "WARNING: Python executable not found for CEP dir. Using shell script as fallback."
+            cp dist/bin/YoutubetoPremiere dist/cep/exec/ || echo "Failed to copy fallback executable"
+            chmod +x dist/cep/exec/YoutubetoPremiere 2>/dev/null || true
+          fi
           
           # Copy sounds directory if it exists
           if [ -d "app/sounds" ] && [ "$(ls -A app/sounds 2>/dev/null)" ]; then
@@ -347,9 +384,14 @@ jobs:
           echo "${{ needs.check-version.outputs.version }}" > dist/YoutubetoPremiere/version.txt
           
           # Make script executable
-          chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+          if [ -f "dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere" ]; then
+            chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+          else
+            echo "WARNING: Executable not found at dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere"
+          fi
             
           # Create a single binary executable for CLI use
+          mkdir -p dist/bin
           cat > dist/bin/YoutubetoPremiere << EOF
           #!/bin/bash
           set -e
@@ -383,9 +425,6 @@ jobs:
           EOF
           
           chmod +x dist/bin/YoutubetoPremiere
-          
-          # Copy executable to appropriate locations (carefully avoiding overwriting directories)
-          cp dist/bin/YoutubetoPremiere dist/YoutubetoPremiere/exec/
           
           # Create separate CLI executable in dist root
           cp dist/bin/YoutubetoPremiere dist/YoutubetoPremiere-cli
