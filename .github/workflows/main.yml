@@ -342,23 +342,43 @@ jobs:
         run: |
           # Check if we have a signature ID from previous step
           if [ -f "dist/signature.info" ]; then
-            SIGNATURE_ID=$(cat dist/signature.info)
+            APP_SIGNATURE_ID=$(cat dist/signature.info)
             
-            echo "Creating PKG with signature: $SIGNATURE_ID"
+            echo "Checking for installer signing identity"
+            INSTALLER_SIGNATURE_ID=$(security find-identity -v -p codesigning | grep "Developer ID Installer" | head -1 | awk -F '"' '{print $2}')
             
-            # Create PKG directly
-            pkgbuild --component "dist/YoutubetoPremiere.app" \
-                    --install-location "/Applications" \
-                    --identifier "com.mickael.YoutubetoPremiere" \
-                    --version "$VERSION" \
-                    --sign "$SIGNATURE_ID" \
-                    "dist/YoutubetoPremiere-$VERSION.pkg"
+            # If we don't have an installer identity, try creating unsigned package
+            if [[ -z "$INSTALLER_SIGNATURE_ID" ]]; then
+              echo "No installer signing identity found, creating unsigned package"
+              
+              # Create PKG without signing
+              pkgbuild --component "dist/YoutubetoPremiere.app" \
+                     --install-location "/Applications" \
+                     --identifier "com.mickael.YoutubetoPremiere" \
+                     --version "$VERSION" \
+                     "dist/YoutubetoPremiere-$VERSION.pkg"
+            else
+              echo "Creating PKG with installer signature: $INSTALLER_SIGNATURE_ID"
+              
+              # Create PKG with proper installer signing identity
+              pkgbuild --component "dist/YoutubetoPremiere.app" \
+                     --install-location "/Applications" \
+                     --identifier "com.mickael.YoutubetoPremiere" \
+                     --version "$VERSION" \
+                     --sign "$INSTALLER_SIGNATURE_ID" \
+                     "dist/YoutubetoPremiere-$VERSION.pkg"
+            fi
+            
+            # Check if pkg was created
+            if [ -f "dist/YoutubetoPremiere-$VERSION.pkg" ]; then
+              echo "PKG created successfully"
+              echo "PKG_CREATED=true" >> $GITHUB_ENV
+            else
+              echo "Failed to create PKG"
+            fi
             
             # Remove signature info file
             rm -f dist/signature.info
-            
-            # Signal to subsequent steps that pkg was created
-            echo "PKG_CREATED=true" >> $GITHUB_ENV
           else
             echo "No signature ID found, skipping package creation"
           fi
