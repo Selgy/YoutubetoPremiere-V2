@@ -1,6 +1,6 @@
 {
   "name": "bolt-cep",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "scripts": {
     "version": "cross-env-shell \"node scripts/version-update.js $npm_package_version && git add -A && (git commit -m v$npm_package_version || true) && git tag -f v$npm_package_version\" && git push && git push --tags -f",
     "postversion": "",
@@ -8,9 +8,9 @@
     "clean": "rimraf dist/* node_modules/.vite build/*",
     "build-python": "powershell -ExecutionPolicy Bypass -File build-python.ps1",
     "build-python-mac": "chmod +x ./build-python.sh && ./build-python.sh",
-    "build-mac": "yarn clean && tsc -p \"tsconfig-build.json\" && yarn build-python-mac && vite build --force",
+    "build-mac": "yarn clean && tsc -p \"tsconfig-build.json\" && yarn build-python-mac && vite build --force --config vite.config.mac.js",
     "build": "yarn clean && tsc -p \"tsconfig-build.json\" && yarn build-python && vite build --force",
-    "build-cross-platform": "cross-env BUILD_FOR_MAC=true yarn build",
+    "build-cross-platform": "node scripts/detect-platform.js",
     "dev": "vite",
     "watch": "yarn clean && tsc -p \"tsconfig.json\" && vite build --force --watch",
     "zxp": "yarn clean && tsc -p \"tsconfig-build.json\" && cross-env SKIP_PYTHON_BUILD=true yarn build-python && cross-env ZXP_PACKAGE=true vite build --force --watch=false",

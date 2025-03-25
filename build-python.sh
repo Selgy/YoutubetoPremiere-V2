@@ -1,111 +1,74 @@
 #!/bin/bash
-set -e  # Exit on error
+set -e
 
-# Create required directories
-EXEC_DIR="dist/cep/exec"
-SOUNDS_DIR="$EXEC_DIR/sounds"
+# Script for building Python app on macOS
 
-mkdir -p "$EXEC_DIR"
-mkdir -p "$SOUNDS_DIR"
+echo "Building Python app for macOS..."
 
-echo "Created output directories"
+# Create necessary directories
+mkdir -p dist/cep/exec
+mkdir -p dist/cep/sounds
 
-# Build with PyInstaller
-echo "Building with PyInstaller..."
-python -m PyInstaller YoutubetoPremiere.spec --distpath build/YoutubetoPremiere
-
-# Copy Python files
-echo "Copying Python source files..."
-for file in app/*.py; do
-  cp "$file" "$EXEC_DIR/"
-done
-
-# Copy macOS-specific files
-echo "Copying macOS-specific files..."
-
-# Create a script to find ffmpeg on macOS
-cat > "$EXEC_DIR/find_ffmpeg.sh" << 'EOF'
-#!/bin/bash
-# This script detects ffmpeg on macOS
-for path in /usr/local/bin/ffmpeg /opt/homebrew/bin/ffmpeg /usr/bin/ffmpeg ~/bin/ffmpeg; do
-  if [ -f "$path" ] && [ -x "$path" ]; then
-    echo "Found ffmpeg at: $path"
-    echo "$path" > "$(dirname "$0")/ffmpeg_path.txt"
-    exit 0
-  fi
-done
-
-# Try to find via which
-if command -v ffmpeg >/dev/null 2>&1; then
-  echo "Found ffmpeg via PATH: $(which ffmpeg)"
-  echo "$(which ffmpeg)" > "$(dirname "$0")/ffmpeg_path.txt"
-  exit 0
+# Check if ffmpeg exists in the expected location
+FFMPEG_PATH="dist/cep/exec/ffmpeg"
+if [ ! -f "$FFMPEG_PATH" ]; then
+  echo "ffmpeg not found at $FFMPEG_PATH, downloading..."
+  
+  # Create temp directory for download
+  mkdir -p ffmpeg_temp
+  
+  # Download ffmpeg for macOS
+  curl -L https://evermeet.cx/ffmpeg/ffmpeg-6.1.1.zip -o ffmpeg_temp/ffmpeg.zip
+  
+  # Extract ffmpeg
+  unzip -q ffmpeg_temp/ffmpeg.zip -d ffmpeg_temp
+  
+  # Copy to destination
+  cp ffmpeg_temp/ffmpeg "$FFMPEG_PATH"
+  chmod +x "$FFMPEG_PATH"
+  
+  # Clean up
+  rm -rf ffmpeg_temp
+  
+  echo "ffmpeg downloaded and installed to $FFMPEG_PATH"
+else
+  echo "ffmpeg already exists at $FFMPEG_PATH"
 fi
 
-echo "FFmpeg not found! Please install ffmpeg:"
-echo "  brew install ffmpeg"
-exit 1
-EOF
+# Build the Python app with PyInstaller
+echo "Building with PyInstaller..."
+pyinstaller --onefile \
+  --name YoutubetoPremiere \
+  --add-data "app/sounds:sounds" \
+  --hidden-import engineio.async_drivers.threading \
+  --hidden-import socketio.async_drivers.threading \
+  --hidden-import pkg_resources.py2_warn \
+  app/YoutubetoPremiere.py
 
-chmod +x "$EXEC_DIR/find_ffmpeg.sh"
-
-# Create a macOS launcher script
-cat > "$EXEC_DIR/launch_mac.sh" << 'EOF'
-#!/bin/bash
-# This script launches the YoutubetoPremiere server on macOS
-
-# Navigate to script directory
-cd "$(dirname "$0")"
-
-# Check if Python 3 is installed
-if ! command -v python3 >/dev/null 2>&1; then
-  osascript -e 'display notification "Python 3 is required but not found. Please install Python 3." with title "YoutubetoPremiere Error"'
-  echo "Python 3 is required but not found!"
+# Copy the executable to CEP directory
+if [ -f "dist/YoutubetoPremiere" ]; then
+  echo "Copying executable to dist/cep/exec/YoutubetoPremiere"
+  cp "dist/YoutubetoPremiere" "dist/cep/exec/YoutubetoPremiere"
+  chmod +x "dist/cep/exec/YoutubetoPremiere"
+else
+  echo "ERROR: PyInstaller failed to create the executable"
   exit 1
 fi
 
-# Check if server is already running
-if nc -z localhost 3001 >/dev/null 2>&1; then
-  echo "YoutubetoPremiere server is already running"
-  osascript -e 'display notification "YoutubetoPremiere server is already running" with title "YoutubetoPremiere"'
-  exit 0
-fi
-
-# Run the find_ffmpeg script
-./find_ffmpeg.sh >/dev/null 2>&1
-
-# Launch the server
-python3 YoutubetoPremiere.py &
-
-# Show notification
-osascript -e 'display notification "YoutubetoPremiere server has started" with title "YoutubetoPremiere"'
-echo "YoutubetoPremiere server has started"
-EOF
-
-chmod +x "$EXEC_DIR/launch_mac.sh"
+# Copy Python source files
+echo "Copying Python source files..."
+mkdir -p dist/cep/exec/app
+cp app/*.py dist/cep/exec/app/
 
 # Copy sounds if they exist
-if [ -d "app/sounds" ]; then
+if [ -d "app/sounds" ] && [ "$(ls -A app/sounds 2>/dev/null)" ]; then
   echo "Copying sound files..."
-  cp app/sounds/* "$SOUNDS_DIR/"
+  mkdir -p dist/cep/sounds
+  cp -r app/sounds/* dist/cep/sounds/ || echo "Note: No sound files copied (directory may be empty)"
+else
+  echo "Sound directory doesn't exist or is empty, creating empty directory"
+  mkdir -p dist/cep/sounds
+  touch dist/cep/sounds/.gitkeep
 fi
 
-# Create macOS info file
-cat > "$EXEC_DIR/macOS_INFO.txt" << 'EOF'
-YoutubetoPremiere - macOS Version
-
-Requirements:
-1. Python 3 (3.6 or higher)
-2. FFmpeg
-
-For best experience:
-1. Install FFmpeg via Homebrew:
-   brew install ffmpeg
-
-2. Launch using the provided script:
-   ./launch_mac.sh
-
-The extension will automatically detect your FFmpeg installation.
-EOF
-
-echo "Build completed successfully!" 
+echo "Python build complete!" 

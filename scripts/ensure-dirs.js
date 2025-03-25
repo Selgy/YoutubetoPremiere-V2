@@ -5,12 +5,16 @@ const dirs = [
   'dist/cep/exec',
   'dist/cep/js',
   'dist/cep/jsx',
+  'dist/cep/sounds',
   'dist/zxp/cep/exec',
   'dist/zxp/cep/js',
   'dist/zxp/cep/jsx',
+  'dist/zxp/cep/sounds',
   'build/work',
   'build/YoutubetoPremiere',
-  'src/exec'
+  'src/exec',
+  'src/exec/sounds',
+  'app/sounds'
 ];
 
 dirs.forEach(dir => {
