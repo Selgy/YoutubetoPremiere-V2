@@ -177,7 +177,7 @@ jobs:
             Write-Error "Failed to create version.txt file"
             exit 1
           }
-
+          
           # Get list of module imports from requirements.txt
           $hiddenImports = @(
             "engineio.async_drivers.threading",
@@ -217,7 +217,7 @@ jobs:
           )
           
           # Combine all arguments into a string
-          $pyinstallerArgs = (@("--name", "YoutubetoPremiere", "--onefile") + $hiddenImportsArgs + $collectAllArgs + @("--version-file", "version.txt", "app/YoutubetoPremiere.py"))
+          $pyinstallerArgs = (@("--name", "YoutubetoPremiere", "--onefile", "--noupx", "--noconfirm") + $hiddenImportsArgs + $collectAllArgs + @("--version-file", "version.txt", "--exclude-module", "tcl", "--exclude-module", "tk", "--exclude-module", "Tkinter", "--exclude-module", "_tkinter", "--exclude-module", "tkinter", "app/YoutubetoPremiere.py"))
           
           # Display final PyInstaller command for logging
           Write-Host "Running PyInstaller with the following arguments:"
@@ -225,6 +225,17 @@ jobs:
           
           # Build executable with PyInstaller with all necessary libraries embedded
           & pyinstaller $pyinstallerArgs
+          
+          # Clean up any TCL/TK files that might have been included despite exclusion
+          Write-Host "Cleaning up any remaining TCL/TK files..."
+          if (Test-Path "dist\YoutubetoPremiere\_internal\_tcl_data") {
+            Remove-Item -Path "dist\YoutubetoPremiere\_internal\_tcl_data" -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host "Removed _tcl_data directory"
+          }
+          if (Test-Path "dist\YoutubetoPremiere\_internal\_tk_data") {
+            Remove-Item -Path "dist\YoutubetoPremiere\_internal\_tk_data" -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host "Removed _tk_data directory"
+          }
           
           # Create version file for installer
           New-Item -Path "dist\YoutubetoPremiere" -ItemType Directory -Force -ErrorAction SilentlyContinue
@@ -355,7 +366,7 @@ jobs:
           mkdir -p build
           
           # Build arguments for PyInstaller
-          PYINSTALLER_ARGS="--name YoutubetoPremiere --onedir --debug=all -y --clean --distpath ./dist --workpath ./build/YoutubetoPremiere-work"
+          PYINSTALLER_ARGS="--name YoutubetoPremiere --onedir --debug=all -y --clean --distpath ./dist --workpath ./build/YoutubetoPremiere-work --noupx --noconfirm"
           
           # Add hidden imports
           for import in "${HIDDEN_IMPORTS[@]}"
@@ -368,6 +379,9 @@ jobs:
           do
             PYINSTALLER_ARGS="$PYINSTALLER_ARGS --collect-all $pkg"
           done
+          
+          # Add exclude modules to avoid tcl/tk issues
+          PYINSTALLER_ARGS="$PYINSTALLER_ARGS --exclude-module tcl --exclude-module tk --exclude-module Tkinter --exclude-module _tkinter --exclude-module tkinter"
             
           # Add the main script
           PYINSTALLER_ARGS="$PYINSTALLER_ARGS app/YoutubetoPremiere.py"
@@ -378,6 +392,17 @@ jobs:
             
           # Execute PyInstaller
           pyinstaller $PYINSTALLER_ARGS
+          
+          # Clean up any TCL/TK files that might have been included despite exclusion
+          echo "Cleaning up any remaining TCL/TK files..."
+          if [ -d "dist/YoutubetoPremiere/_internal/_tcl_data" ]; then
+            rm -rf "dist/YoutubetoPremiere/_internal/_tcl_data"
+            echo "Removed _tcl_data directory"
+          fi
+          if [ -d "dist/YoutubetoPremiere/_internal/_tk_data" ]; then
+            rm -rf "dist/YoutubetoPremiere/_internal/_tk_data"
+            echo "Removed _tk_data directory"
+          fi
             
           # Debug - Check PyInstaller output directory after building
           echo "Checking PyInstaller output directories after build:"
@@ -447,7 +472,7 @@ jobs:
             
           # Make script executable
           if [ -f "dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere" ]; then
-            chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+          chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
           else
             echo "WARNING: Executable not found at dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere"
           fi
