@@ -425,9 +425,27 @@ jobs:
           
           if [[ -n "$SIGNATURE_ID" ]]; then
             echo "Signing app with identity: $SIGNATURE_ID"
-            codesign --force --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/YoutubetoPremiere.app" || echo "Warning: App signing failed but continuing"
-            codesign --force --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/bin/YoutubetoPremiere" || echo "Warning: CLI signing failed but continuing"
-            codesign --force --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/YoutubetoPremiere-cli" || echo "Warning: CLI (dist root) signing failed but continuing"
+            
+            # Sign all binaries in the app bundle first, recursively
+            echo "Deep signing all binaries in app bundle..."
+            find "dist/YoutubetoPremiere.app" -type f \( -name "*.dylib" -o -name "*.so" -o -perm +111 \) -exec codesign --force --timestamp --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" {} \; || echo "Warning: Some binaries might not be signed"
+            
+            # Sign ffmpeg binary in the exec directory
+            echo "Signing ffmpeg executable..."
+            codesign --force --timestamp --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/YoutubetoPremiere/exec/ffmpeg" || echo "Warning: ffmpeg signing failed"
+            
+            # Sign the main app bundle last
+            echo "Signing main app bundle..."
+            codesign --force --timestamp --options runtime --entitlements entitlements.plist --deep --sign "$SIGNATURE_ID" "dist/YoutubetoPremiere.app" || echo "Warning: App signing failed but continuing"
+            
+            # Sign CLI executables
+            echo "Signing CLI executables..."
+            codesign --force --timestamp --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/bin/YoutubetoPremiere" || echo "Warning: CLI signing failed but continuing"
+            codesign --force --timestamp --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/YoutubetoPremiere-cli" || echo "Warning: CLI (dist root) signing failed but continuing"
+            
+            # Verify signatures
+            echo "Verifying app signature..."
+            codesign -vvv --deep --strict "dist/YoutubetoPremiere.app" || echo "Warning: App signature verification failed"
             
             # Create a simple temp file to track signature was successful
             echo "$SIGNATURE_ID" > dist/signature.info
@@ -483,7 +501,18 @@ jobs:
           echo "Copying files to package root..."
           cp -R "dist/YoutubetoPremiere.app" "dist/pkgbuild/root/Applications/"
           cp -R "dist/YoutubetoPremiere/exec" "dist/pkgbuild/root/Applications/YoutubetoPremiere.app/Contents/Resources/" || echo "No exec files to copy"
-          cp -R "dist/YoutubetoPremiere/CEP/"* "dist/pkgbuild/root/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere/" || echo "No CEP files to copy"
+          cp -R "dist/YoutubetoPremiere/CEP/"* "dist/pkgbuild/root/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere/" 2>/dev/null || echo "No CEP files to copy"
+          
+          # If we have a signature, re-sign everything in the package root to ensure proper signing
+          if [[ "$APP_SIGNATURE_ID" != "UNSIGNED" ]]; then
+            echo "Re-signing all executables in the package root..."
+            
+            # Sign all binaries in the app bundle again (now in package root)
+            find "dist/pkgbuild/root" -type f \( -name "*.dylib" -o -name "*.so" -o -perm +111 \) -not -path "*/\.git/*" -exec codesign --force --timestamp --options runtime --entitlements entitlements.plist --sign "$APP_SIGNATURE_ID" {} \; 2>/dev/null || echo "Some files may not be signed"
+            
+            # Re-sign the main app bundle
+            codesign --force --timestamp --options runtime --entitlements entitlements.plist --deep --sign "$APP_SIGNATURE_ID" "dist/pkgbuild/root/Applications/YoutubetoPremiere.app" || echo "Warning: Package app re-signing failed"
+          fi
           
           # Create distribution XML
           cat > "dist/pkgbuild/distribution.xml" << EOXML
@@ -492,7 +521,7 @@ jobs:
               <title>YouTube to Premiere Pro</title>
               <organization>YoutubetoPremiere</organization>
               <domains enable_localSystem="true"/>
-              <options customize="never" require-scripts="false"/>
+              <options customize="never" require-scripts="false" hostArchitectures="x86_64,arm64"/>
               <license file="LICENSE"/>
               <background alignment="center" file="background.png" scaling="proportional"/>
               <welcome file="welcome.html" mime-type="text/html"/>
@@ -567,12 +596,14 @@ jobs:
           # Create a transparent background image
           convert -size 600x400 xc:transparent "dist/pkgbuild/resources/background.png" || echo "Skipping background image creation"
           
-          # Create unsigned package first
+          # Create component package with proper options for notarization
           echo "Creating component package..."
           pkgbuild --root "dist/pkgbuild/root" \
                   --identifier "com.mickael.YoutubetoPremiere" \
                   --version "$VERSION" \
                   --install-location "/" \
+                  --timestamp \
+                  --scripts /dev/null \
                   "dist/pkgbuild/flat/components.pkg" || {
                     ERROR_CODE=$?
                     echo "Failed to create component package, error code: $ERROR_CODE"
@@ -584,16 +615,18 @@ jobs:
           productbuild --distribution "dist/pkgbuild/distribution.xml" \
                       --resources "dist/pkgbuild/resources" \
                       --package-path "dist/pkgbuild/flat" \
+                      --timestamp \
                       "dist/YoutubetoPremiere-$VERSION-unsigned.pkg" || {
                         ERROR_CODE=$?
                         echo "Failed to create product archive, error code: $ERROR_CODE"
                         echo "Trying simpler package build..."
                         
                         # Try a simpler package if the distribution-based one fails
-                        pkgbuild --component "dist/YoutubetoPremiere.app" \
+                        pkgbuild --component "dist/pkgbuild/root/Applications/YoutubetoPremiere.app" \
                                 --install-location "/Applications" \
                                 --identifier "com.mickael.YoutubetoPremiere" \
                                 --version "$VERSION" \
+                                --timestamp \
                                 "dist/YoutubetoPremiere-$VERSION-unsigned.pkg" || {
                                   ERROR_CODE=$?
                                   echo "All package creation attempts failed, error code: $ERROR_CODE"
@@ -630,6 +663,7 @@ jobs:
               
               # Try to create signed package but don't fail if it doesn't work
               productsign --sign "$INSTALLER_SIGNATURE_ID" \
+                        --timestamp \
                         "dist/YoutubetoPremiere-$VERSION-unsigned.pkg" \
                         "dist/YoutubetoPremiere-$VERSION.pkg" || {
                           ERROR_CODE=$?
@@ -638,6 +672,7 @@ jobs:
                           
                           # Try with explicit sign option
                           productsign --sign "Developer ID Installer: mickael ducatez" \
+                                     --timestamp \
                                      "dist/YoutubetoPremiere-$VERSION-unsigned.pkg" \
                                      "dist/YoutubetoPremiere-$VERSION.pkg" || {
                                       ERROR_CODE=$?
@@ -658,6 +693,7 @@ jobs:
                    --install-location "/Applications" \
                    --identifier "com.mickael.YoutubetoPremiere" \
                    --version "$VERSION" \
+                   --timestamp \
                    "dist/YoutubetoPremiere-$VERSION.pkg" || {
                       ERROR_CODE=$?
                       echo "All package creation attempts failed, error code: $ERROR_CODE"
@@ -672,6 +708,9 @@ jobs:
             PACKAGE_SIZE=$(du -h "dist/YoutubetoPremiere-$VERSION.pkg" | cut -f1)
             echo "Package size: $PACKAGE_SIZE"
             echo "PKG_CREATED=true" >> $GITHUB_ENV
+            
+            # Check the signed status
+            pkgutil --check-signature "dist/YoutubetoPremiere-$VERSION.pkg" || echo "Package is not properly signed"
           else
             echo "Failed to create PKG - file does not exist"
             ls -la dist/
@@ -713,30 +752,76 @@ jobs:
               exit 0
             fi
             
+            echo "Preparing package for notarization..."
+            
+            # Check package validity
+            echo "Checking package validity:"
+            pkgutil --check-signature "dist/YoutubetoPremiere-$VERSION.pkg" || echo "Warning: Package is not properly signed"
+            spctl --assess --verbose=4 "dist/YoutubetoPremiere-$VERSION.pkg" || echo "Warning: Package failed system policy check"
+            
+            # Create a zip archive for notarization (sometimes this helps)
+            echo "Creating zip archive of package for notarization..."
+            cd dist
+            zip -r "YoutubetoPremiere-$VERSION.zip" "YoutubetoPremiere-$VERSION.pkg"
+            cd ..
+            
             echo "Attempting to notarize the package..."
             
             # Notarize the package, but don't fail if it doesn't work
-            xcrun notarytool submit "dist/YoutubetoPremiere-$VERSION.pkg" \
+            NOTARIZE_RESULT=$(xcrun notarytool submit "dist/YoutubetoPremiere-$VERSION.zip" \
               --apple-id "$APPLE_ID" \
               --password "$APPLE_APP_PASSWORD" \
               --team-id "$APPLE_TEAM_ID" \
-              --wait || {
-                ERROR_CODE=$?
-                echo "Notarization failed with error code: $ERROR_CODE"
-                echo "This is expected for unsigned packages or if you don't have proper credentials"
-                echo "NOTARIZATION_FAILED=true" >> $GITHUB_ENV
-                exit 0  # Don't fail the build
-              }
+              --wait 2>&1)
             
-            # Try to staple if notarization succeeded
-            if [[ "$NOTARIZATION_FAILED" != "true" ]]; then
+            NOTARIZE_EXIT=$?
+            echo "$NOTARIZE_RESULT"
+            
+            # Extract the submission ID for logging
+            SUBMISSION_ID=$(echo "$NOTARIZE_RESULT" | grep -o "id: [0-9a-f\-]*" | head -1 | awk '{print $2}')
+            
+            if [ $NOTARIZE_EXIT -ne 0 ]; then
+              echo "Notarization submission failed with error code: $NOTARIZE_EXIT"
+              echo "This is expected for unsigned packages or if you don't have proper credentials"
+              echo "NOTARIZATION_FAILED=true" >> $GITHUB_ENV
+            elif echo "$NOTARIZE_RESULT" | grep -q "Invalid"; then
+              echo "Notarization failed with status: Invalid"
+              
+              # Get detailed logs
+              if [ -n "$SUBMISSION_ID" ]; then
+                echo "Getting detailed notarization log for submission $SUBMISSION_ID"
+                xcrun notarytool log "$SUBMISSION_ID" \
+                  --apple-id "$APPLE_ID" \
+                  --password "$APPLE_APP_PASSWORD" \
+                  --team-id "$APPLE_TEAM_ID" || echo "Could not retrieve notarization log"
+              fi
+              
+              echo "NOTARIZATION_FAILED=true" >> $GITHUB_ENV
+            else
+              echo "Notarization appears to have succeeded!"
+              
+              # Try to staple if notarization succeeded
               echo "Attempting to staple the notarization ticket..."
               xcrun stapler staple "dist/YoutubetoPremiere-$VERSION.pkg" || {
                 ERROR_CODE=$?
                 echo "Stapling failed with error code: $ERROR_CODE"
-                echo "This is expected if notarization failed"
-                exit 0  # Don't fail the build
+                echo "Trying an alternative approach..."
+                
+                # Create a clean copy and try again
+                cp "dist/YoutubetoPremiere-$VERSION.pkg" "dist/YoutubetoPremiere-$VERSION-stapled.pkg"
+                xcrun stapler staple "dist/YoutubetoPremiere-$VERSION-stapled.pkg"
+                
+                if [ $? -eq 0 ]; then
+                  echo "Stapling succeeded on the copy, replacing original..."
+                  mv "dist/YoutubetoPremiere-$VERSION-stapled.pkg" "dist/YoutubetoPremiere-$VERSION.pkg"
+                else
+                  echo "All stapling attempts failed. This is unusual if notarization succeeded."
+                fi
               }
+              
+              # Verify stapling
+              echo "Verifying stapling..."
+              stapler validate "dist/YoutubetoPremiere-$VERSION.pkg" || echo "Warning: Stapling validation failed"
             fi
             
             # Package is ready for upload regardless of notarization status
@@ -933,7 +1018,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: installer-macos
-          path: dist/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.pkg
+          path: |
+            dist/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.pkg
+            dist/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.zip
           retention-days: 90
 
   create-release:
@@ -972,6 +1059,7 @@ jobs:
           files: |
             dist/windows/YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe
             dist/macos/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.pkg
+            dist/macos/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.zip
           name: YoutubetoPremiere v${{ needs.check-version.outputs.version }}
           tag_name: v${{ needs.check-version.outputs.version }}
           generate_release_notes: true
