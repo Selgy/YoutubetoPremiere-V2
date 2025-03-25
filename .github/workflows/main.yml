@@ -223,8 +223,8 @@ jobs:
             touch app/sounds/.gitkeep
           fi
             
-          # Make script executable
-          chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            # Make script executable
+            chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
             
           # Create a single binary executable for CLI use
           cat > dist/YoutubetoPremiere << EOF
@@ -261,32 +261,32 @@ jobs:
           chmod +x dist/YoutubetoPremiere
         shell: bash
         
-      - name: Sign and Notarize macOS App
+      - name: Import Certificate
         if: matrix.os == 'macos-13' && env.APPLE_ID != ''
         env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           SIGNING_CERTIFICATE: ${{ secrets.SIGNING_CERTIFICATE }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          # Import certificate
-          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
-          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          CERTIFICATE_PATH="$RUNNER_TEMP/certificate.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
           
-          echo -n "$SIGNING_CERTIFICATE" | base64 --decode -o $CERTIFICATE_PATH
+          echo -n "$SIGNING_CERTIFICATE" | base64 --decode -o "$CERTIFICATE_PATH"
           
           # Create keychain
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           
           # Import certificate
-          security import $CERTIFICATE_PATH -P "$KEYCHAIN_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security list-keychain -d user -s $KEYCHAIN_PATH
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security import "$CERTIFICATE_PATH" -P "$KEYCHAIN_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+        shell: bash
           
-          cat > entitlements.plist << "EOF"
+      - name: Create Entitlements File
+        if: matrix.os == 'macos-13' && env.APPLE_ID != ''
+        run: |
+          cat > entitlements.plist << 'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -302,7 +302,11 @@ jobs:
           </dict>
           </plist>
           EOF
-          
+        shell: bash
+      
+      - name: Sign macOS App
+        if: matrix.os == 'macos-13' && env.APPLE_ID != ''
+        run: |
           # Sign the app
           SIGNATURE_ID=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F '"' '{print $2}')
           
@@ -311,97 +315,62 @@ jobs:
             codesign --force --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/YoutubetoPremiere.app"
             codesign --force --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/YoutubetoPremiere"
             
-            # Create package structure
-            mkdir -p dist/pkg-contents/Applications
-            cp -r dist/YoutubetoPremiere.app dist/pkg-contents/Applications/
+            # Create a simple temp file to track signature was successful
+            echo "$SIGNATURE_ID" > dist/signature.info
+          else
+            echo "No signing identity found, skipping signing"
+          fi
+        shell: bash
+      
+      - name: Create macOS Package
+        if: matrix.os == 'macos-13' && env.APPLE_ID != ''
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          # Check if we have a signature ID from previous step
+          if [ -f "dist/signature.info" ]; then
+            SIGNATURE_ID=$(cat dist/signature.info)
             
-            # Create package info
-            cat > dist/pkg-contents/package-info.plist << "EOF"
-            <?xml version="1.0" encoding="UTF-8"?>
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            <plist version="1.0">
-            <dict>
-                <key>CFBundleGetInfoString</key>
-                <string>YoutubetoPremiere VERSION</string>
-                <key>CFBundleIdentifier</key>
-                <string>com.mickael.YoutubetoPremiere</string>
-                <key>CFBundleName</key>
-                <string>YoutubetoPremiere</string>
-                <key>CFBundlePackageType</key>
-                <string>APPL</string>
-                <key>CFBundleShortVersionString</key>
-                <string>VERSION</string>
-                <key>CFBundleVersion</key>
-                <string>VERSION</string>
-                <key>LSMinimumSystemVersion</key>
-                <string>10.13.0</string>
-                <key>LSApplicationCategoryType</key>
-                <string>public.app-category.video</string>
-            </dict>
-            </plist>
-            EOF
+            echo "Creating PKG with signature: $SIGNATURE_ID"
             
-            # Replace VERSION placeholders with actual version
-            VERSION="${{ needs.check-version.outputs.version }}"
-            sed -i '' "s/VERSION/$VERSION/g" dist/pkg-contents/package-info.plist
-            
-            # Create distribution.xml
-            cat > dist/distribution.xml << "EOF"
-            <?xml version="1.0" encoding="utf-8"?>
-            <installer-script minSpecVersion="1.000000" authoringTool="com.apple.PackageMaker" authoringToolVersion="3.0.6" authoringToolBuild="179">
-                <title>YoutubetoPremiere</title>
-                <options customize="never" allow-external-scripts="no"/>
-                <domains enable_localSystem="true"/>
-                <installation-check script="pm_install_check();"/>
-                <script>
-                    function pm_install_check() {
-                        if(!(system.compareVersions(system.version.ProductVersion,'10.13.0') >= 0)) {
-                            my.result.message = 'YoutubetoPremiere requires Mac OS X 10.13.0 or later.';
-                            my.result.type = 'Fatal';
-                            return false;
-                        }
-                        return true;
-                    }
-                </script>
-                <choices-outline>
-                    <line choice="com.mickael.YoutubetoPremiere.choice"/>
-                </choices-outline>
-                <choice id="com.mickael.YoutubetoPremiere.choice" title="YoutubetoPremiere">
-                    <pkg-ref id="com.mickael.YoutubetoPremiere.pkg"/>
-                </choice>
-                <pkg-ref id="com.mickael.YoutubetoPremiere.pkg" auth="Root">YoutubetoPremiere.pkg</pkg-ref>
-            </installer-script>
-            EOF
-            
-            # Create the package
-            pkgbuild --root dist/pkg-contents \
-                    --identifier com.mickael.YoutubetoPremiere \
-                    --version ${{ needs.check-version.outputs.version }} \
-                    --install-location / \
+            # Create PKG directly
+            pkgbuild --component "dist/YoutubetoPremiere.app" \
+                    --install-location "/Applications" \
+                    --identifier "com.mickael.YoutubetoPremiere" \
+                    --version "$VERSION" \
                     --sign "$SIGNATURE_ID" \
-                    dist/YoutubetoPremiere.pkg
+                    "dist/YoutubetoPremiere-$VERSION.pkg"
             
-            # Create the installer package
-            productbuild --distribution dist/distribution.xml \
-                        --package-path dist \
-                        --version ${{ needs.check-version.outputs.version }} \
-                        --sign "$SIGNATURE_ID" \
-                        "dist/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.pkg"
-            
+            # Remove signature info file
+            rm -f dist/signature.info
+          else
+            echo "No signature ID found, skipping package creation"
+          fi
+        shell: bash
+      
+      - name: Notarize and Staple macOS Package
+        if: matrix.os == 'macos-13' && env.APPLE_ID != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          if [ -f "dist/YoutubetoPremiere-$VERSION.pkg" ]; then
             # Notarize the package
-            xcrun notarytool submit "dist/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.pkg" \
+            xcrun notarytool submit "dist/YoutubetoPremiere-$VERSION.pkg" \
               --apple-id "$APPLE_ID" \
               --password "$APPLE_APP_PASSWORD" \
               --team-id "$APPLE_TEAM_ID" \
               --wait
             
             # Staple the package
-            xcrun stapler staple "dist/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.pkg"
+            xcrun stapler staple "dist/YoutubetoPremiere-$VERSION.pkg"
           else
-            echo "No signing identity found, skipping signing and notarization"
+            echo "Package not found, skipping notarization"
           fi
         shell: bash
-        
+      
       - name: Create Windows installer
         if: matrix.os == 'windows-latest'
         run: |
@@ -421,16 +390,19 @@ jobs:
           makensis installer_temp.nsi
           
           # Verify installer was created
-          if (!(Test-Path "YoutubetoPremiere-${version}-Setup.exe")) {
+          if (!(Test-Path "YoutubetoPremiere-$version-Setup.exe")) {
             Write-Error "Failed to create installer"
             exit 1
           }
           
+          # Create installer directory if it doesn't exist
+          New-Item -Path "dist/installer" -ItemType Directory -Force -ErrorAction SilentlyContinue
+          
           # Move installer to dist directory
-          Move-Item "YoutubetoPremiere-${version}-Setup.exe" "dist/installer/"
+          Move-Item "YoutubetoPremiere-$version-Setup.exe" "dist/installer/" -Force
           
           # Clean up temporary file
-          Remove-Item "installer_temp.nsi"
+          Remove-Item "installer_temp.nsi" -ErrorAction SilentlyContinue
         shell: pwsh
       
       - name: Upload Windows executable
@@ -450,7 +422,7 @@ jobs:
             dist/YoutubetoPremiere
             dist/YoutubetoPremiere.app/**/*
           retention-days: 90
-
+      
       - name: Upload Windows installer
         if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
@@ -458,7 +430,7 @@ jobs:
           name: installer-windows
           path: dist/installer/YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe
           retention-days: 90
-      
+
       - name: Upload macOS installer
         if: matrix.os == 'macos-13' && env.APPLE_ID != ''
         uses: actions/upload-artifact@v4
@@ -483,7 +455,7 @@ jobs:
         with:
           name: installer-windows
           path: dist/windows
-      
+        
       - name: Download macOS installer
         uses: actions/download-artifact@v4
         with:
@@ -496,7 +468,7 @@ jobs:
           ls -la dist/
           find dist -type f | sort
         shell: bash
-      
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
