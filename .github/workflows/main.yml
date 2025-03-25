@@ -217,7 +217,34 @@ jobs:
           )
           
           # Combine all arguments into a string
-          $pyinstallerArgs = (@("--name", "YoutubetoPremiere", "--onefile", "--noupx", "--noconfirm") + $hiddenImportsArgs + $collectAllArgs + @("--version-file", "version.txt", "--exclude-module", "tcl", "--exclude-module", "tk", "--exclude-module", "Tkinter", "--exclude-module", "_tkinter", "--exclude-module", "tkinter", "app/YoutubetoPremiere.py"))
+          $pyinstallerArgs = (@("--name", "YoutubetoPremiere", "--onefile", "--noupx", "--noconfirm", "--strip") + $hiddenImportsArgs + $collectAllArgs + @("--version-file", "version.txt", "--exclude-module", "tcl", "--exclude-module", "tk", "--exclude-module", "Tkinter", "--exclude-module", "_tkinter", "--exclude-module", "tkinter", "--exclude-module", "distutils", "--exclude-module", "setuptools", "--exclude-module", "unittest", "--exclude-module", "pkg_resources", "--exclude-module", "lib2to3", "--exclude-module", "pydoc_data", "--exclude-module", "ensurepip", "--exclude-module", "idlelib", "--exclude-module", "turtledemo", "app/YoutubetoPremiere.py"))
+          
+          # Create a PyInstaller hook to exclude unwanted files
+          Write-Host "Creating PyInstaller hook to exclude unwanted files..."
+          
+          # Create the hook file line by line instead of using multi-line string
+          $null = New-Item -Path "hook-exclude.py" -ItemType File -Force
+          Add-Content -Path "hook-exclude.py" -Value "def exclude_tcl_tk(analysis):"
+          Add-Content -Path "hook-exclude.py" -Value "    # Exclude all tcl/tk related files"
+          Add-Content -Path "hook-exclude.py" -Value "    excluded_bins = []"
+          Add-Content -Path "hook-exclude.py" -Value "    for binary in analysis.binaries:"
+          Add-Content -Path "hook-exclude.py" -Value "        if any(x in binary[0].lower() for x in ['tcl', 'tk', '_tkinter']):"
+          Add-Content -Path "hook-exclude.py" -Value "            excluded_bins.append(binary)"
+          Add-Content -Path "hook-exclude.py" -Value "    for binary in excluded_bins:"
+          Add-Content -Path "hook-exclude.py" -Value "        analysis.binaries.remove(binary)"
+          Add-Content -Path "hook-exclude.py" -Value "    "
+          Add-Content -Path "hook-exclude.py" -Value "    # Exclude all dist-info directories"
+          Add-Content -Path "hook-exclude.py" -Value "    excluded_datas = []"
+          Add-Content -Path "hook-exclude.py" -Value "    for data in analysis.datas:"
+          Add-Content -Path "hook-exclude.py" -Value "        if '.dist-info' in data[0]:"
+          Add-Content -Path "hook-exclude.py" -Value "            excluded_datas.append(data)"
+          Add-Content -Path "hook-exclude.py" -Value "    for data in excluded_datas:"
+          Add-Content -Path "hook-exclude.py" -Value "        analysis.datas.remove(data)"
+          Add-Content -Path "hook-exclude.py" -Value "    "
+          Add-Content -Path "hook-exclude.py" -Value "    return analysis"
+          
+          # Add hook to PyInstaller arguments
+          $pyinstallerArgs += @("--additional-hooks-dir", ".")
           
           # Display final PyInstaller command for logging
           Write-Host "Running PyInstaller with the following arguments:"
@@ -226,16 +253,75 @@ jobs:
           # Build executable with PyInstaller with all necessary libraries embedded
           & pyinstaller $pyinstallerArgs
           
-          # Clean up any TCL/TK files that might have been included despite exclusion
-          Write-Host "Cleaning up any remaining TCL/TK files..."
-          if (Test-Path "dist\YoutubetoPremiere\_internal\_tcl_data") {
-            Remove-Item -Path "dist\YoutubetoPremiere\_internal\_tcl_data" -Recurse -Force -ErrorAction SilentlyContinue
-            Write-Host "Removed _tcl_data directory"
+          # Run a quick check to ensure no TCL/TK files are in the output
+          Write-Host "Checking for any remaining TCL/TK files..."
+          $tcl_files = Get-ChildItem -Path "dist\YoutubetoPremiere\_internal" -Recurse -Include "*tcl*", "*tk*" -ErrorAction SilentlyContinue
+          if ($tcl_files) {
+            Write-Host "Warning: Found some TCL/TK files that were not excluded: $($tcl_files.Count) files"
+          } else {
+            Write-Host "No TCL/TK files found in the output - good!"
           }
-          if (Test-Path "dist\YoutubetoPremiere\_internal\_tk_data") {
-            Remove-Item -Path "dist\YoutubetoPremiere\_internal\_tk_data" -Recurse -Force -ErrorAction SilentlyContinue
-            Write-Host "Removed _tk_data directory"
+          
+          # Check for dist-info directories
+          $dist_info = Get-ChildItem -Path "dist\YoutubetoPremiere\_internal" -Recurse -Directory -Include "*.dist-info" -ErrorAction SilentlyContinue
+          if ($dist_info) {
+            Write-Host "Warning: Found some .dist-info directories that were not excluded: $($dist_info.Count) directories"
+          } else {
+            Write-Host "No .dist-info directories found in the output - good!"
           }
+          
+          # For macOS, update the command similarly
+          PYINSTALLER_ARGS="$PYINSTALLER_ARGS --exclude-module tcl --exclude-module tk --exclude-module Tkinter --exclude-module _tkinter --exclude-module tkinter --exclude-module distutils --exclude-module setuptools --exclude-module unittest --exclude-module pkg_resources --exclude-module lib2to3 --exclude-module pydoc_data --exclude-module ensurepip --exclude-module idlelib --exclude-module turtledemo"
+          
+          # Execute PyInstaller command for macOS
+          echo "Running PyInstaller with the following arguments:"
+          echo "pyinstaller $PYINSTALLER_ARGS"
+          
+          # Create a PyInstaller hook for macOS to exclude unwanted files
+          echo "Creating PyInstaller hook to exclude unwanted files..."
+          
+          # Create hook file line by line
+          echo "def exclude_tcl_tk(analysis):" > hook-exclude.py
+          echo "    # Exclude all tcl/tk related files" >> hook-exclude.py
+          echo "    excluded_bins = []" >> hook-exclude.py
+          echo "    for binary in analysis.binaries:" >> hook-exclude.py
+          echo "        if any(x in binary[0].lower() for x in ['tcl', 'tk', '_tkinter']):" >> hook-exclude.py
+          echo "            excluded_bins.append(binary)" >> hook-exclude.py
+          echo "    for binary in excluded_bins:" >> hook-exclude.py
+          echo "        analysis.binaries.remove(binary)" >> hook-exclude.py
+          echo "    " >> hook-exclude.py
+          echo "    # Exclude all dist-info directories" >> hook-exclude.py
+          echo "    excluded_datas = []" >> hook-exclude.py
+          echo "    for data in analysis.datas:" >> hook-exclude.py
+          echo "        if '.dist-info' in data[0]:" >> hook-exclude.py
+          echo "            excluded_datas.append(data)" >> hook-exclude.py
+          echo "    for data in excluded_datas:" >> hook-exclude.py
+          echo "        analysis.datas.remove(data)" >> hook-exclude.py
+          echo "    " >> hook-exclude.py
+          echo "    return analysis" >> hook-exclude.py
+          
+          # Add hook to PyInstaller arguments
+          PYINSTALLER_ARGS="$PYINSTALLER_ARGS --additional-hooks-dir=."
+          
+          # Build executable with PyInstaller with all necessary libraries embedded
+          pyinstaller $PYINSTALLER_ARGS app/YoutubetoPremiere.py
+          
+          # Run quick checks on macOS output
+          echo "Checking for any remaining TCL/TK files..."
+          TCL_COUNT=$(find dist/YoutubetoPremiere -name "*tcl*" -o -name "*tk*" | wc -l)
+          if [ "$TCL_COUNT" -gt 0 ]; then
+            echo "Warning: Found some TCL/TK files that were not excluded: $TCL_COUNT files"
+          else
+            echo "No TCL/TK files found in the output - good!"
+          fi
+          
+          # Check for dist-info directories
+          DIST_INFO_COUNT=$(find dist/YoutubetoPremiere -name "*.dist-info" -type d | wc -l)
+          if [ "$DIST_INFO_COUNT" -gt 0 ]; then
+            echo "Warning: Found some .dist-info directories that were not excluded: $DIST_INFO_COUNT directories"
+          else
+            echo "No .dist-info directories found in the output - good!"
+          fi
           
           # Create version file for installer
           New-Item -Path "dist\YoutubetoPremiere" -ItemType Directory -Force -ErrorAction SilentlyContinue
@@ -366,7 +452,7 @@ jobs:
           mkdir -p build
           
           # Build arguments for PyInstaller
-          PYINSTALLER_ARGS="--name YoutubetoPremiere --onedir --debug=all -y --clean --distpath ./dist --workpath ./build/YoutubetoPremiere-work --noupx --noconfirm"
+          PYINSTALLER_ARGS="--name YoutubetoPremiere --onedir --debug=all -y --clean --distpath ./dist --workpath ./build/YoutubetoPremiere-work --noupx --noconfirm --strip"
           
           # Add hidden imports
           for import in "${HIDDEN_IMPORTS[@]}"
@@ -380,30 +466,82 @@ jobs:
             PYINSTALLER_ARGS="$PYINSTALLER_ARGS --collect-all $pkg"
           done
           
-          # Add exclude modules to avoid tcl/tk issues
-          PYINSTALLER_ARGS="$PYINSTALLER_ARGS --exclude-module tcl --exclude-module tk --exclude-module Tkinter --exclude-module _tkinter --exclude-module tkinter"
+          # Add exclude modules to avoid tcl/tk issues and reduce size
+          PYINSTALLER_ARGS="$PYINSTALLER_ARGS --exclude-module tcl --exclude-module tk --exclude-module Tkinter --exclude-module _tkinter --exclude-module tkinter --exclude-module distutils --exclude-module setuptools --exclude-module unittest --exclude-module pkg_resources --exclude-module lib2to3 --exclude-module pydoc_data --exclude-module ensurepip --exclude-module idlelib --exclude-module turtledemo"
             
           # Add the main script
           PYINSTALLER_ARGS="$PYINSTALLER_ARGS app/YoutubetoPremiere.py"
           
-          # Display the command for logging purposes
-          echo "Running PyInstaller with the following command:"
+          # Execute PyInstaller command
+          echo "Running PyInstaller with the following arguments:"
           echo "pyinstaller $PYINSTALLER_ARGS"
-            
-          # Execute PyInstaller
-          pyinstaller $PYINSTALLER_ARGS
+          
+          # Create a PyInstaller hook for macOS to exclude unwanted files
+          echo "Creating PyInstaller hook to exclude unwanted files..."
+          
+          # Create hook file line by line
+          echo "def exclude_tcl_tk(analysis):" > hook-exclude.py
+          echo "    # Exclude all tcl/tk related files" >> hook-exclude.py
+          echo "    excluded_bins = []" >> hook-exclude.py
+          echo "    for binary in analysis.binaries:" >> hook-exclude.py
+          echo "        if any(x in binary[0].lower() for x in ['tcl', 'tk', '_tkinter']):" >> hook-exclude.py
+          echo "            excluded_bins.append(binary)" >> hook-exclude.py
+          echo "    for binary in excluded_bins:" >> hook-exclude.py
+          echo "        analysis.binaries.remove(binary)" >> hook-exclude.py
+          echo "    " >> hook-exclude.py
+          echo "    # Exclude all dist-info directories" >> hook-exclude.py
+          echo "    excluded_datas = []" >> hook-exclude.py
+          echo "    for data in analysis.datas:" >> hook-exclude.py
+          echo "        if '.dist-info' in data[0]:" >> hook-exclude.py
+          echo "            excluded_datas.append(data)" >> hook-exclude.py
+          echo "    for data in excluded_datas:" >> hook-exclude.py
+          echo "        analysis.datas.remove(data)" >> hook-exclude.py
+          echo "    " >> hook-exclude.py
+          echo "    return analysis" >> hook-exclude.py
+          
+          # Add hook to PyInstaller arguments
+          PYINSTALLER_ARGS="$PYINSTALLER_ARGS --additional-hooks-dir=."
+          
+          # Build executable with PyInstaller with all necessary libraries embedded
+          pyinstaller $PYINSTALLER_ARGS app/YoutubetoPremiere.py
           
           # Clean up any TCL/TK files that might have been included despite exclusion
-          echo "Cleaning up any remaining TCL/TK files..."
-          if [ -d "dist/YoutubetoPremiere/_internal/_tcl_data" ]; then
-            rm -rf "dist/YoutubetoPremiere/_internal/_tcl_data"
-            echo "Removed _tcl_data directory"
+          echo "Cleaning up any remaining TCL/TK files and unused metadata..."
+          
+          # Force remove specific problematic directories
+          if [ -d "dist/YoutubetoPremiere/_internal/tcl8" ]; then
+            echo "Force removing tcl8 directory"
+            rm -rf "dist/YoutubetoPremiere/_internal/tcl8"
           fi
-          if [ -d "dist/YoutubetoPremiere/_internal/_tk_data" ]; then
-            rm -rf "dist/YoutubetoPremiere/_internal/_tk_data"
-            echo "Removed _tk_data directory"
-          fi
-            
+          
+          # Find and remove TCL/TK files and directories
+          echo "Removing all TCL/TK related files and directories"
+          find dist/YoutubetoPremiere/_internal -type d -name "tcl*" -print0 | xargs -0 rm -rf 2>/dev/null || true
+          find dist/YoutubetoPremiere/_internal -type d -name "tk*" -print0 | xargs -0 rm -rf 2>/dev/null || true
+          find dist/YoutubetoPremiere/_internal -type f -name "*.tcl" -delete 2>/dev/null || true
+          find dist/YoutubetoPremiere/_internal -type f -name "*.tk" -delete 2>/dev/null || true
+          
+          # More aggressive approach for dist-info directories
+          echo "Aggressive cleanup of .dist-info directories..."
+          find dist/YoutubetoPremiere/_internal -type d -name "*.dist-info" -print0 | xargs -0 rm -rf 2>/dev/null || true
+          
+          # Try the direct approach as well
+          for dir in $(find dist/YoutubetoPremiere/_internal -type d -name "*.dist-info" -print); do
+            echo "Directly removing $dir"
+            rm -rf "$dir"
+          done
+          
+          # Remove other unnecessary directories
+          echo "Removing other unnecessary directories..."
+          for pattern in "setuptools*" "pip*" "wheel*" "__pycache__" "tcl*" "tk*"; do
+            echo "Removing directories matching pattern: $pattern"
+            find dist/YoutubetoPremiere/_internal -type d -name "$pattern" -print0 | xargs -0 rm -rf 2>/dev/null || true
+          done
+          
+          # Show directory sizes for debugging
+          echo "Directory sizes after cleanup:"
+          du -h dist/YoutubetoPremiere/_internal | sort -h
+          
           # Debug - Check PyInstaller output directory after building
           echo "Checking PyInstaller output directories after build:"
           ls -la dist/ || echo "dist directory not found"
