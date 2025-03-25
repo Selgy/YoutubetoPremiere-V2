@@ -303,28 +303,88 @@ jobs:
             codesign --force --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/YoutubetoPremiere.app"
             codesign --force --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/YoutubetoPremiere"
             
-            # Create DMG
-            mkdir -p dist/dmg-contents
-            cp -r dist/YoutubetoPremiere.app dist/dmg-contents/
-            cp scripts/fix-macos-permissions.sh dist/dmg-contents/
+            # Create package structure
+            mkdir -p dist/pkg-contents/Applications
+            cp -r dist/YoutubetoPremiere.app dist/pkg-contents/Applications/
             
-            hdiutil create -volname "YoutubetoPremiere-${{ needs.check-version.outputs.version }}" \
-              -srcfolder dist/dmg-contents \
-              -ov -format UDZO \
-              "dist/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.dmg"
+            # Create package info
+            cat > dist/pkg-contents/package-info.plist << EOF
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+                <key>CFBundleGetInfoString</key>
+                <string>YoutubetoPremiere ${{ needs.check-version.outputs.version }}</string>
+                <key>CFBundleIdentifier</key>
+                <string>com.mickael.YoutubetoPremiere</string>
+                <key>CFBundleName</key>
+                <string>YoutubetoPremiere</string>
+                <key>CFBundlePackageType</key>
+                <string>APPL</string>
+                <key>CFBundleShortVersionString</key>
+                <string>${{ needs.check-version.outputs.version }}</string>
+                <key>CFBundleVersion</key>
+                <string>${{ needs.check-version.outputs.version }}</string>
+                <key>LSMinimumSystemVersion</key>
+                <string>10.13.0</string>
+                <key>LSApplicationCategoryType</key>
+                <string>public.app-category.video</string>
+            </dict>
+            </plist>
+            EOF
             
-            # Sign DMG
-            codesign --force --sign "$SIGNATURE_ID" "dist/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.dmg"
+            # Create distribution.xml
+            cat > dist/distribution.xml << EOF
+            <?xml version="1.0" encoding="utf-8"?>
+            <installer-script minSpecVersion="1.000000" authoringTool="com.apple.PackageMaker" authoringToolVersion="3.0.6" authoringToolBuild="179">
+                <title>YoutubetoPremiere</title>
+                <options customize="never" allow-external-scripts="no"/>
+                <domains enable_localSystem="true"/>
+                <installation-check script="pm_install_check();"/>
+                <script>
+                    function pm_install_check() {
+                        if(!(system.compareVersions(system.version.ProductVersion,'10.13.0') >= 0)) {
+                            my.result.message = 'YoutubetoPremiere requires Mac OS X 10.13.0 or later.';
+                            my.result.type = 'Fatal';
+                            return false;
+                        }
+                        return true;
+                    }
+                </script>
+                <choices-outline>
+                    <line choice="com.mickael.YoutubetoPremiere.choice"/>
+                </choices-outline>
+                <choice id="com.mickael.YoutubetoPremiere.choice" title="YoutubetoPremiere">
+                    <pkg-ref id="com.mickael.YoutubetoPremiere.pkg"/>
+                </choice>
+                <pkg-ref id="com.mickael.YoutubetoPremiere.pkg" auth="Root">YoutubetoPremiere.pkg</pkg-ref>
+            </installer-script>
+            EOF
             
-            # Notarize
-            xcrun notarytool submit "dist/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.dmg" \
+            # Create the package
+            pkgbuild --root dist/pkg-contents \
+                    --identifier com.mickael.YoutubetoPremiere \
+                    --version ${{ needs.check-version.outputs.version }} \
+                    --install-location / \
+                    --sign "$SIGNATURE_ID" \
+                    dist/YoutubetoPremiere.pkg
+            
+            # Create the installer package
+            productbuild --distribution dist/distribution.xml \
+                        --package-path dist \
+                        --version ${{ needs.check-version.outputs.version }} \
+                        --sign "$SIGNATURE_ID" \
+                        "dist/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.pkg"
+            
+            # Notarize the package
+            xcrun notarytool submit "dist/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.pkg" \
               --apple-id "$APPLE_ID" \
               --password "$APPLE_APP_PASSWORD" \
               --team-id "$APPLE_TEAM_ID" \
               --wait
             
-            # Staple
-            xcrun stapler staple "dist/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.dmg"
+            # Staple the package
+            xcrun stapler staple "dist/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.pkg"
           else
             echo "No signing identity found, skipping signing and notarization"
           fi
@@ -392,7 +452,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: installer-macos
-          path: dist/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.dmg
+          path: dist/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.pkg
           retention-days: 90
 
       - name: Create Release
@@ -401,7 +461,7 @@ jobs:
         with:
           files: |
             artifacts/installer-windows/YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe
-            artifacts/installer-macos/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.dmg
+            artifacts/installer-macos/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.pkg
           name: YoutubetoPremiere v${{ needs.check-version.outputs.version }}
           tag_name: v${{ needs.check-version.outputs.version }}
           generate_release_notes: true
