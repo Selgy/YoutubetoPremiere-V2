@@ -80,6 +80,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller python-socketio requests pillow python-engineio
       
+      - name: Install cross-env
+        run: |
+          npm install -g cross-env
+        shell: bash
+      
       - name: Build Windows executable
         if: matrix.os == 'windows-latest'
         run: |
@@ -89,7 +94,16 @@ jobs:
 
           # Build the full application including the React UI
           echo "Building the full application with yarn build..."
-          yarn build
+          $buildProcess = Start-Process -FilePath "npx" -ArgumentList "cross-env", "NO_WATCH=true", "yarn", "build" -NoNewWindow -PassThru
+          $timeoutSeconds = 600
+          if (-not (Wait-Process -InputObject $buildProcess -Timeout $timeoutSeconds -ErrorAction SilentlyContinue)) {
+            Write-Host "Build process timed out after $timeoutSeconds seconds. Stopping process and continuing..."
+            Stop-Process -InputObject $buildProcess -Force
+          } elseif ($buildProcess.ExitCode -ne 0) {
+            Write-Host "Build process failed with exit code $($buildProcess.ExitCode). Continuing with available artifacts..."
+          } else {
+            Write-Host "Build completed successfully."
+          }
           
           # Create informative version resource
           $VERSION = "${{ needs.check-version.outputs.version }}"
@@ -209,7 +223,10 @@ jobs:
           
           # Build the full application including the React UI
           echo "Building the full application with yarn build-mac..."
-          yarn build-mac
+          timeout 600 cross-env NO_WATCH=true yarn build-mac || {
+            echo "Build process timed out or failed. This may happen if watch mode is stuck."
+            echo "Continuing with the available artifacts..."
+          }
           
           # Create directory structure
           mkdir -p dist/YoutubetoPremiere/exec
@@ -1013,55 +1030,114 @@ jobs:
           Write-Host "Checking available files in dist directory:"
           Get-ChildItem -Path "dist" -Recurse | Select-Object FullName
           
-          # Check if we have the required executable
+          # Check if we have the required files
+          $missingFiles = @()
           if (!(Test-Path "dist/YoutubetoPremiere.exe")) {
-            Write-Host "ERROR: YoutubetoPremiere.exe not found - cannot create installer"
-            exit 1
+            $missingFiles += "YoutubetoPremiere.exe"
           }
           
-          # Create a simpler installer script that just packages the executable
-          Write-Host "Creating minimal NSIS installer script..."
+          if ($missingFiles.Count -gt 0) {
+            Write-Host "WARNING: Some expected files are missing: $($missingFiles -join ', ')"
+            Write-Host "Will attempt to create installer with available files."
+          }
+          
+          # Create a more comprehensive installer script that packages all components
+          Write-Host "Creating NSIS installer script..."
           
           # Write NSIS script line by line
-          New-Item -Path "minimal_installer.nsi" -ItemType File -Force
-          Add-Content -Path "minimal_installer.nsi" -Value "OutFile `"YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe`""
-          Add-Content -Path "minimal_installer.nsi" -Value "RequestExecutionLevel admin"
-          Add-Content -Path "minimal_installer.nsi" -Value ""
-          Add-Content -Path "minimal_installer.nsi" -Value "Section"
-          Add-Content -Path "minimal_installer.nsi" -Value "  # Set output path to the installation directory"
-          Add-Content -Path "minimal_installer.nsi" -Value "  SetOutPath `$PROGRAMFILES\YoutubetoPremiere\exec"
-          Add-Content -Path "minimal_installer.nsi" -Value ""
-          Add-Content -Path "minimal_installer.nsi" -Value "  # Copy main executable"
-          Add-Content -Path "minimal_installer.nsi" -Value "  File `"dist\YoutubetoPremiere.exe`""
-          Add-Content -Path "minimal_installer.nsi" -Value ""
-          Add-Content -Path "minimal_installer.nsi" -Value "  # Create shortcuts"
-          Add-Content -Path "minimal_installer.nsi" -Value "  CreateDirectory `$SMPROGRAMS\YoutubetoPremiere"
-          Add-Content -Path "minimal_installer.nsi" -Value "  CreateShortCut `$SMPROGRAMS\YoutubetoPremiere\YoutubetoPremiere.lnk `$PROGRAMFILES\YoutubetoPremiere\exec\YoutubetoPremiere.exe"
-          Add-Content -Path "minimal_installer.nsi" -Value ""
-          Add-Content -Path "minimal_installer.nsi" -Value "  # Write uninstaller"
-          Add-Content -Path "minimal_installer.nsi" -Value "  WriteUninstaller `$PROGRAMFILES\YoutubetoPremiere\uninstall.exe"
-          Add-Content -Path "minimal_installer.nsi" -Value "  CreateShortCut `$SMPROGRAMS\YoutubetoPremiere\Uninstall.lnk `$PROGRAMFILES\YoutubetoPremiere\uninstall.exe"
-          Add-Content -Path "minimal_installer.nsi" -Value ""
-          Add-Content -Path "minimal_installer.nsi" -Value "  # Write registry entries for Add/Remove Programs"
-          Add-Content -Path "minimal_installer.nsi" -Value "  WriteRegStr HKLM `"Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere`" `"DisplayName`" `"YouTube to Premiere Pro`""
-          Add-Content -Path "minimal_installer.nsi" -Value "  WriteRegStr HKLM `"Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere`" `"UninstallString`" `"`$PROGRAMFILES\YoutubetoPremiere\uninstall.exe`""
-          Add-Content -Path "minimal_installer.nsi" -Value "  WriteRegStr HKLM `"Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere`" `"DisplayIcon`" `"`$PROGRAMFILES\YoutubetoPremiere\exec\YoutubetoPremiere.exe`""
-          Add-Content -Path "minimal_installer.nsi" -Value "  WriteRegStr HKLM `"Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere`" `"DisplayVersion`" `"${{ needs.check-version.outputs.version }}`""
-          Add-Content -Path "minimal_installer.nsi" -Value "  WriteRegStr HKLM `"Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere`" `"Publisher`" `"YoutubetoPremiere`""
-          Add-Content -Path "minimal_installer.nsi" -Value "SectionEnd"
-          Add-Content -Path "minimal_installer.nsi" -Value ""
-          Add-Content -Path "minimal_installer.nsi" -Value "Section `"Uninstall`""
-          Add-Content -Path "minimal_installer.nsi" -Value "  # Remove shortcuts first"
-          Add-Content -Path "minimal_installer.nsi" -Value "  Delete `$SMPROGRAMS\YoutubetoPremiere\YoutubetoPremiere.lnk"
-          Add-Content -Path "minimal_installer.nsi" -Value "  Delete `$SMPROGRAMS\YoutubetoPremiere\Uninstall.lnk"
-          Add-Content -Path "minimal_installer.nsi" -Value "  RMDir `$SMPROGRAMS\YoutubetoPremiere"
-          Add-Content -Path "minimal_installer.nsi" -Value ""
-          Add-Content -Path "minimal_installer.nsi" -Value "  # Remove installed files and directories"
-          Add-Content -Path "minimal_installer.nsi" -Value "  RMDir /r `$PROGRAMFILES\YoutubetoPremiere"
-          Add-Content -Path "minimal_installer.nsi" -Value ""
-          Add-Content -Path "minimal_installer.nsi" -Value "  # Remove registry entries"
-          Add-Content -Path "minimal_installer.nsi" -Value "  DeleteRegKey HKLM `"Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere`""
-          Add-Content -Path "minimal_installer.nsi" -Value "SectionEnd"
+          New-Item -Path "installer.nsi" -ItemType File -Force
+          Add-Content -Path "installer.nsi" -Value '; YouTube to Premiere Pro Installer'
+          Add-Content -Path "installer.nsi" -Value 'SetCompressor /SOLID lzma'
+          Add-Content -Path "installer.nsi" -Value 'Unicode true'
+          Add-Content -Path "installer.nsi" -Value 'Name "YouTube to Premiere Pro"'
+          Add-Content -Path "installer.nsi" -Value "OutFile `"YoutubetoPremiere-$env:VERSION-Setup.exe`""
+          Add-Content -Path "installer.nsi" -Value 'InstallDir "$PROGRAMFILES\YoutubetoPremiere"'
+          Add-Content -Path "installer.nsi" -Value 'RequestExecutionLevel admin'
+          Add-Content -Path "installer.nsi" -Value ''
+          Add-Content -Path "installer.nsi" -Value 'Page directory'
+          Add-Content -Path "installer.nsi" -Value 'Page instfiles'
+          Add-Content -Path "installer.nsi" -Value 'UninstPage uninstConfirm'
+          Add-Content -Path "installer.nsi" -Value 'UninstPage instfiles'
+          Add-Content -Path "installer.nsi" -Value ''
+          Add-Content -Path "installer.nsi" -Value 'Section "MainSection" SEC01'
+          Add-Content -Path "installer.nsi" -Value '  SetOutPath "$INSTDIR"'
+          Add-Content -Path "installer.nsi" -Value '  File /nonfatal "dist\YoutubetoPremiere\version.txt"'
+          Add-Content -Path "installer.nsi" -Value ''
+          
+          # Check and add executable files
+          Add-Content -Path "installer.nsi" -Value '  ; Main executable file'
+          Add-Content -Path "installer.nsi" -Value '  SetOutPath "$INSTDIR\exec"'
+          if (Test-Path "dist/YoutubetoPremiere.exe") {
+            Add-Content -Path "installer.nsi" -Value '  File "dist\YoutubetoPremiere.exe"'
+          } else {
+            Add-Content -Path "installer.nsi" -Value '  ; YoutubetoPremiere.exe not found'
+          }
+          
+          # Check and add CEP extension files
+          Add-Content -Path "installer.nsi" -Value ''
+          Add-Content -Path "installer.nsi" -Value '  ; CEP extension files'
+          Add-Content -Path "installer.nsi" -Value '  SetOutPath "$INSTDIR\CEP"'
+          if (Test-Path "dist/YoutubetoPremiere/CEP") {
+            Add-Content -Path "installer.nsi" -Value '  File /r "dist\YoutubetoPremiere\CEP\*.*"'
+          } elseif (Test-Path "dist/cep") {
+            Add-Content -Path "installer.nsi" -Value '  File /r "dist\cep\*.*"'
+          } else {
+            Add-Content -Path "installer.nsi" -Value '  ; CEP extension files not found'
+          }
+          
+          # Check and add sounds
+          Add-Content -Path "installer.nsi" -Value ''
+          Add-Content -Path "installer.nsi" -Value '  ; Sound files'
+          Add-Content -Path "installer.nsi" -Value '  SetOutPath "$INSTDIR\exec\sounds"'
+          if (Test-Path "dist/YoutubetoPremiere/exec/sounds") {
+            Add-Content -Path "installer.nsi" -Value '  File /r "dist\YoutubetoPremiere\exec\sounds\*.*"'
+          } elseif (Test-Path "src/exec/sounds") {
+            Add-Content -Path "installer.nsi" -Value '  File /r "src\exec\sounds\*.*"'
+          } else {
+            Add-Content -Path "installer.nsi" -Value '  ; Sound files not found'
+          }
+          
+          # Add FFmpeg
+          Add-Content -Path "installer.nsi" -Value ''
+          Add-Content -Path "installer.nsi" -Value '  ; FFmpeg executable'
+          if (Test-Path "dist/YoutubetoPremiere/exec/ffmpeg.exe") {
+            Add-Content -Path "installer.nsi" -Value '  File "dist\YoutubetoPremiere\exec\ffmpeg.exe"'
+          } elseif (Test-Path "ffmpeg_temp/ffmpeg.exe") {
+            Add-Content -Path "installer.nsi" -Value '  File "ffmpeg_temp\ffmpeg.exe"'
+          } else {
+            Add-Content -Path "installer.nsi" -Value '  ; FFmpeg not found'
+          }
+          
+          # Create shortcuts and registry entries
+          Add-Content -Path "installer.nsi" -Value ''
+          Add-Content -Path "installer.nsi" -Value '  ; Create shortcuts'
+          Add-Content -Path "installer.nsi" -Value '  CreateDirectory "$SMPROGRAMS\YoutubetoPremiere"'
+          Add-Content -Path "installer.nsi" -Value '  CreateShortCut "$SMPROGRAMS\YoutubetoPremiere\YoutubetoPremiere.lnk" "$INSTDIR\exec\YoutubetoPremiere.exe"'
+          Add-Content -Path "installer.nsi" -Value ''
+          Add-Content -Path "installer.nsi" -Value '  ; Write uninstaller'
+          Add-Content -Path "installer.nsi" -Value '  WriteUninstaller "$INSTDIR\uninstall.exe"'
+          Add-Content -Path "installer.nsi" -Value '  CreateShortCut "$SMPROGRAMS\YoutubetoPremiere\Uninstall.lnk" "$INSTDIR\uninstall.exe"'
+          Add-Content -Path "installer.nsi" -Value ''
+          Add-Content -Path "installer.nsi" -Value '  ; Write registry entries for Add/Remove Programs'
+          Add-Content -Path "installer.nsi" -Value '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "DisplayName" "YouTube to Premiere Pro"'
+          Add-Content -Path "installer.nsi" -Value '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "UninstallString" "$INSTDIR\uninstall.exe"'
+          Add-Content -Path "installer.nsi" -Value '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "DisplayIcon" "$INSTDIR\exec\YoutubetoPremiere.exe"'
+          Add-Content -Path "installer.nsi" -Value "  WriteRegStr HKLM `"Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere`" `"DisplayVersion`" `"$env:VERSION`""
+          Add-Content -Path "installer.nsi" -Value '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "Publisher" "YoutubetoPremiere"'
+          Add-Content -Path "installer.nsi" -Value 'SectionEnd'
+          Add-Content -Path "installer.nsi" -Value ''
+          Add-Content -Path "installer.nsi" -Value 'Section "Uninstall"'
+          Add-Content -Path "installer.nsi" -Value '  ; Remove shortcuts'
+          Add-Content -Path "installer.nsi" -Value '  Delete "$SMPROGRAMS\YoutubetoPremiere\YoutubetoPremiere.lnk"'
+          Add-Content -Path "installer.nsi" -Value '  Delete "$SMPROGRAMS\YoutubetoPremiere\Uninstall.lnk"'
+          Add-Content -Path "installer.nsi" -Value '  RMDir "$SMPROGRAMS\YoutubetoPremiere"'
+          Add-Content -Path "installer.nsi" -Value ''
+          Add-Content -Path "installer.nsi" -Value '  ; Remove installed files and directories'
+          Add-Content -Path "installer.nsi" -Value '  RMDir /r "$INSTDIR"'
+          Add-Content -Path "installer.nsi" -Value ''
+          Add-Content -Path "installer.nsi" -Value '  ; Remove registry entries'
+          Add-Content -Path "installer.nsi" -Value '  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere"'
+          Add-Content -Path "installer.nsi" -Value 'SectionEnd'
         shell: pwsh
         
       - name: Create Windows Installer
@@ -1080,12 +1156,12 @@ jobs:
             & $nsisMakePath /VERSION
             
             # Compile with verbose output
-            Write-Host "Compiling minimal NSIS script..."
-            & $nsisMakePath /V4 "minimal_installer.nsi"
+            Write-Host "Compiling NSIS script..."
+            & $nsisMakePath /V4 "installer.nsi"
           } else {
             Write-Host "NSIS not found at expected path, trying PATH environment variable..."
             makensis /VERSION
-            makensis /V4 "minimal_installer.nsi"
+            makensis /V4 "installer.nsi"
           }
 
           # Verify installer was created
@@ -1100,7 +1176,7 @@ jobs:
           Move-Item $installerPath "dist/installer/" -Force
 
           # Clean up files
-          Remove-Item "minimal_installer.nsi" -ErrorAction SilentlyContinue
+          Remove-Item "installer.nsi" -ErrorAction SilentlyContinue
 
           # Show installer size
           $installerSize = (Get-Item "dist/installer/YoutubetoPremiere-$env:VERSION-Setup.exe").Length

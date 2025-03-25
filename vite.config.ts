@@ -195,7 +195,7 @@ export default defineConfig({
   },
   build: {
     sourcemap: isPackage ? cepConfig.zxp.sourceMap : cepConfig.build?.sourceMap,
-    watch: {
+    watch: process.env.NO_WATCH === 'true' ? null : {
       include: "src/jsx/**",
     },
     rollupOptions: {
