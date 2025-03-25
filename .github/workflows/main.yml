@@ -160,64 +160,6 @@ jobs:
             --hidden-import engineio.async_drivers.threading `
             --version-file version.txt `
               app/YoutubetoPremiere.py
-          
-          # Download FFmpeg for Windows
-          Write-Host "Downloading FFmpeg for Windows..."
-          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile "ffmpeg.zip"
-          Expand-Archive -Path "ffmpeg.zip" -DestinationPath "ffmpeg_temp"
-          
-          # Create proper directory structure for CEP extension
-          $cepPath = "dist/YoutubetoPremiere/CEP"
-          $execPath = "dist/YoutubetoPremiere/exec"
-          
-          # Create directory structure
-          New-Item -Path $cepPath -ItemType Directory -Force
-          New-Item -Path $execPath -ItemType Directory -Force
-          
-          # Copy from existing CEP build directory (from yarn build) to the distribution directory
-          Write-Host "Copying built CEP extension files to distribution directory..."
-          Copy-Item -Path "dist/cep/*" -Destination $cepPath -Recurse -Force
-          
-          # Copy main executable to exec directory
-          Copy-Item -Path "dist/YoutubetoPremiere.exe" -Destination $execPath -Force
-          
-          # Copy FFmpeg to exec directory
-          $ffmpegExe = Get-ChildItem -Path "ffmpeg_temp" -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1
-          if ($ffmpegExe) {
-            Copy-Item -Path $ffmpegExe.FullName -Destination "$execPath/ffmpeg.exe" -Force
-            Write-Host "FFmpeg copied to $execPath/ffmpeg.exe"
-          } else {
-            Write-Error "Could not find ffmpeg.exe in the downloaded package"
-          }
-          
-          # Copy Python files
-          New-Item -Path "dist/YoutubetoPremiere/app" -ItemType Directory -Force
-          Copy-Item -Path "app/*.py" -Destination "dist/YoutubetoPremiere/app/" -Force
-          
-          # Create sounds directory
-          New-Item -Path "dist/YoutubetoPremiere/sounds" -ItemType Directory -Force
-          New-Item -Path "$execPath/sounds" -ItemType Directory -Force
-          
-          # Copy sound files if they exist
-          if (Test-Path "app/sounds/*") {
-            Copy-Item -Path "app/sounds/*" -Destination "dist/YoutubetoPremiere/sounds/" -Force
-            Copy-Item -Path "app/sounds/*" -Destination "$execPath/sounds/" -Force
-            Write-Host "Sound files copied to both locations"
-          }
-          
-          # Copy sound files from src/exec/sounds to ensure all sounds are included
-          if (Test-Path "src/exec/sounds/*") {
-            Copy-Item -Path "src/exec/sounds/*" -Destination "$execPath/sounds/" -Force
-            Write-Host "Sound files from src/exec/sounds copied to exec directory"
-          }
-          
-          # Create version file for installer
-          $versionContent = "${{ needs.check-version.outputs.version }}"
-          Set-Content -Path "dist/YoutubetoPremiere/version.txt" -Value $versionContent
-
-          # Show directory structure for debugging
-          Write-Host "Final distribution directory structure:"
-          Get-ChildItem -Path "dist/YoutubetoPremiere" -Recurse | Select-Object FullName
         shell: pwsh
 
       - name: Build macOS executable
@@ -230,9 +172,13 @@ jobs:
           # Install cross-env globally to ensure it's available
           npm install -g cross-env
           
+          # Install GNU coreutils to get gtimeout command
+          echo "Installing GNU coreutils to get gtimeout command..."
+          brew install coreutils || echo "coreutils already installed, continuing..."
+          
           # Build the full application with yarn build-mac FIRST to create CEP extension files
           echo "Building the full application with yarn build-mac to create CEP extension..."
-          timeout 600 npx cross-env NO_WATCH=true yarn build-mac || {
+          gtimeout 600 npx cross-env NO_WATCH=true yarn build-mac || {
             echo "Build process timed out or failed. This may happen if watch mode is stuck."
             echo "Continuing with the available artifacts..."
           }
@@ -241,6 +187,12 @@ jobs:
           echo "Checking CEP extension files after build:"
           ls -la dist/cep/ || echo "dist/cep not found!"
           find dist/cep -type f | sort || echo "No files found in dist/cep"
+          
+          # Check if dist/cep folder exists and contains files
+          if [ ! -d "dist/cep" ] || [ ! "$(ls -A dist/cep 2>/dev/null)" ]; then
+            echo "Warning: CEP build did not produce expected files. The 'yarn build-mac' command should create a dist/cep directory."
+            echo "Will continue with build process but the extension might not function correctly."
+          fi
           
           # Back up CEP extension files to ensure they don't get lost during subsequent steps
           echo "Backing up CEP extension files..."
@@ -372,8 +324,8 @@ jobs:
           
           # Restore the backed up CEP extension files if they were cleared
           echo "Checking if we need to restore CEP files from backup..."
-          if [ ! -d "dist/cep" ] || [ ! "$(ls -A dist/cep 2>/dev/null | grep -v -E '(exec|sounds)')" ]; then
-            echo "CEP files missing or only contain exec/sounds. Restoring from backup..."
+          if [ ! -d "dist/cep" ] || [ ! "$(ls -A dist/cep 2>/dev/null)" ]; then
+            echo "CEP files missing or empty. Restoring from backup..."
             if [ -d "dist/cep-backup" ] && [ "$(ls -A dist/cep-backup 2>/dev/null)" ]; then
               mkdir -p dist/cep
               cp -R dist/cep-backup/* dist/cep/ || echo "Failed to restore CEP files from backup"
@@ -383,6 +335,9 @@ jobs:
               echo "WARNING: No backup CEP files found to restore"
             fi
           fi
+          
+          # Ensure YoutubetoPremiere/CEP directory exists
+          mkdir -p dist/YoutubetoPremiere/CEP
           
           # Copy built CEP extension files to YoutubetoPremiere/CEP directory
           echo "Copying CEP extension files to YoutubetoPremiere/CEP directory..."
@@ -1142,7 +1097,7 @@ jobs:
           Add-Content -Path "installer.nsi" -Value '  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere"'
           Add-Content -Path "installer.nsi" -Value 'SectionEnd'
         shell: pwsh
-        
+
       - name: Create Windows Installer
         if: matrix.os == 'windows-latest'
         env:
