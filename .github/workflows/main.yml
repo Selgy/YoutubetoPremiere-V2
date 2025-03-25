@@ -262,11 +262,18 @@ jobs:
         shell: bash
         
       - name: Import Certificate
-        if: matrix.os == 'macos-13' && env.APPLE_ID != ''
+        if: matrix.os == 'macos-13'
         env:
           SIGNING_CERTIFICATE: ${{ secrets.SIGNING_CERTIFICATE }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
         run: |
+          # Check if we have the Apple ID
+          if [ -z "$APPLE_ID" ]; then
+            echo "No Apple ID found, skipping signing"
+            exit 0
+          fi
+          
           CERTIFICATE_PATH="$RUNNER_TEMP/certificate.p12"
           KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
           
@@ -281,10 +288,13 @@ jobs:
           security import "$CERTIFICATE_PATH" -P "$KEYCHAIN_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          
+          # Signal to subsequent steps that certificate is imported
+          echo "CERTIFICATE_IMPORTED=true" >> $GITHUB_ENV
         shell: bash
           
       - name: Create Entitlements File
-        if: matrix.os == 'macos-13' && env.APPLE_ID != ''
+        if: matrix.os == 'macos-13' && env.CERTIFICATE_IMPORTED == 'true'
         run: |
           cat > entitlements.plist << 'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
@@ -305,7 +315,9 @@ jobs:
         shell: bash
       
       - name: Sign macOS App
-        if: matrix.os == 'macos-13' && env.APPLE_ID != ''
+        if: matrix.os == 'macos-13' && env.CERTIFICATE_IMPORTED == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
         run: |
           # Sign the app
           SIGNATURE_ID=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F '"' '{print $2}')
@@ -323,9 +335,10 @@ jobs:
         shell: bash
       
       - name: Create macOS Package
-        if: matrix.os == 'macos-13' && env.APPLE_ID != ''
+        if: matrix.os == 'macos-13' && env.CERTIFICATE_IMPORTED == 'true'
         env:
           VERSION: ${{ needs.check-version.outputs.version }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
         run: |
           # Check if we have a signature ID from previous step
           if [ -f "dist/signature.info" ]; then
@@ -343,13 +356,16 @@ jobs:
             
             # Remove signature info file
             rm -f dist/signature.info
+            
+            # Signal to subsequent steps that pkg was created
+            echo "PKG_CREATED=true" >> $GITHUB_ENV
           else
             echo "No signature ID found, skipping package creation"
           fi
         shell: bash
       
       - name: Notarize and Staple macOS Package
-        if: matrix.os == 'macos-13' && env.APPLE_ID != ''
+        if: matrix.os == 'macos-13' && env.PKG_CREATED == 'true'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
@@ -432,7 +448,7 @@ jobs:
           retention-days: 90
 
       - name: Upload macOS installer
-        if: matrix.os == 'macos-13' && env.APPLE_ID != ''
+        if: matrix.os == 'macos-13' && env.PKG_CREATED == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: installer-macos
