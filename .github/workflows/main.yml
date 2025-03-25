@@ -78,7 +78,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller python-socketio requests pillow python-engineio
+          pip install -r requirements.txt
       
       - name: Install cross-env
         run: |
@@ -178,16 +178,53 @@ jobs:
             exit 1
           }
 
+          # Get list of module imports from requirements.txt
+          $hiddenImports = @(
+            "engineio.async_drivers.threading",
+            "socketio",
+            "requests",
+            "pillow",
+            "werkzeug",
+            "flask",
+            "flask_cors",
+            "flask_socketio",
+            "python_socketio",
+            "python_engineio",
+            "eventlet",
+            "simple_websocket",
+            "gevent_websocket",
+            "yt_dlp",
+            "psutil",
+            "requests",
+            "tqdm",
+            "curl_cffi"
+          )
+          
+          # Build hidden imports argument string
+          $hiddenImportsArgs = $hiddenImports | ForEach-Object { "--hidden-import $_" }
+          
+          # List of packages to collect all modules from
+          $collectAllArgs = @(
+            "--collect-all engineio",
+            "--collect-all socketio",
+            "--collect-all werkzeug",
+            "--collect-all flask",
+            "--collect-all flask_cors",
+            "--collect-all flask_socketio",
+            "--collect-all yt_dlp",
+            "--collect-all eventlet",
+            "--collect-all curl_cffi"
+          )
+          
+          # Combine all arguments into a string
+          $pyinstallerArgs = (@("--name", "YoutubetoPremiere", "--onefile") + $hiddenImportsArgs + $collectAllArgs + @("--version-file", "version.txt", "app/YoutubetoPremiere.py"))
+          
+          # Display final PyInstaller command for logging
+          Write-Host "Running PyInstaller with the following arguments:"
+          Write-Host "pyinstaller $($pyinstallerArgs -join ' ')"
+          
           # Build executable with PyInstaller with all necessary libraries embedded
-          pyinstaller --name YoutubetoPremiere --onefile `
-            --hidden-import engineio.async_drivers.threading `
-            --hidden-import socketio `
-            --hidden-import requests `
-            --hidden-import pillow `
-            --collect-all engineio `
-            --collect-all socketio `
-            --version-file version.txt `
-              app/YoutubetoPremiere.py
+          & pyinstaller $pyinstallerArgs
           
           # Create version file for installer
           New-Item -Path "dist\YoutubetoPremiere" -ItemType Directory -Force -ErrorAction SilentlyContinue
@@ -276,8 +313,40 @@ jobs:
           cp ffmpeg_temp/ffmpeg dist/cep/exec/
           chmod +x dist/cep/exec/ffmpeg
           
-          # Instead of creating a placeholder, build a real executable with PyInstaller
-          echo "Building proper executable with PyInstaller..."
+          # Create list of hidden imports from requirements.txt
+          echo "Creating list of hidden imports from requirements.txt..."
+          HIDDEN_IMPORTS=(
+            "engineio.async_drivers.threading" 
+            "socketio"
+            "requests"
+            "pillow"
+            "werkzeug"
+            "flask" 
+            "flask_cors" 
+            "flask_socketio" 
+            "python_socketio" 
+            "python_engineio" 
+            "eventlet" 
+            "simple_websocket" 
+            "gevent_websocket" 
+            "yt_dlp" 
+            "psutil" 
+            "tqdm" 
+            "curl_cffi"
+          )
+          
+          # Create collect-all packages list
+          COLLECT_ALL=(
+            "engineio"
+            "socketio"
+            "werkzeug"
+            "flask"
+            "flask_cors"
+            "flask_socketio"
+            "yt_dlp"
+            "eventlet"
+            "curl_cffi"
+          )
           
           # Clean up any existing PyInstaller output
           rm -rf dist/YoutubetoPremiere
@@ -285,17 +354,30 @@ jobs:
           mkdir -p dist
           mkdir -p build
           
-
-          pyinstaller --name YoutubetoPremiere --onedir --debug=all -y --clean \
-            --distpath "./dist" \
-            --workpath "./build/YoutubetoPremiere-work" \
-            --hidden-import engineio.async_drivers.threading \
-            --hidden-import socketio \
-            --hidden-import requests \
-            --hidden-import pillow \
-            --collect-all engineio \
-            --collect-all socketio \
-            app/YoutubetoPremiere.py
+          # Build arguments for PyInstaller
+          PYINSTALLER_ARGS="--name YoutubetoPremiere --onedir --debug=all -y --clean --distpath ./dist --workpath ./build/YoutubetoPremiere-work"
+          
+          # Add hidden imports
+          for import in "${HIDDEN_IMPORTS[@]}"
+          do
+            PYINSTALLER_ARGS="$PYINSTALLER_ARGS --hidden-import $import"
+          done
+          
+          # Add collect-all packages
+          for pkg in "${COLLECT_ALL[@]}"
+          do
+            PYINSTALLER_ARGS="$PYINSTALLER_ARGS --collect-all $pkg"
+          done
+            
+          # Add the main script
+          PYINSTALLER_ARGS="$PYINSTALLER_ARGS app/YoutubetoPremiere.py"
+          
+          # Display the command for logging purposes
+          echo "Running PyInstaller with the following command:"
+          echo "pyinstaller $PYINSTALLER_ARGS"
+            
+          # Execute PyInstaller
+          pyinstaller $PYINSTALLER_ARGS
             
           # Debug - Check PyInstaller output directory after building
           echo "Checking PyInstaller output directories after build:"
