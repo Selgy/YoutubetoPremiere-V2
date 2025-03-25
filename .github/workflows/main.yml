@@ -286,8 +286,7 @@ jobs:
           security list-keychain -d user -s $KEYCHAIN_PATH
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           
-          # Create entitlements.plist
-          cat > entitlements.plist << 'EOT'
+          cat > entitlements.plist << "EOF"
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -302,7 +301,7 @@ jobs:
               <true/>
           </dict>
           </plist>
-          EOT
+          EOF
           
           # Sign the app
           SIGNATURE_ID=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F '"' '{print $2}')
@@ -317,7 +316,7 @@ jobs:
             cp -r dist/YoutubetoPremiere.app dist/pkg-contents/Applications/
             
             # Create package info
-            cat > dist/pkg-contents/package-info.plist << 'EOT'
+            cat > dist/pkg-contents/package-info.plist << "EOF"
             <?xml version="1.0" encoding="UTF-8"?>
             <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
             <plist version="1.0">
@@ -340,14 +339,14 @@ jobs:
                 <string>public.app-category.video</string>
             </dict>
             </plist>
-            EOT
+            EOF
             
             # Replace VERSION placeholders with actual version
             VERSION="${{ needs.check-version.outputs.version }}"
             sed -i '' "s/VERSION/$VERSION/g" dist/pkg-contents/package-info.plist
             
             # Create distribution.xml
-            cat > dist/distribution.xml << 'EOT'
+            cat > dist/distribution.xml << "EOF"
             <?xml version="1.0" encoding="utf-8"?>
             <installer-script minSpecVersion="1.000000" authoringTool="com.apple.PackageMaker" authoringToolVersion="3.0.6" authoringToolBuild="179">
                 <title>YoutubetoPremiere</title>
@@ -372,7 +371,7 @@ jobs:
                 </choice>
                 <pkg-ref id="com.mickael.YoutubetoPremiere.pkg" auth="Root">YoutubetoPremiere.pkg</pkg-ref>
             </installer-script>
-            EOT
+            EOF
             
             # Create the package
             pkgbuild --root dist/pkg-contents \
@@ -473,6 +472,12 @@ jobs:
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
+      - name: Create directories for artifacts
+        run: |
+          mkdir -p dist/windows
+          mkdir -p dist/macos
+        shell: bash
+
       - name: Download Windows installer
         uses: actions/download-artifact@v4
         with:
@@ -496,8 +501,8 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            dist/windows/*
-            dist/macos/*
+            dist/windows/YoutubetoPremiere-${{ needs.check-version.outputs.version }}-Setup.exe
+            dist/macos/YoutubetoPremiere-${{ needs.check-version.outputs.version }}.pkg
           name: YoutubetoPremiere v${{ needs.check-version.outputs.version }}
           tag_name: v${{ needs.check-version.outputs.version }}
           generate_release_notes: true
