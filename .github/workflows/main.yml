@@ -134,8 +134,35 @@ jobs:
             --version-file version.txt `
               app/YoutubetoPremiere.py
           
-          # Create output directory for Python files
-          New-Item -Path "dist/YoutubetoPremiere" -ItemType Directory -Force
+          # Download FFmpeg for Windows
+          Write-Host "Downloading FFmpeg for Windows..."
+          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile "ffmpeg.zip"
+          Expand-Archive -Path "ffmpeg.zip" -DestinationPath "ffmpeg_temp"
+          
+          # Create proper directory structure for CEP extension
+          $cepPath = "dist/YoutubetoPremiere/CEP"
+          $execPath = "dist/YoutubetoPremiere/exec"
+          
+          # Create directory structure
+          New-Item -Path $cepPath -ItemType Directory -Force
+          New-Item -Path $execPath -ItemType Directory -Force
+          
+          # Copy extension files to CEP directory if they exist
+          if (Test-Path "extension") {
+            Copy-Item -Path "extension/*" -Destination $cepPath -Recurse -Force
+          }
+          
+          # Copy main executable to exec directory
+          Copy-Item -Path "dist/YoutubetoPremiere.exe" -Destination $execPath -Force
+          
+          # Copy FFmpeg to exec directory
+          $ffmpegExe = Get-ChildItem -Path "ffmpeg_temp" -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1
+          if ($ffmpegExe) {
+            Copy-Item -Path $ffmpegExe.FullName -Destination "$execPath/ffmpeg.exe" -Force
+            Write-Host "FFmpeg copied to $execPath/ffmpeg.exe"
+          } else {
+            Write-Error "Could not find ffmpeg.exe in the downloaded package"
+          }
           
           # Copy Python files
           if (Test-Path "app/*.py") {
@@ -150,17 +177,35 @@ jobs:
           
           # Create installer directory if it doesn't exist
           New-Item -Path "dist/installer" -ItemType Directory -Force
+          
+          # Create version file for installer
+          $versionFile = "dist/YoutubetoPremiere/version.txt"
+          Set-Content -Path $versionFile -Value $VERSION
+          
+          # Final check of the distribution directory
+          Write-Host "Distribution directory contents:"
+          Get-ChildItem -Path "dist/YoutubetoPremiere" -Recurse | ForEach-Object { Write-Host $_.FullName }
         shell: pwsh
       
       - name: Build macOS executable
         if: matrix.os == 'macos-13'
         run: |
           # Create bundle structure
-            mkdir -p dist/YoutubetoPremiere.app/Contents/MacOS
-            mkdir -p dist/YoutubetoPremiere.app/Contents/Resources/Python
-            mkdir -p dist/YoutubetoPremiere.app/Contents/Resources/sounds
+          mkdir -p dist/YoutubetoPremiere.app/Contents/MacOS
+          mkdir -p dist/YoutubetoPremiere.app/Contents/Resources/Python
+          mkdir -p dist/YoutubetoPremiere.app/Contents/Resources/sounds
+          
+          # Create CEP and exec directories
+          mkdir -p dist/YoutubetoPremiere/CEP
+          mkdir -p dist/YoutubetoPremiere/exec
+          
+          # Download FFmpeg for macOS
+          echo "Downloading FFmpeg for macOS..."
+          curl -L https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip -o ffmpeg.zip
+          unzip -q ffmpeg.zip -d dist/YoutubetoPremiere/exec/
+          chmod +x dist/YoutubetoPremiere/exec/ffmpeg
             
-            # Create Info.plist
+          # Create Info.plist
           cat > dist/YoutubetoPremiere.app/Contents/Info.plist << EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -190,41 +235,57 @@ jobs:
           set -e
           
           # Get the directory where this script is located
-          DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-          PARENT_DIR="$( dirname "$DIR" )"
-          RESOURCES_DIR="$PARENT_DIR/Resources"
-          PYTHON_DIR="$RESOURCES_DIR/Python"
+          DIR="\$( cd "\$( dirname "\${BASH_SOURCE[0]}" )" && pwd )"
+          PARENT_DIR="\$( dirname "\$DIR" )"
+          RESOURCES_DIR="\$PARENT_DIR/Resources"
+          PYTHON_DIR="\$RESOURCES_DIR/Python"
           
           # Find Python 3 on the system
-          PYTHON_BIN=$(which python3)
-          if [ ! -x "$PYTHON_BIN" ]; then
-              PYTHON_BIN=$(which python)
+          PYTHON_BIN=\$(which python3)
+          if [ ! -x "\$PYTHON_BIN" ]; then
+              PYTHON_BIN=\$(which python)
           fi
           
           # Export environment variables
-          export PYTHONPATH="$PYTHON_DIR:$PYTHONPATH"
-          export PATH="$DIR:$PATH"
+          export PYTHONPATH="\$PYTHON_DIR:\$PYTHONPATH"
+          export PATH="\$DIR:\$PATH"
           
           # Run Python script
-          cd "$RESOURCES_DIR"
-          "$PYTHON_BIN" "$PYTHON_DIR/YoutubetoPremiere.py" "$@"
+          cd "\$RESOURCES_DIR"
+          "\$PYTHON_BIN" "\$PYTHON_DIR/YoutubetoPremiere.py" "\$@"
           EOF
           
           # Copy Python files and resources
           cp app/*.py dist/YoutubetoPremiere.app/Contents/Resources/Python/
           
+          # Also copy the app files to the exec directory
+          cp app/*.py dist/YoutubetoPremiere/exec/
+          
+          # Copy the bundle to exec directory for backup
+          cp -r dist/YoutubetoPremiere.app dist/YoutubetoPremiere/exec/
+          
           # Copy sounds directory if it exists
           if [ -d "app/sounds" ] && [ "$(ls -A app/sounds 2>/dev/null)" ]; then
             echo "Copying sound files..."
             cp -r app/sounds/* dist/YoutubetoPremiere.app/Contents/Resources/sounds/ || echo "Note: No sound files copied (directory may be empty)"
+            # Also copy to main app directory
+            mkdir -p dist/YoutubetoPremiere/sounds
+            cp -r app/sounds/* dist/YoutubetoPremiere/sounds/ || echo "Note: No sound files copied (directory may be empty)"
           else
             echo "Sound directory doesn't exist or is empty, creating empty directory"
             mkdir -p app/sounds
             touch app/sounds/.gitkeep
+            mkdir -p dist/YoutubetoPremiere/sounds
+          fi
+          
+          # Copy extension files to CEP directory if they exist
+          if [ -d "extension" ]; then
+            echo "Copying extension files to CEP directory..."
+            cp -r extension/* dist/YoutubetoPremiere/CEP/ || echo "Note: No extension files copied"
           fi
             
-            # Make script executable
-            chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+          # Make script executable
+          chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
             
           # Create a single binary executable for CLI use
           cat > dist/YoutubetoPremiere << EOF
@@ -232,33 +293,43 @@ jobs:
           set -e
           
           # Get the absolute path of this script
-          SCRIPT_PATH="$( cd "$(dirname "$0")" && pwd )/$(basename "$0")"
-          SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+          SCRIPT_PATH="\$( cd "\$(dirname "\$0")" && pwd )/\$(basename "\$0")"
+          SCRIPT_DIR="\$(dirname "\$SCRIPT_PATH")"
           
           # Find Python 3 on the system
-          PYTHON_BIN=$(which python3)
-          if [ ! -x "$PYTHON_BIN" ]; then
-              PYTHON_BIN=$(which python)
+          PYTHON_BIN=\$(which python3)
+          if [ ! -x "\$PYTHON_BIN" ]; then
+              PYTHON_BIN=\$(which python)
           fi
           
-          if [ ! -x "$PYTHON_BIN" ]; then
+          if [ ! -x "\$PYTHON_BIN" ]; then
               echo "Error: Python 3 is required but was not found on your system."
               exit 1
           fi
           
-          APP_FILE="$SCRIPT_DIR/YoutubetoPremiere.py"
-          if [ ! -f "$APP_FILE" ]; then
-              APP_FILE="$SCRIPT_DIR/app/YoutubetoPremiere.py"
+          APP_FILE="\$SCRIPT_DIR/exec/YoutubetoPremiere.py"
+          if [ ! -f "\$APP_FILE" ]; then
+              APP_FILE="\$SCRIPT_DIR/app/YoutubetoPremiere.py"
           fi
           
-          echo "Using Python: $PYTHON_BIN"
-          echo "Using app file: $APP_FILE"
+          echo "Using Python: \$PYTHON_BIN"
+          echo "Using app file: \$APP_FILE"
           
           # Run Python script with the full path
-          exec "$PYTHON_BIN" "$APP_FILE" "$@"
+          exec "\$PYTHON_BIN" "\$APP_FILE" "\$@"
           EOF
           
           chmod +x dist/YoutubetoPremiere
+          
+          # Copy executable to exec directory
+          cp dist/YoutubetoPremiere dist/YoutubetoPremiere/exec/
+          
+          # Create version file for installer
+          echo "${{ needs.check-version.outputs.version }}" > dist/YoutubetoPremiere/version.txt
+          
+          # Final check of the distribution directory
+          echo "Distribution directory contents:"
+          find dist/YoutubetoPremiere -type f | sort
         shell: bash
         
       - name: Import Certificate
@@ -279,20 +350,29 @@ jobs:
           
           echo -n "$MACOS_CERTIFICATE" | base64 --decode -o "$CERTIFICATE_PATH"
           
+          # Check p12 certificate details
+          echo "Checking p12 certificate info (password required to view details):"
+          openssl pkcs12 -info -in "$CERTIFICATE_PATH" -nokeys -passin "pass:$KEYCHAIN_PASSWORD" || echo "Unable to show certificate info"
+          
           # Create keychain
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           
           # Import certificate
+          echo "Importing certificate to keychain..."
           security import "$CERTIFICATE_PATH" -P "$KEYCHAIN_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           
+          # List certificates in keychain
+          echo "Certificates in keychain after import:"
+          security find-identity -v -p codesigning || true
+          
           # Signal to subsequent steps that certificate is imported
           echo "CERTIFICATE_IMPORTED=true" >> $GITHUB_ENV
         shell: bash
-        
+
       - name: Create Entitlements File
         if: matrix.os == 'macos-13' && env.CERTIFICATE_IMPORTED == 'true'
         run: |
@@ -313,7 +393,7 @@ jobs:
           </plist>
           EOF
         shell: bash
-      
+
       - name: Sign macOS App
         if: matrix.os == 'macos-13' && env.CERTIFICATE_IMPORTED == 'true'
         env:
@@ -348,7 +428,7 @@ jobs:
           # Always indicate success for next steps
           echo "APP_PREPARED=true" >> $GITHUB_ENV
         shell: bash
-      
+
       - name: Create macOS Package
         if: matrix.os == 'macos-13' && env.CERTIFICATE_IMPORTED == 'true' && env.APP_PREPARED == 'true'
         env:
@@ -361,51 +441,191 @@ jobs:
             
             echo "App signature info: $APP_SIGNATURE_ID"
             
-            # List all available certificates for debugging
-            echo "Available certificates:"
+            # List all available certificates for debugging with multiple commands
+            echo "Available certificates (codesigning):"
             security find-identity -v -p codesigning || true
             
-            # Try to create an unsigned package first as it's most reliable
-            echo "Creating unsigned package first for safety"
-            mkdir -p "$(dirname "dist/YoutubetoPremiere-$VERSION.pkg")"
+            echo "Available certificates (ALL):"
+            security find-identity -v || true
             
-            # First try creating an unsigned package
-            pkgbuild --component "dist/YoutubetoPremiere.app" \
-                   --install-location "/Applications" \
-                   --identifier "com.mickael.YoutubetoPremiere" \
-                   --version "$VERSION" \
-                   "dist/YoutubetoPremiere-$VERSION-unsigned.pkg" || {
+            echo "Complete certificate list from keychain:"
+            security find-certificate -a -p -Z /Users/runner/work/_temp/app-signing.keychain-db | grep "Subject Name" || true
+            
+            # Create component packages for the different parts of the application
+            echo "Creating component packages..."
+            
+            # Create directory for package components
+            mkdir -p "dist/pkgbuild/flat"
+            mkdir -p "dist/pkgbuild/root/Applications"
+            mkdir -p "dist/pkgbuild/root/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere"
+            
+            # Copy files to package root
+            echo "Copying files to package root..."
+            cp -R "dist/YoutubetoPremiere.app" "dist/pkgbuild/root/Applications/"
+            cp -R "dist/YoutubetoPremiere/exec" "dist/pkgbuild/root/Applications/YoutubetoPremiere.app/Contents/Resources/"
+            cp -R "dist/YoutubetoPremiere/CEP/"* "dist/pkgbuild/root/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere/" || echo "No CEP files to copy"
+            
+            # Create distribution XML
+            cat > "dist/pkgbuild/distribution.xml" << EOF
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="1">
+    <title>YouTube to Premiere Pro</title>
+    <organization>YoutubetoPremiere</organization>
+    <domains enable_localSystem="true"/>
+    <options customize="never" require-scripts="false"/>
+    <license file="LICENSE"/>
+    <background alignment="center" file="background.png" scaling="proportional"/>
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+    <pkg-ref id="com.mickael.YoutubetoPremiere"/>
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.mickael.YoutubetoPremiere"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="com.mickael.YoutubetoPremiere" visible="false">
+        <pkg-ref id="com.mickael.YoutubetoPremiere"/>
+    </choice>
+    <pkg-ref id="com.mickael.YoutubetoPremiere" version="$VERSION" onConclusion="none">components.pkg</pkg-ref>
+</installer-gui-script>
+EOF
+            
+            # Create resources for the installer
+            mkdir -p "dist/pkgbuild/resources"
+            
+            # Create LICENSE file
+            cat > "dist/pkgbuild/resources/LICENSE" << EOF
+YouTube to Premiere Pro
+Version $VERSION
+
+Copyright © 2024 YoutubetoPremiere. All rights reserved.
+
+This software allows you to download videos from YouTube and import them directly into Adobe Premiere Pro.
+EOF
+            
+            # Create welcome file
+            cat > "dist/pkgbuild/resources/welcome.html" << EOF
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Welcome</title>
+    <style>
+        body { font-family: Helvetica, sans-serif; font-size: 13px; }
+        h1 { font-size: 18px; }
+    </style>
+</head>
+<body>
+    <h1>Welcome to YouTube to Premiere Pro</h1>
+    <p>This installer will install YouTube to Premiere Pro $VERSION on your computer.</p>
+    <p>This extension allows you to download videos from YouTube and import them directly into Adobe Premiere Pro.</p>
+</body>
+</html>
+EOF
+            
+            # Create conclusion file
+            cat > "dist/pkgbuild/resources/conclusion.html" << EOF
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Installation Complete</title>
+    <style>
+        body { font-family: Helvetica, sans-serif; font-size: 13px; }
+        h1 { font-size: 18px; }
+    </style>
+</head>
+<body>
+    <h1>Installation Complete</h1>
+    <p>YouTube to Premiere Pro has been successfully installed.</p>
+    <p>To use the extension, open Adobe Premiere Pro and look for the YouTube to Premiere Pro panel in the Extensions menu.</p>
+</body>
+</html>
+EOF
+            
+            # Create a transparent background image
+            convert -size 600x400 xc:transparent "dist/pkgbuild/resources/background.png" || echo "Skipping background image creation"
+            
+            # Create unsigned package first
+            echo "Creating component package..."
+            pkgbuild --root "dist/pkgbuild/root" \
+                    --identifier "com.mickael.YoutubetoPremiere" \
+                    --version "$VERSION" \
+                    --install-location "/" \
+                    "dist/pkgbuild/flat/components.pkg" || {
                       ERROR_CODE=$?
-                      echo "Failed to create unsigned package, error code: $ERROR_CODE"
-                      echo "Contents of dist directory:"
-                      ls -la dist/
-                      echo "Contents of YoutubetoPremiere.app:"
-                      ls -la dist/YoutubetoPremiere.app/ || true
-                   }
+                      echo "Failed to create component package, error code: $ERROR_CODE"
+                      ls -la dist/pkgbuild/root
+                    }
+                    
+            # Create the product archive
+            echo "Creating product archive..."
+            productbuild --distribution "dist/pkgbuild/distribution.xml" \
+                        --resources "dist/pkgbuild/resources" \
+                        --package-path "dist/pkgbuild/flat" \
+                        "dist/YoutubetoPremiere-$VERSION-unsigned.pkg" || {
+                          ERROR_CODE=$?
+                          echo "Failed to create product archive, error code: $ERROR_CODE"
+                          echo "Trying simpler package build..."
+                          
+                          # Try a simpler package if the distribution-based one fails
+                          pkgbuild --component "dist/YoutubetoPremiere.app" \
+                                  --install-location "/Applications" \
+                                  --identifier "com.mickael.YoutubetoPremiere" \
+                                  --version "$VERSION" \
+                                  "dist/YoutubetoPremiere-$VERSION-unsigned.pkg" || {
+                                    ERROR_CODE=$?
+                                    echo "All package creation attempts failed, error code: $ERROR_CODE"
+                                    echo "Contents of dist directory:"
+                                    ls -la dist/
+                                  }
+                        }
             
             # If unsigned package created successfully, try signed version
             if [ -f "dist/YoutubetoPremiere-$VERSION-unsigned.pkg" ]; then
               echo "Unsigned package created successfully"
               
-              # Try to find a "Developer ID Installer" certificate
+              # Try multiple ways to find a suitable installer certificate
+              echo "Looking for installer certificate..."
+              
+              # Method 1: Standard approach
               INSTALLER_SIGNATURE_ID=$(security find-identity -v -p codesigning | grep "Developer ID Installer" | head -1 | awk -F '"' '{print $2}' || echo "")
+              
+              # Method 2: If not found, try checking all identities
+              if [[ -z "$INSTALLER_SIGNATURE_ID" ]]; then
+                echo "Trying alternate methods to find installer certificate..."
+                INSTALLER_SIGNATURE_ID=$(security find-identity -v | grep "Developer ID Installer" | head -1 | awk -F '"' '{print $2}' || echo "")
+              fi
+              
+              # Method 3: If still not found, try using App signature as a last resort
+              if [[ -z "$INSTALLER_SIGNATURE_ID" && "$APP_SIGNATURE_ID" != "UNSIGNED" ]]; then
+                echo "No installer certificate found, trying to use app certificate as fallback"
+                INSTALLER_SIGNATURE_ID="$APP_SIGNATURE_ID"
+              fi
               
               # If signing ID available, try to create signed package
               if [[ -n "$INSTALLER_SIGNATURE_ID" && "$APP_SIGNATURE_ID" != "UNSIGNED" ]]; then
                 echo "Creating signed PKG with signature: $INSTALLER_SIGNATURE_ID"
                 
                 # Try to create signed package but don't fail if it doesn't work
-                pkgbuild --component "dist/YoutubetoPremiere.app" \
-                       --install-location "/Applications" \
-                       --identifier "com.mickael.YoutubetoPremiere" \
-                       --version "$VERSION" \
-                       --sign "$INSTALLER_SIGNATURE_ID" \
-                       "dist/YoutubetoPremiere-$VERSION.pkg" || {
-                          ERROR_CODE=$?
-                          echo "Failed to create signed package, error code: $ERROR_CODE"
-                          echo "Falling back to unsigned package"
-                          cp "dist/YoutubetoPremiere-$VERSION-unsigned.pkg" "dist/YoutubetoPremiere-$VERSION.pkg"
-                       }
+                productsign --sign "$INSTALLER_SIGNATURE_ID" \
+                          "dist/YoutubetoPremiere-$VERSION-unsigned.pkg" \
+                          "dist/YoutubetoPremiere-$VERSION.pkg" || {
+                            ERROR_CODE=$?
+                            echo "Failed to create signed package, error code: $ERROR_CODE"
+                            echo "Trying with explicit sign option..."
+                            
+                            # Try with explicit sign option
+                            productsign --sign "Developer ID Installer: mickael ducatez" \
+                                       "dist/YoutubetoPremiere-$VERSION-unsigned.pkg" \
+                                       "dist/YoutubetoPremiere-$VERSION.pkg" || {
+                                        ERROR_CODE=$?
+                                        echo "All signing attempts failed, error code: $ERROR_CODE"
+                                        echo "Falling back to unsigned package"
+                                        cp "dist/YoutubetoPremiere-$VERSION-unsigned.pkg" "dist/YoutubetoPremiere-$VERSION.pkg"
+                                       }
+                          }
               else
                 echo "No suitable signing identity found, using unsigned package"
                 cp "dist/YoutubetoPremiere-$VERSION-unsigned.pkg" "dist/YoutubetoPremiere-$VERSION.pkg"
@@ -416,6 +636,8 @@ jobs:
               # Try one more time with minimal options
               pkgbuild --component "dist/YoutubetoPremiere.app" \
                      --install-location "/Applications" \
+                     --identifier "com.mickael.YoutubetoPremiere" \
+                     --version "$VERSION" \
                      "dist/YoutubetoPremiere-$VERSION.pkg" || {
                         ERROR_CODE=$?
                         echo "All package creation attempts failed, error code: $ERROR_CODE"
@@ -426,6 +648,9 @@ jobs:
             # Check if final pkg was created
             if [ -f "dist/YoutubetoPremiere-$VERSION.pkg" ]; then
               echo "PKG created successfully"
+              # Show package size
+              PACKAGE_SIZE=$(du -h "dist/YoutubetoPremiere-$VERSION.pkg" | cut -f1)
+              echo "Package size: $PACKAGE_SIZE"
               echo "PKG_CREATED=true" >> $GITHUB_ENV
             else
               echo "Failed to create PKG - file does not exist"
@@ -487,7 +712,7 @@ jobs:
             echo "Package not found, skipping notarization"
           fi
         shell: bash
-      
+
       - name: Create Windows installer
         if: matrix.os == 'windows-latest'
         run: |
@@ -499,8 +724,103 @@ jobs:
           $env:VERSION = $version
           
           # Create a temporary NSIS script with the version
-          $nsiContent = Get-Content "installer.nsi" -Raw
+          $nsiContent = @'
+!include "MUI2.nsh"
+!include "FileFunc.nsh"
+
+!define VERSION "${VERSION}"
+!define APP_NAME "YoutubetoPremiere"
+!define INSTALL_DIR "$PROGRAMFILES\YoutubetoPremiere"
+!define CEP_DIR "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"
+
+; The name of the installer
+Name "YouTube to Premiere Pro ${VERSION}"
+OutFile "YoutubetoPremiere-${VERSION}-Setup.exe"
+
+; Request application privileges for Windows Vista and higher
+RequestExecutionLevel admin
+
+; Set the compression algorithm 
+SetCompressor /FINAL /SOLID lzma
+SetCompressorDictSize 64
+
+; The default installation directory
+InstallDir "${INSTALL_DIR}"
+
+; Interface Settings
+!define MUI_ABORTWARNING
+
+; Pages
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+
+; Languages
+!insertmacro MUI_LANGUAGE "English"
+
+; The main installation section
+Section "MainSection" SEC01
+  SectionIn RO
+  SetOutPath "$INSTDIR"
+  
+  ; Create directories
+  CreateDirectory "$INSTDIR\exec"
+  CreateDirectory "$INSTDIR\sounds"
+  CreateDirectory "${CEP_DIR}"
+  
+  ; Copy all files from YoutubetoPremiere directory
+  File /r "dist\YoutubetoPremiere\*.*"
+  
+  ; Copy CEP extension files to Adobe CEP directory
+  SetOutPath "${CEP_DIR}"
+  File /r "dist\YoutubetoPremiere\CEP\*.*"
+  
+  ; Write uninstaller
+  SetOutPath "$INSTDIR"
+  WriteUninstaller "$INSTDIR\uninstall.exe"
+  
+  ; Create shortcuts
+  CreateDirectory "$SMPROGRAMS\YoutubetoPremiere"
+  CreateShortCut "$SMPROGRAMS\YoutubetoPremiere\YoutubetoPremiere.lnk" "$INSTDIR\exec\YoutubetoPremiere.exe"
+  CreateShortCut "$SMPROGRAMS\YoutubetoPremiere\Uninstall.lnk" "$INSTDIR\uninstall.exe"
+  
+  ; Write registry entries for Add/Remove Programs
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "DisplayName" "YouTube to Premiere Pro"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "DisplayIcon" "$INSTDIR\exec\YoutubetoPremiere.exe"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "DisplayVersion" "${VERSION}"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "Publisher" "YoutubetoPremiere"
+  
+  ; Get the size of the install directory
+  ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
+  IntFmt $0 "0x%08X" $0
+  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "EstimatedSize" "$0"
+SectionEnd
+
+; Uninstallation section
+Section "Uninstall"
+  ; Remove installed files
+  RMDir /r "$INSTDIR"
+  RMDir /r "${CEP_DIR}"
+  
+  ; Remove shortcuts
+  Delete "$SMPROGRAMS\YoutubetoPremiere\YoutubetoPremiere.lnk"
+  Delete "$SMPROGRAMS\YoutubetoPremiere\Uninstall.lnk"
+  RMDir "$SMPROGRAMS\YoutubetoPremiere"
+  
+  ; Remove registry entries
+  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere"
+SectionEnd
+'@
+          
+          # Replace version variable in the script
           $nsiContent = $nsiContent.Replace('${VERSION}', $version)
+          
+          # Save the NSIS script
           Set-Content -Path "installer_temp.nsi" -Value $nsiContent
           
           # Run NSIS compiler with our script
@@ -520,6 +840,10 @@ jobs:
           
           # Clean up temporary file
           Remove-Item "installer_temp.nsi" -ErrorAction SilentlyContinue
+          
+          # Show installer size
+          $installerSize = (Get-Item "dist/installer/YoutubetoPremiere-$version-Setup.exe").Length
+          Write-Host "Installer created successfully. Size: $($installerSize / 1MB) MB"
         shell: pwsh
       
       - name: Upload Windows executable
