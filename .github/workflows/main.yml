@@ -202,8 +202,16 @@ jobs:
           # Download FFmpeg for macOS
           echo "Downloading FFmpeg for macOS..."
           curl -L https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip -o ffmpeg.zip
-          unzip -q ffmpeg.zip -d dist/YoutubetoPremiere/exec/
-          chmod +x dist/YoutubetoPremiere/exec/ffmpeg
+          unzip -q ffmpeg.zip -d ffmpeg_temp
+          
+          # Move FFmpeg to the correct locations
+          chmod +x ffmpeg_temp/ffmpeg
+          mkdir -p dist/YoutubetoPremiere/exec
+          cp ffmpeg_temp/ffmpeg dist/YoutubetoPremiere/exec/
+          
+          # Also copy ffmpeg to the app bundle
+          mkdir -p dist/YoutubetoPremiere.app/Contents/MacOS/
+          cp ffmpeg_temp/ffmpeg dist/YoutubetoPremiere.app/Contents/MacOS/
             
           # Create Info.plist
           cat > dist/YoutubetoPremiere.app/Contents/Info.plist << EOF
@@ -288,13 +296,15 @@ jobs:
           chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
             
           # Create a single binary executable for CLI use
-          cat > dist/YoutubetoPremiere << EOF
+          mkdir -p dist/bin
+          cat > dist/bin/YoutubetoPremiere << EOF
           #!/bin/bash
           set -e
           
           # Get the absolute path of this script
           SCRIPT_PATH="\$( cd "\$(dirname "\$0")" && pwd )/\$(basename "\$0")"
           SCRIPT_DIR="\$(dirname "\$SCRIPT_PATH")"
+          PARENT_DIR="\$(dirname "\$SCRIPT_DIR")"
           
           # Find Python 3 on the system
           PYTHON_BIN=\$(which python3)
@@ -307,9 +317,9 @@ jobs:
               exit 1
           fi
           
-          APP_FILE="\$SCRIPT_DIR/exec/YoutubetoPremiere.py"
+          APP_FILE="\$PARENT_DIR/YoutubetoPremiere/exec/YoutubetoPremiere.py"
           if [ ! -f "\$APP_FILE" ]; then
-              APP_FILE="\$SCRIPT_DIR/app/YoutubetoPremiere.py"
+              APP_FILE="\$PARENT_DIR/YoutubetoPremiere/app/YoutubetoPremiere.py"
           fi
           
           echo "Using Python: \$PYTHON_BIN"
@@ -319,10 +329,12 @@ jobs:
           exec "\$PYTHON_BIN" "\$APP_FILE" "\$@"
           EOF
           
-          chmod +x dist/YoutubetoPremiere
+          chmod +x dist/bin/YoutubetoPremiere
           
           # Copy executable to exec directory
-          cp dist/YoutubetoPremiere dist/YoutubetoPremiere/exec/
+          mkdir -p dist/YoutubetoPremiere/exec
+          cp dist/bin/YoutubetoPremiere dist/YoutubetoPremiere/exec/
+          cp dist/bin/YoutubetoPremiere dist/
           
           # Create version file for installer
           echo "${{ needs.check-version.outputs.version }}" > dist/YoutubetoPremiere/version.txt
@@ -415,7 +427,7 @@ jobs:
           if [[ -n "$SIGNATURE_ID" ]]; then
             echo "Signing app with identity: $SIGNATURE_ID"
             codesign --force --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/YoutubetoPremiere.app" || echo "Warning: App signing failed but continuing"
-            codesign --force --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/YoutubetoPremiere" || echo "Warning: CLI signing failed but continuing"
+            codesign --force --options runtime --entitlements entitlements.plist --sign "$SIGNATURE_ID" "dist/bin/YoutubetoPremiere" || echo "Warning: CLI signing failed but continuing"
             
             # Create a simple temp file to track signature was successful
             echo "$SIGNATURE_ID" > dist/signature.info
@@ -742,15 +754,15 @@ jobs:
           # Create a script file for the NSIS installer setup
           New-Item -Path create_windows_installer.ps1 -ItemType File -Force
           
-          # Write PowerShell script content
-          Set-Content -Path create_windows_installer.ps1 -Value @'
+          # Write PowerShell script with nested here-strings
+          $script = @'
           param($version)
           
           # Install NSIS
           choco install nsis -y
           
           # Create a temporary NSIS script with the version
-          $nsiContent = @'
+          $nsiContent = @"
           !include "MUI2.nsh"
           !include "FileFunc.nsh"
 
@@ -822,9 +834,9 @@ jobs:
             WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "Publisher" "YoutubetoPremiere"
             
             ; Get the size of the install directory
-            ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
-            IntFmt $0 "0x%08X" $0
-            WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "EstimatedSize" "$0"
+            $${GetSize} "$INSTDIR" "/S=0K" $$0 $$1 $$2
+            IntFmt $$0 "0x%08X" $$0
+            WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "EstimatedSize" "$$0"
           SectionEnd
 
           ; Uninstallation section
@@ -841,7 +853,7 @@ jobs:
             ; Remove registry entries
             DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere"
           SectionEnd
-          '@
+          "@
 
           # Replace version variable in the script
           $nsiContent = $nsiContent.Replace('${VERSION}', $version)
@@ -871,6 +883,9 @@ jobs:
           $installerSize = (Get-Item "dist/installer/YoutubetoPremiere-$version-Setup.exe").Length
           Write-Host "Installer created successfully. Size: $($installerSize / 1MB) MB"
           '@
+          
+          # Write script to file
+          Set-Content -Path create_windows_installer.ps1 -Value $script
         shell: pwsh
 
       - name: Create Windows Installer
@@ -899,8 +914,9 @@ jobs:
         with:
           name: executable-macos-13
           path: |
-            dist/YoutubetoPremiere
+            dist/bin/YoutubetoPremiere
             dist/YoutubetoPremiere.app/**/*
+            dist/YoutubetoPremiere/**/*
           retention-days: 90
       
       - name: Upload Windows installer
