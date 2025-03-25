@@ -897,7 +897,7 @@ jobs:
           echo '' >> installer_script.nsi
           echo '  ; Create sounds directory' >> installer_script.nsi
           echo '  SetOutPath "$INSTDIR\sounds"' >> installer_script.nsi
-          echo '  ; Add sound files if they exist - nothing to do if they don't' >> installer_script.nsi
+          echo '  ; Add sound files if they exist - nothing to do if they dont' >> installer_script.nsi
           echo '' >> installer_script.nsi
           echo '  ; Create CEP extension directory' >> installer_script.nsi
           echo '  CreateDirectory "$APPDATA\Adobe\CEP\extensions\com.youtubetopremiere"' >> installer_script.nsi
