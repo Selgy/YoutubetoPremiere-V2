@@ -178,12 +178,17 @@ jobs:
             exit 1
           }
 
-          # Build executable with PyInstaller - removing sound files from add-data since they're already in exec
+          # Build executable with PyInstaller with all necessary libraries embedded
           pyinstaller --name YoutubetoPremiere --onefile `
             --hidden-import engineio.async_drivers.threading `
+            --hidden-import socketio `
+            --hidden-import requests `
+            --hidden-import pillow `
+            --collect-all engineio `
+            --collect-all socketio `
             --version-file version.txt `
               app/YoutubetoPremiere.py
-              
+          
           # Create version file for installer
           New-Item -Path "dist\YoutubetoPremiere" -ItemType Directory -Force -ErrorAction SilentlyContinue
           Set-Content -Path "dist\YoutubetoPremiere\version.txt" -Value "$VERSION"
@@ -192,6 +197,15 @@ jobs:
           if (Test-Path "dist\cep") {
             New-Item -Path "dist\YoutubetoPremiere\CEP" -ItemType Directory -Force -ErrorAction SilentlyContinue
             Copy-Item -Path "dist\cep\*" -Destination "dist\YoutubetoPremiere\CEP" -Recurse -Force
+          }
+          
+          # Copy the built executable to the exec folder
+          if (Test-Path "dist\YoutubetoPremiere.exe") {
+            New-Item -Path "dist\YoutubetoPremiere\exec" -ItemType Directory -Force -ErrorAction SilentlyContinue
+            Copy-Item -Path "dist\YoutubetoPremiere.exe" -Destination "dist\YoutubetoPremiere\exec\" -Force
+            Write-Host "Copied YoutubetoPremiere.exe to dist\YoutubetoPremiere\exec\"
+          } else {
+            Write-Host "WARNING: YoutubetoPremiere.exe not found at expected location"
           }
           
           # Check for final build artifacts
@@ -262,18 +276,29 @@ jobs:
           cp ffmpeg_temp/ffmpeg dist/cep/exec/
           chmod +x dist/cep/exec/ffmpeg
           
-          # Instead of building with PyInstaller, create a non-functional placeholder executable
-          echo "Creating placeholder executable instead of building with PyInstaller..."
-          mkdir -p dist/YoutubetoPremiere
+          # Instead of creating a placeholder, build a real executable with PyInstaller
+          echo "Building proper executable with PyInstaller..."
           
-          # Create a placeholder executable in the expected location
-          echo "#!/bin/bash" > dist/YoutubetoPremiere/YoutubetoPremiere
-          echo "echo \"This is a placeholder executable. The actual executable is missing.\"" >> dist/YoutubetoPremiere/YoutubetoPremiere
-          echo "exit 1" >> dist/YoutubetoPremiere/YoutubetoPremiere
-          chmod +x dist/YoutubetoPremiere/YoutubetoPremiere
+          # Clean up any existing PyInstaller output
+          rm -rf dist/YoutubetoPremiere
+          rm -rf build/YoutubetoPremiere
+          mkdir -p dist
+          mkdir -p build
           
-          # Debug - Check PyInstaller output directory right after building
-          echo "Checking YoutubetoPremiere directory after creating placeholder:"
+
+          pyinstaller --name YoutubetoPremiere --onedir --debug=all -y --clean \
+            --distpath "./dist" \
+            --workpath "./build/YoutubetoPremiere-work" \
+            --hidden-import engineio.async_drivers.threading \
+            --hidden-import socketio \
+            --hidden-import requests \
+            --hidden-import pillow \
+            --collect-all engineio \
+            --collect-all socketio \
+            app/YoutubetoPremiere.py
+            
+          # Debug - Check PyInstaller output directory after building
+          echo "Checking PyInstaller output directories after build:"
           ls -la dist/ || echo "dist directory not found"
           ls -la dist/YoutubetoPremiere/ || echo "YoutubetoPremiere directory not found in dist/"
           
@@ -282,25 +307,31 @@ jobs:
           mkdir -p dist/YoutubetoPremiere.app/Contents/MacOS
           mkdir -p dist/YoutubetoPremiere.app/Contents/Resources
           
-          # Create the exec directory explicitly
-          mkdir -p dist/YoutubetoPremiere/exec
-          
-          # Copy the placeholder executable
-          echo "Copying placeholder executable to app bundle..."
-          cp dist/YoutubetoPremiere/YoutubetoPremiere dist/YoutubetoPremiere.app/Contents/MacOS/
-          cp dist/YoutubetoPremiere/YoutubetoPremiere dist/YoutubetoPremiere.app/Contents/Resources/
-          
-          # Create a README in the app bundle explaining that the executable is a placeholder
-          echo "This is a placeholder app. The actual executable is missing." > dist/YoutubetoPremiere.app/Contents/Resources/README.txt
+          # Check if the executable exists before copying
+          if [ -f "dist/YoutubetoPremiere/YoutubetoPremiere" ]; then
+            echo "Copying executable file to app bundle..."
+            cp dist/YoutubetoPremiere/YoutubetoPremiere dist/YoutubetoPremiere.app/Contents/MacOS/
+            
+            # Copy all resources from onedir build to app bundle Resources directory
+            cp -r dist/YoutubetoPremiere/* dist/YoutubetoPremiere.app/Contents/Resources/ || echo "No resources to copy"
+          else
+            echo "ERROR: PyInstaller executable not found at dist/YoutubetoPremiere/YoutubetoPremiere"
+            find dist -type f -name "YoutubetoPremiere" | sort
+            ls -la dist/YoutubetoPremiere/ || echo "YoutubetoPremiere directory not found or empty"
+          fi
           
           # Copy Python files
           mkdir -p dist/YoutubetoPremiere/app
           cp app/*.py dist/YoutubetoPremiere/app/
           
-          # Copy the placeholder executable to CEP dir
+          # Copy PyInstaller executable to CEP dir
           mkdir -p dist/cep/exec
-          cp dist/YoutubetoPremiere/YoutubetoPremiere dist/cep/exec/
-          chmod +x dist/cep/exec/YoutubetoPremiere
+          if [ -f "dist/YoutubetoPremiere/YoutubetoPremiere" ]; then
+            cp dist/YoutubetoPremiere/YoutubetoPremiere dist/cep/exec/
+            chmod +x dist/cep/exec/YoutubetoPremiere
+          else
+            echo "WARNING: Python executable not found for CEP dir."
+          fi
           
           # Restore the backed up CEP extension files if they were cleared
           echo "Checking if we need to restore CEP files from backup..."
@@ -334,17 +365,35 @@ jobs:
             
           # Make script executable
           if [ -f "dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere" ]; then
-          chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
+            chmod +x dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere
           else
             echo "WARNING: Executable not found at dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere"
           fi
             
-          # Create a single binary executable for CLI use that just outputs an error
+          # Create a single binary executable for CLI use
           mkdir -p dist/bin
           cat > dist/bin/YoutubetoPremiere << EOF
           #!/bin/bash
-          echo "This is a placeholder shell script. The actual executable is missing."
-          exit 1
+          set -e
+          
+          # Get the absolute path of this script
+          SCRIPT_PATH="\$( cd "\$(dirname "\$0")" && pwd )/\$(basename "\$0")"
+          SCRIPT_DIR="\$(dirname "\$SCRIPT_PATH")"
+          PARENT_DIR="\$(dirname "\$SCRIPT_DIR")"
+          
+          # Find the executable
+          EXECUTABLE="\$PARENT_DIR/YoutubetoPremiere/YoutubetoPremiere"
+          if [ ! -x "\$EXECUTABLE" ]; then
+              EXECUTABLE="\$PARENT_DIR/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere"
+          fi
+          
+          if [ ! -x "\$EXECUTABLE" ]; then
+              echo "Error: YoutubetoPremiere executable not found."
+              exit 1
+          fi
+          
+          # Run the executable with the provided arguments
+          exec "\$EXECUTABLE" "\$@"
           EOF
           
           chmod +x dist/bin/YoutubetoPremiere
@@ -532,11 +581,23 @@ jobs:
           echo "Copying files to package root..."
           cp -R "dist/YoutubetoPremiere.app" "dist/pkgbuild/root/Applications/"
           
-          # Create a placeholder in the exec directory
-          echo "Creating placeholder executable..."
-          mkdir -p "dist/pkgbuild/root/Applications/YoutubetoPremiere.app/Contents/Resources/exec"
-          echo "This is a placeholder executable file. The actual executable is missing." > "dist/pkgbuild/root/Applications/YoutubetoPremiere.app/Contents/Resources/exec/YoutubetoPremiere"
-          chmod +x "dist/pkgbuild/root/Applications/YoutubetoPremiere.app/Contents/Resources/exec/YoutubetoPremiere"
+          # Check for the executable in Resources/exec directory
+          echo "Checking for executable in Resources/exec directory..."
+          if [ -f "dist/YoutubetoPremiere/YoutubetoPremiere" ]; then
+            echo "Found executable at dist/YoutubetoPremiere/YoutubetoPremiere"
+            mkdir -p "dist/pkgbuild/root/Applications/YoutubetoPremiere.app/Contents/Resources/exec"
+            cp "dist/YoutubetoPremiere/YoutubetoPremiere" "dist/pkgbuild/root/Applications/YoutubetoPremiere.app/Contents/Resources/exec/"
+            chmod +x "dist/pkgbuild/root/Applications/YoutubetoPremiere.app/Contents/Resources/exec/YoutubetoPremiere"
+          elif [ -f "dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere" ]; then
+            echo "Found executable in app bundle at MacOS/YoutubetoPremiere"
+            mkdir -p "dist/pkgbuild/root/Applications/YoutubetoPremiere.app/Contents/Resources/exec"
+            cp "dist/YoutubetoPremiere.app/Contents/MacOS/YoutubetoPremiere" "dist/pkgbuild/root/Applications/YoutubetoPremiere.app/Contents/Resources/exec/"
+            chmod +x "dist/pkgbuild/root/Applications/YoutubetoPremiere.app/Contents/Resources/exec/YoutubetoPremiere"
+          else
+            echo "ERROR: No executable found! This will cause the application to fail."
+            find dist -name "YoutubetoPremiere" -type f
+            exit 1
+          fi
           
           # Check different possible locations for CEP files
           echo "Checking for CEP files in different locations..."
@@ -557,13 +618,8 @@ jobs:
             ls -la "dist/pkgbuild/root/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere/"
           else 
             echo "ERROR: No CEP files found in any location. This will result in an empty extension."
-            # Create placeholder file to ensure directory exists
-            mkdir -p "dist/pkgbuild/root/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere"
-            echo "This is a placeholder. CEP extension files missing." > "dist/pkgbuild/root/Library/Application Support/Adobe/CEP/extensions/com.youtubetopremiere/README.txt"
-            
-            # Attempt to list all files in dist to help debug
-            echo "All files in dist directory:"
-            find dist -type f | sort
+            find dist -type f | grep -v "YoutubetoPremiere\|ffmpeg" | sort
+            exit 1
           fi
           
           # Create scripts directory for postinstall script
@@ -810,7 +866,7 @@ jobs:
                    "dist/YoutubetoPremiere-$VERSION.pkg" || {
                       ERROR_CODE=$?
                       echo "All package creation attempts failed, error code: $ERROR_CODE"
-                      exit 0  # Don't fail the build
+                      exit 1  # Fail the build if package creation fails
                    }
           fi
           
@@ -827,6 +883,7 @@ jobs:
           else
             echo "Failed to create PKG - file does not exist"
             ls -la dist/
+            exit 1  # Fail the build if PKG wasn't created
           fi
           
           # Remove signature info file
@@ -947,11 +1004,9 @@ jobs:
           Write-Host "Checking available files in dist directory:"
           Get-ChildItem -Path "dist" -Recurse | Select-Object FullName
           
-          # Check if we have the required files and copy the executable to the correct location
-          if (Test-Path "dist/YoutubetoPremiere.exe") {
-            Write-Host "Found executable at dist/YoutubetoPremiere.exe - copying to exec folder"
-            New-Item -Path "dist\YoutubetoPremiere\exec" -ItemType Directory -Force -ErrorAction SilentlyContinue
-            Copy-Item -Path "dist\YoutubetoPremiere.exe" -Destination "dist\YoutubetoPremiere\exec\" -Force
+          # Verify executable was copied to the right location
+          if (Test-Path "dist/YoutubetoPremiere/exec/YoutubetoPremiere.exe") {
+            Write-Host "Executable found at expected location: dist/YoutubetoPremiere/exec/YoutubetoPremiere.exe"
           } else {
             Write-Host "WARNING: YoutubetoPremiere.exe not found at expected location"
             $executablePath = Get-ChildItem -Path "dist" -Recurse -Filter "YoutubetoPremiere.exe" | Select-Object -First 1 -ExpandProperty FullName
@@ -960,7 +1015,8 @@ jobs:
               New-Item -Path "dist\YoutubetoPremiere\exec" -ItemType Directory -Force -ErrorAction SilentlyContinue
               Copy-Item -Path $executablePath -Destination "dist\YoutubetoPremiere\exec\" -Force
             } else {
-              Write-Host "WARNING: Could not find YoutubetoPremiere.exe anywhere in the dist directory"
+              Write-Host "ERROR: Could not find YoutubetoPremiere.exe anywhere in the dist directory"
+              exit 1
             }
           }
           
@@ -987,29 +1043,12 @@ jobs:
           Add-Content -Path "installer.nsi" -Value '  File /nonfatal "dist\YoutubetoPremiere\version.txt"'
           Add-Content -Path "installer.nsi" -Value ''
           
-          # Check and add executable files
+          # Add executable files
           Add-Content -Path "installer.nsi" -Value '  ; Main executable file'
           Add-Content -Path "installer.nsi" -Value '  SetOutPath "$INSTDIR\exec"'
-          if (Test-Path "dist/YoutubetoPremiere/exec/YoutubetoPremiere.exe") {
-            Add-Content -Path "installer.nsi" -Value '  File "dist\YoutubetoPremiere\exec\YoutubetoPremiere.exe"'
-          } elseif (Test-Path "dist/YoutubetoPremiere.exe") {
-            Add-Content -Path "installer.nsi" -Value '  File "dist\YoutubetoPremiere.exe"'
-          } else {
-            # Try to find the file anywhere in the dist directory
-            $executablePath = Get-ChildItem -Path "dist" -Recurse -Filter "YoutubetoPremiere.exe" | Select-Object -First 1 -ExpandProperty FullName
-            if ($executablePath) {
-              $relativePath = $executablePath.Replace("$PWD\", "").Replace("\", "/")
-              Add-Content -Path "installer.nsi" -Value "  File `"$relativePath`""
-            } else {
-              Add-Content -Path "installer.nsi" -Value '  ; WARNING: YoutubetoPremiere.exe not found'
-              # Create a dummy executable as a placeholder for testing
-              Add-Content -Path "installer.nsi" -Value '  FileOpen $0 "$INSTDIR\exec\YoutubetoPremiere.exe" w'
-              Add-Content -Path "installer.nsi" -Value '  FileWrite $0 "This is a placeholder executable file.$\r$\nThe actual executable is missing."'
-              Add-Content -Path "installer.nsi" -Value '  FileClose $0'
-            }
-          }
+          Add-Content -Path "installer.nsi" -Value '  File "dist\YoutubetoPremiere\exec\YoutubetoPremiere.exe"'
           
-          # Check and add CEP extension files
+          # Add CEP extension files
           Add-Content -Path "installer.nsi" -Value ''
           Add-Content -Path "installer.nsi" -Value '  ; CEP extension files'
           Add-Content -Path "installer.nsi" -Value '  SetOutPath "$INSTDIR\CEP"'
@@ -1018,11 +1057,8 @@ jobs:
           } elseif (Test-Path "dist/cep") {
             Add-Content -Path "installer.nsi" -Value '  File /r "dist\cep\*.*"'
           } else {
-            Add-Content -Path "installer.nsi" -Value '  ; CEP extension files not found'
-            # Create a README file as a placeholder
-            Add-Content -Path "installer.nsi" -Value '  FileOpen $0 "$INSTDIR\CEP\README.txt" w'
-            Add-Content -Path "installer.nsi" -Value '  FileWrite $0 "This is a placeholder file.$\r$\nThe actual CEP extension files are missing."'
-            Add-Content -Path "installer.nsi" -Value '  FileClose $0'
+            Add-Content -Path "installer.nsi" -Value '  ; ERROR: CEP extension files not found'
+            exit 1
           }
           
           # Add FFmpeg
@@ -1039,11 +1075,8 @@ jobs:
               $relativePath = $ffmpegPath.Replace("$PWD\", "").Replace("\", "/")
               Add-Content -Path "installer.nsi" -Value "  File `"$relativePath`""
             } else {
-              Add-Content -Path "installer.nsi" -Value '  ; WARNING: ffmpeg.exe not found'
-              # Create a dummy ffmpeg as a placeholder for testing
-              Add-Content -Path "installer.nsi" -Value '  FileOpen $0 "$INSTDIR\exec\ffmpeg.exe" w'
-              Add-Content -Path "installer.nsi" -Value '  FileWrite $0 "This is a placeholder ffmpeg file.$\r$\nThe actual ffmpeg executable is missing."'
-              Add-Content -Path "installer.nsi" -Value '  FileClose $0'
+              Add-Content -Path "installer.nsi" -Value '  ; ERROR: ffmpeg.exe not found'
+              exit 1
             }
           }
           
