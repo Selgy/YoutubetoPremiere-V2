@@ -319,8 +319,18 @@ jobs:
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
         run: |
-          # Sign the app
+          # List all available certificates for debugging
+          echo "Available signing certificates:"
+          security find-identity -v -p codesigning
+          
+          # Try to find a Developer ID Application certificate first
           SIGNATURE_ID=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F '"' '{print $2}')
+          
+          # If not found, try to use any available certificate
+          if [[ -z "$SIGNATURE_ID" ]]; then
+            echo "No Developer ID Application certificate found, trying to use any available certificate"
+            SIGNATURE_ID=$(security find-identity -v -p codesigning | head -1 | sed -E 's/.*([0-9A-F]{40}).*/\1/')
+          fi
           
           if [[ -n "$SIGNATURE_ID" ]]; then
             echo "Signing app with identity: $SIGNATURE_ID"
@@ -347,27 +357,23 @@ jobs:
             echo "Checking for installer signing identity"
             # List all available certificates for debugging
             echo "Available certificates:"
-          security find-identity -v -p codesigning
-          
+            security find-identity -v -p codesigning
+            
+            # Try to find a "Developer ID Installer" certificate
             INSTALLER_SIGNATURE_ID=$(security find-identity -v -p codesigning | grep "Developer ID Installer" | head -1 | awk -F '"' '{print $2}')
             
-            # If we don't have an installer identity, try creating unsigned package
+            # If not found, try to use the same certificate as for app signing
             if [[ -z "$INSTALLER_SIGNATURE_ID" ]]; then
-              echo "No Developer ID Installer certificate found, creating unsigned package"
-              
-              # Create PKG without signing
-              echo "Running: pkgbuild --component dist/YoutubetoPremiere.app --install-location /Applications --identifier com.mickael.YoutubetoPremiere --version $VERSION dist/YoutubetoPremiere-$VERSION.pkg"
-              
-              pkgbuild --component "dist/YoutubetoPremiere.app" \
-                     --install-location "/Applications" \
-                     --identifier "com.mickael.YoutubetoPremiere" \
-                     --version "$VERSION" \
-                     "dist/YoutubetoPremiere-$VERSION.pkg" || {
-                        echo "Failed to create unsigned package, error code: $?"
-                        ls -la dist/
-                     }
-            else
-              echo "Creating PKG with installer signature: $INSTALLER_SIGNATURE_ID"
+              echo "No Developer ID Installer certificate found, trying to use the app signing certificate instead"
+              INSTALLER_SIGNATURE_ID="$APP_SIGNATURE_ID"
+            fi
+            
+            # Create directory for PKG if it doesn't exist
+            mkdir -p "$(dirname "dist/YoutubetoPremiere-$VERSION.pkg")"
+            
+            # Try creating a signed package first
+            if [[ -n "$INSTALLER_SIGNATURE_ID" ]]; then
+              echo "Creating PKG with signature: $INSTALLER_SIGNATURE_ID"
               
               # Create PKG with proper installer signing identity
               pkgbuild --component "dist/YoutubetoPremiere.app" \
@@ -376,12 +382,39 @@ jobs:
                      --version "$VERSION" \
                      --sign "$INSTALLER_SIGNATURE_ID" \
                      "dist/YoutubetoPremiere-$VERSION.pkg" || {
-                        echo "Failed to create signed package, trying unsigned as fallback"
+                        ERROR_CODE=$?
+                        echo "Failed to create signed package, error code: $ERROR_CODE"
+                        echo "Trying unsigned package as fallback"
                         pkgbuild --component "dist/YoutubetoPremiere.app" \
                                --install-location "/Applications" \
                                --identifier "com.mickael.YoutubetoPremiere" \
                                --version "$VERSION" \
-                               "dist/YoutubetoPremiere-$VERSION.pkg"
+                               "dist/YoutubetoPremiere-$VERSION.pkg" || {
+                                  ERROR_CODE=$?
+                                  echo "Failed to create unsigned package, error code: $ERROR_CODE"
+                                  echo "Contents of dist directory:"
+                                  ls -la dist/
+                                  echo "Contents of YoutubetoPremiere.app:"
+                                  ls -la dist/YoutubetoPremiere.app/
+                                  exit $ERROR_CODE
+                               }
+                     }
+            else
+              # Create PKG without signing
+              echo "No installer signature available, creating unsigned package"
+              
+              pkgbuild --component "dist/YoutubetoPremiere.app" \
+                     --install-location "/Applications" \
+                     --identifier "com.mickael.YoutubetoPremiere" \
+                     --version "$VERSION" \
+                     "dist/YoutubetoPremiere-$VERSION.pkg" || {
+                        ERROR_CODE=$?
+                        echo "Failed to create unsigned package, error code: $ERROR_CODE"
+                        echo "Contents of dist directory:"
+                        ls -la dist/
+                        echo "Contents of YoutubetoPremiere.app:"
+                        ls -la dist/YoutubetoPremiere.app/
+                        exit $ERROR_CODE
                      }
             fi
             
