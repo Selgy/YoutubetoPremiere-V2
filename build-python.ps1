@@ -26,19 +26,41 @@ if ($PSVersionTable.Platform -eq "Win32NT" -or $env:OS -like "*Windows*") {
     Write-Host "Detected macOS"
 }
 
+# Clean up any existing PyInstaller output
+Write-Host "Cleaning up existing PyInstaller output..."
+if (Test-Path "dist/YoutubetoPremiere") {
+    Remove-Item -Path "dist/YoutubetoPremiere" -Recurse -Force
+}
+if (Test-Path "build/YoutubetoPremiere") {
+    Remove-Item -Path "build/YoutubetoPremiere" -Recurse -Force
+}
+
 # Build with PyInstaller
 Write-Host "Building with PyInstaller..."
+
+# More aggressive cleanup just before PyInstaller runs
+if (Test-Path "dist/YoutubetoPremiere") {
+    Write-Host "Removing existing dist/YoutubetoPremiere directory..."
+    Remove-Item -Path "dist/YoutubetoPremiere" -Recurse -Force -ErrorAction SilentlyContinue
+}
+if (Test-Path "build/YoutubetoPremiere") {
+    Write-Host "Removing existing build/YoutubetoPremiere directory..."
+    Remove-Item -Path "build/YoutubetoPremiere" -Recurse -Force -ErrorAction SilentlyContinue
+}
+New-Item -Path "dist" -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+New-Item -Path "build/YoutubetoPremiere-work" -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+
 if ($isWindows) {
     # Windows build command
-    pyinstaller --name YoutubetoPremiere --onedir `
+    pyinstaller --name YoutubetoPremiere --onedir -y --clean `
+        --distpath "./dist" `
+        --workpath "./build/YoutubetoPremiere-work" `
         --add-data "app/sounds;sounds" `
         --hidden-import engineio.async_drivers.threading `
-        --hidden-import socketio.async_drivers.threading `
-        --hidden-import pkg_resources.py2_warn `
         app/YoutubetoPremiere.py
 } else {
     # macOS build command - use bash for compatibility
-    bash -c "pyinstaller --name YoutubetoPremiere --onedir --add-data 'app/sounds:sounds' --hidden-import engineio.async_drivers.threading --hidden-import socketio.async_drivers.threading --hidden-import pkg_resources.py2_warn app/YoutubetoPremiere.py"
+    bash -c "pyinstaller --name YoutubetoPremiere --onedir -y --add-data 'app/sounds:sounds' --hidden-import engineio.async_drivers.threading app/YoutubetoPremiere.py"
 }
 
 # Copy the build output to the CEP directory

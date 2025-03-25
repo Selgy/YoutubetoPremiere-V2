@@ -129,7 +129,6 @@ jobs:
           pyinstaller --name YoutubetoPremiere --onefile `
             --add-data "app/sounds;sounds" `
             --hidden-import engineio.async_drivers.threading `
-            --hidden-import socketio.async_drivers.threading `
             --hidden-import pkg_resources.py2_warn `
             --version-file version.txt `
               app/YoutubetoPremiere.py
@@ -285,13 +284,25 @@ jobs:
           cp ffmpeg_temp/ffmpeg dist/cep/exec/
           chmod +x dist/cep/exec/ffmpeg
           
+          # Clean up any existing PyInstaller output
+          echo "Cleaning up existing PyInstaller output..."
+          rm -rf dist/YoutubetoPremiere
+          rm -rf build/YoutubetoPremiere
+          
           # Build the Python executable with PyInstaller
           echo "Building Python executable with PyInstaller..."
-          pyinstaller --name YoutubetoPremiere --onedir --debug=all \
+          
+          # More aggressive cleanup just before PyInstaller runs
+          rm -rf dist/YoutubetoPremiere
+          rm -rf build/YoutubetoPremiere
+          mkdir -p dist
+          mkdir -p build
+          
+          pyinstaller --name YoutubetoPremiere --onedir --debug=all -y --clean \
+            --distpath "./dist" \
+            --workpath "./build/YoutubetoPremiere-work" \
             --add-data "app/sounds:sounds" \
             --hidden-import engineio.async_drivers.threading \
-            --hidden-import socketio.async_drivers.threading \
-            --hidden-import pkg_resources.py2_warn \
             app/YoutubetoPremiere.py
             
           # Create app bundle structure

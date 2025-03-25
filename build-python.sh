@@ -40,14 +40,26 @@ else
   echo "ffmpeg already exists at $FFMPEG_PATH"
 fi
 
+# Clean up any existing PyInstaller output
+echo "Cleaning up existing PyInstaller output..."
+rm -rf dist/YoutubetoPremiere
+rm -rf build/YoutubetoPremiere
+
 # Build the Python app with PyInstaller
 echo "Building with PyInstaller..."
-pyinstaller --onedir \
+
+# More aggressive cleanup just before PyInstaller runs
+rm -rf dist/YoutubetoPremiere
+rm -rf build/YoutubetoPremiere
+mkdir -p dist
+mkdir -p build/YoutubetoPremiere-work
+
+pyinstaller --onedir -y --clean \
+  --distpath "./dist" \
+  --workpath "./build/YoutubetoPremiere-work" \
   --name YoutubetoPremiere \
   --add-data "app/sounds:sounds" \
   --hidden-import engineio.async_drivers.threading \
-  --hidden-import socketio.async_drivers.threading \
-  --hidden-import pkg_resources.py2_warn \
   app/YoutubetoPremiere.py
 
 # Copy the executable to CEP directory
