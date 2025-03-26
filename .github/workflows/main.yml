@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - Pre-released
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
@@ -13,17 +15,48 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.set_version.outputs.version }}
+      is_prerelease: ${{ steps.check_tag.outputs.is_prerelease }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set version
-        id: version
+      - name: Check if triggered by tag
+        id: check_tag
         run: |
-          VERSION="2.1.0-pre.$(date +'%Y%m%d%H%M')"
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            echo "Running as a release build from tag"
+          else
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            echo "Running as a pre-release build"
+          fi
+
+      - name: Get package.json version
+        id: package_version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            # Extract version from tag
+            VERSION=${GITHUB_REF#refs/tags/v}
+            echo "Version from tag: $VERSION"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+          else
+            # Read version from package.json
+            VERSION=$(node -p "require('./package.json').version")
+            echo "Version from package.json: $VERSION"
+            echo "package_version=$VERSION" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set version
+        id: set_version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            VERSION=${{ steps.package_version.outputs.version }}
+          else
+            VERSION="${{ steps.package_version.outputs.package_version }}-pre.$(date +'%Y%m%d%H%M')"
+          fi
           echo "Setting version to $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
@@ -263,13 +296,13 @@ jobs:
           echo "Notarization ID for PKG: $NOTARIZATION_ID"
                  
       - name: Rename PKG file
-        run: mv signed_YoutubetoPremiere.pkg YoutubetoPremiere_Mac_arm64.pkg
+        run: mv signed_YoutubetoPremiere.pkg YoutubetoPremiere_Mac_arm64_${{ needs.prepare.outputs.version }}.pkg
         
       - name: Upload Mac ARM64 package
         uses: actions/upload-artifact@v4
         with:
           name: mac-arm64-package
-          path: YoutubetoPremiere_Mac_arm64.pkg
+          path: YoutubetoPremiere_Mac_arm64_${{ needs.prepare.outputs.version }}.pkg
           retention-days: 7
 
   win-build:
@@ -396,7 +429,7 @@ jobs:
       - name: Compile Installer with NSIS
         run: |
           makensis ./installer.nsi
-          Move-Item -Path "YoutubetoPremiere-${{ needs.prepare.outputs.version }}-Setup.exe" -Destination "YoutubetoPremiere_Win.exe"
+          Move-Item -Path "YoutubetoPremiere-${{ needs.prepare.outputs.version }}-Setup.exe" -Destination "YoutubetoPremiere_Win_${{ needs.prepare.outputs.version }}.exe"
         shell: pwsh
 
       - name: List directory contents dist
@@ -406,7 +439,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-package
-          path: YoutubetoPremiere_Win.exe
+          path: YoutubetoPremiere_Win_${{ needs.prepare.outputs.version }}.exe
           retention-days: 7
 
   create-release:
@@ -431,10 +464,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GH_SECRET }}
         with:
-          tag_name: V2.1
-          name: YouTube to Premiere Pro V2.1
-          draft: ${{ github.ref == 'refs/heads/master' }}
-          prerelease: true
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', needs.prepare.outputs.version) }}
+          name: YouTube to Premiere Pro ${{ needs.prepare.outputs.version }}
+          draft: false
+          prerelease: ${{ needs.prepare.outputs.is_prerelease == 'true' }}
           files: |
-            YoutubetoPremiere_Mac_arm64.pkg
-            YoutubetoPremiere_Win.exe 
+            *.pkg
+            *.exe 
