@@ -255,9 +255,9 @@ jobs:
           
           # Run a quick check to ensure no TCL/TK files are in the output
           Write-Host "Checking for any remaining TCL/TK files..."
-          $tcl_files = Get-ChildItem -Path "dist\YoutubetoPremiere\_internal" -Recurse -Include "*tcl*", "*tk*" -ErrorAction SilentlyContinue
-          if ($tcl_files) {
-            Write-Host "Warning: Found some TCL/TK files that were not excluded: $($tcl_files.Count) files"
+          $TCL_COUNT = (Get-ChildItem -Path "dist\YoutubetoPremiere\_internal" -Recurse -Include "*tcl*","*tk*" | Measure-Object).Count
+          if ($TCL_COUNT -gt 0) {
+            Write-Host "Warning: Found some TCL/TK files that were not excluded: $TCL_COUNT files"
           } else {
             Write-Host "No TCL/TK files found in the output - good!"
           }
