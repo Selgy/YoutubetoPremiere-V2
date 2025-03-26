@@ -105,21 +105,46 @@ jobs:
           KEYCHAIN_PATH=$RUNNER_TEMP/SelgykeyAPP.keychain-db
           
           # Import certificate and provisioning profile from secrets
-          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
-          echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode -o $PP_PATH
+          echo "Decoding certificate..."
+          echo "$BUILD_CERTIFICATE_BASE64" | base64 --decode > $CERTIFICATE_PATH
           
-          # Create temporary keychain
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          # Check if the certificate file was created correctly
+          if [ ! -s "$CERTIFICATE_PATH" ]; then
+            echo "Error: Certificate file is empty!"
+            exit 1
+          fi
+          
+          echo "Certificate file size: $(wc -c < $CERTIFICATE_PATH) bytes"
+          
+          # Decode provisioning profile if provided
+          if [ -n "$BUILD_PROVISION_PROFILE_BASE64" ]; then
+            echo "Decoding provisioning profile..."
+            echo "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode > $PP_PATH
+          fi
+          
+          # Create and configure keychain
+          echo "Creating temporary keychain..."
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH || true
           security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           
-          # Import certificate to keychain
-          security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security list-keychain -d user -s $KEYCHAIN_PATH
+          # Set keychain as default
+          security list-keychains -d user -s $KEYCHAIN_PATH $(security list-keychains -d user | sed s/\"//g)
+          security default-keychain -s $KEYCHAIN_PATH
           
-          # Apply provisioning profile
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
+          # Allow codesigning
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          
+          # Import certificate to keychain
+          echo "Importing certificate to keychain..."
+          security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          
+          # Apply provisioning profile if it exists
+          if [ -f "$PP_PATH" ]; then
+            echo "Installing provisioning profile..."
+            mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+            cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
+          fi
           
           # Find certificate in custom keychain
           echo "Finding certificate in SelgykeyAPP keychain:"
@@ -239,17 +264,48 @@ jobs:
           KEYCHAIN_PATH=$RUNNER_TEMP/Selgykey.keychain-db
 
           # Decode and import installer certificate from secrets
-          echo -n "$INSTALLER_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
+          echo "Decoding installer certificate..."
+          echo "$INSTALLER_CERTIFICATE_BASE64" | base64 --decode > $CERTIFICATE_PATH
+          
+          # Check if the certificate file was created correctly
+          if [ ! -s "$CERTIFICATE_PATH" ]; then
+            echo "Error: Installer certificate file is empty!"
+            exit 1
+          fi
+          
+          echo "Installer certificate file size: $(wc -c < $CERTIFICATE_PATH) bytes"
 
           # Create temporary keychain for installer certificate
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          echo "Creating installer certificate keychain..."
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH || true
           security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          
+          # Set keychain as default
+          security list-keychains -d user -s $KEYCHAIN_PATH $(security list-keychains -d user | sed s/\"//g)
+          security default-keychain -s $KEYCHAIN_PATH
+          
+          # Allow codesigning
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          
+          # Import certificate to keychain
+          echo "Importing installer certificate to keychain..."
           security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          
+          # List the certificate details
+          echo "Listing installer certificate details:"
+          security find-certificate -a $KEYCHAIN_PATH
+          
+          # Find code signing identities
+          PRODUCTSIGN_IDENTITY=$(security find-identity -v -p basic $KEYCHAIN_PATH | grep 'Developer ID Installer' | head -n 1 | awk '{print $2}')
+          echo "Found installer signing identity: $PRODUCTSIGN_IDENTITY"
+          
+          if [ -z "$PRODUCTSIGN_IDENTITY" ]; then
+            echo "Error: Could not find a valid installer signing identity!"
+            exit 1
+          fi
 
-          # Set the keychain for codesigning
-          security list-keychain -d user -s $KEYCHAIN_PATH
-
+          # Build the package
           PACKAGE_IDENTIFIER="com.selgy.youtubetopremiere"
           PACKAGE_VERSION="${{ needs.prepare.outputs.version }}"
           PKG_ROOT="./pkgroot"
@@ -258,6 +314,8 @@ jobs:
           
           ls -la pkgroot/
 
+          # Build package
+          echo "Building package..."
           pkgbuild --root "$PKG_ROOT" \
             --identifier "$PACKAGE_IDENTIFIER" \
             --version "$PACKAGE_VERSION" \
@@ -266,10 +324,11 @@ jobs:
             "$OUTPUT_PKG"
 
           # Sign the package with the installer certificate
-          PRODUCTSIGN_IDENTITY=$(security find-identity -v -p basic "$KEYCHAIN_PATH" | grep 'Developer ID Installer' | head -n 1 | awk '{print $2}')
+          echo "Signing package with identity: $PRODUCTSIGN_IDENTITY"
           productsign --sign "$PRODUCTSIGN_IDENTITY" "$OUTPUT_PKG" "signed_$OUTPUT_PKG"
 
           # Verify the signed package
+          echo "Verifying signed package..."
           pkgutil --check-signature "signed_$OUTPUT_PKG"
 
           # Remove temporary keychain
@@ -348,8 +407,8 @@ jobs:
           
       - name: Rename FFmpeg Folder
         run: |
-          $ffmpegDir = Get-ChildItem -Path ./ffmpeg -Directory | Select-Object -First 1
-          Rename-Item -Path $ffmpegDir.FullName -NewName "ffmpeg_win"
+          $ffmpgDir = Get-ChildItem -Path ./ffmpeg -Directory | Select-Object -First 1
+          Rename-Item -Path $ffmpgDir.FullName -NewName "ffmpeg_win"
           Move-Item -Path ./ffmpeg/ffmpeg_win -Destination ./
         shell: pwsh
 
