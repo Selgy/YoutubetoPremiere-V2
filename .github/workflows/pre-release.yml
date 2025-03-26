@@ -121,29 +121,60 @@ jobs:
           chmod +x app/exec/ffmpeg
           ls -la app/exec/
       
-      - name: Build with Yarn (includes both extension and executable)
+      - name: Build Extension with Yarn
         run: |
-          echo "Building with yarn build-mac..."
+          echo "Building extension with yarn build-mac..."
           # Set NO_WATCH to true to prevent the build from watching for changes
           export NO_WATCH=true
           yarn build-mac
           
           # Check the results
-          echo "Checking extension and executable files after build:"
-          ls -la dist/ || echo "dist directory not found!"
+          echo "Checking CEP extension files after build:"
+          ls -la dist/cep/ || echo "dist/cep directory not found!"
+
+      - name: Build Application with PyInstaller
+        run: |
+          pip install --upgrade pyinstaller
+          pyinstaller --onedir --clean --debug=all \
+            --hidden-import=engineio.async_drivers.eventlet \
+            --hidden-import=engineio.async_drivers.gevent_uwsgi \
+            --hidden-import=engineio.async_drivers.gevent \
+            --hidden-import=engineio.async_drivers.threading \
+            --hidden-import=engineio.async_drivers \
+            --hidden-import=gevent \
+            --hidden-import=websocket \
+            --hidden-import=websockets \
+            --hidden-import=wsproto \
+            --hidden-import=pygame \
+            --hidden-import=PIL \
+            --hidden-import=flask \
+            --add-binary "app/exec/ffmpeg:./exec/" \
+            --hidden-import=flask_cors \
+            --hidden-import=flask_socketio \
+            --hidden-import=yt_dlp \
+            --hidden-import=pymiere \
+            --hidden-import=psutil \
+            --hidden-import=tkinter \
+            --hidden-import=yt_dlp \
+            --add-data "./app/sounds/*:./sounds/" \
+            --add-data "./app/*.py:./app/" \
+            --icon "./icon.icns" \
+            app/YoutubetoPremiere.py
+          
+          # Create version file
+          echo "${{ needs.prepare.outputs.version }}" > dist/YoutubetoPremiere/version.txt
+          
+          # Copy CEP extension files to the YoutubetoPremiere directory
+          mkdir -p dist/YoutubetoPremiere/com.selgy.youtubetopremiere
+          cp -R dist/cep/* dist/YoutubetoPremiere/com.selgy.youtubetopremiere/ || echo "Error copying CEP files, check if dist/cep exists"
               
       - name: Verify Executable Contents
         run: |
           echo "Verifying executable contents..."
-          ls -la ./dist/YoutubetoPremiere || echo "YoutubetoPremiere directory not found!"
-          echo "Verifying extension files:"
-          ls -la ./dist/cep || echo "CEP directory not found!"
+          ls -la ./dist/YoutubetoPremiere
+          echo "Verifying CEP extension files:"
+          ls -la ./dist/YoutubetoPremiere/com.selgy.youtubetopremiere || echo "CEP directory not found in application bundle"
         shell: /bin/bash -e {0}
-
-      - name: Copy CEP extension to the executable directory
-        run: |
-          mkdir -p ./dist/YoutubetoPremiere/com.selgy.youtubetopremiere
-          cp -R ./dist/cep/* ./dist/YoutubetoPremiere/com.selgy.youtubetopremiere/ || echo "Error copying CEP files"
 
       - name: Sign all binaries
         run: |
@@ -299,6 +330,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Build Extension with Yarn
+        run: |
+          echo "Building extension with yarn build..."
+          $env:NO_WATCH = "true"
+          yarn build
+          
+          # Check the results
+          echo "Checking CEP extension files after build:"
+          if (Test-Path "dist/cep") {
+              Get-ChildItem -Path "dist\cep" -Recurse | Select-Object FullName
+          } else {
+              echo "dist/cep directory not found!"
+          }
+        shell: pwsh
+
       - name: Download FFmpeg
         run: |
           mkdir ffmpeg
@@ -325,47 +371,54 @@ jobs:
         run: |
           Get-ChildItem -Recurse -Filter ffmpeg.exe | Format-Table FullName
 
-      - name: Copy FFmpeg to app/exec directory
-        shell: pwsh
-        run: |
-          # Make sure the destination directory exists
-          New-Item -Path "app/exec" -ItemType Directory -Force
-          
-          # Copy ffmpeg.exe to the app/exec directory
-          Copy-Item -Path "./ffmpeg_win/bin/ffmpeg.exe" -Destination "app/exec/ffmpeg.exe" -Force
-          
-          # Verify the copy
-          if (Test-Path "app/exec/ffmpeg.exe") {
-            Write-Host "FFmpeg successfully copied to app/exec"
-          } else {
-            Write-Error "Failed to copy FFmpeg to app/exec"
-            exit 1
-          }
+      - name: Install PyInstaller
+        run: pip install pyinstaller
 
-      - name: Build with Yarn (includes both extension and executable)
+      - name: Build Application with PyInstaller
         run: |
-          echo "Building with yarn build..."
-          $env:NO_WATCH = "true"
-          yarn build
+          pyinstaller --onefile --clean --debug all `
+            --hidden-import=engineio.async_drivers.eventlet `
+            --hidden-import=engineio.async_drivers.gevent_uwsgi `
+            --hidden-import=engineio.async_drivers.gevent `
+            --hidden-import=engineio.async_drivers `
+            --hidden-import=gevent `
+            --hidden-import=engineio.async_drivers.threading `
+            --hidden-import=pygame.freetype `
+            --hidden-import=os `
+            --hidden-import=time `
+            --hidden-import=pygame.mixer `
+            --hidden-import=yt_dlp `
+            --hidden-import=pymiere `
+            --hidden-import=sys `
+            --hidden-import=logging `
+            --hidden-import=flask_cors `
+            --hidden-import=flask `
+            --add-binary "app\_Include\yt-dlp.exe;app/_Include/" `
+            --hidden-import=flask_socketio `
+            --hidden-import=json `
+            --hidden-import=threading `
+            --hidden-import=PIL `
+            --hidden-import=re `
+            --hidden-import=psutil `
+            --hidden-import=tkinter `
+            --hidden-import=subprocess `
+            --add-binary "./ffmpeg_win/bin/ffmpeg.exe;./ffmpeg_win/bin/" `
+            --add-data "./app/sounds/*;./sounds/" `
+            --add-data "./app/*.py;./app/" `
+            --icon "./icon.ico" `
+            app/YoutubetoPremiere.py
+            
+          # Create version file
+          Set-Content -Path "dist/version.txt" -Value "${{ needs.prepare.outputs.version }}"
           
-          # Check the results
-          echo "Checking extension and executable files after build:"
-          Get-ChildItem -Path "dist" -Recurse | Select-Object -First 10 FullName
-        shell: pwsh
-
-      - name: Create CEP Extension Directory
-        shell: pwsh
-        run: |
-          # Create directory for CEP extension
+          # Create directory for CEP extension and copy files
           New-Item -Path "dist/com.selgy.youtubetopremiere" -ItemType Directory -Force
-          
-          # Copy CEP extension files
           if (Test-Path "dist/cep") {
             Copy-Item -Path "dist/cep/*" -Destination "dist/com.selgy.youtubetopremiere/" -Recurse -Force
-            Write-Host "CEP extension files copied successfully"
           } else {
             Write-Warning "CEP extension directory not found. The installer will be missing CEP files."
           }
+        shell: pwsh
 
       - name: Install NSIS
         run: choco install nsis

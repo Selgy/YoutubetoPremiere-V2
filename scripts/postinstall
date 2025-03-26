@@ -1,0 +1,55 @@
+#!/bin/bash
+
+# Exit on any error
+set -e
+
+# Get the installation directory from the first argument
+INSTALL_DIR="$3"
+APP_DIR="$INSTALL_DIR/YoutubetoPremiere"
+EXTENSION_DIR="$INSTALL_DIR/YoutubetoPremiere/com.selgy.youtubetopremiere"
+
+echo "Running postinstall script..."
+echo "Installation directory: $INSTALL_DIR"
+
+# Create CEP extension directory if it doesn't exist
+echo "Creating CEP extension directories..."
+mkdir -p "/Library/Application Support/Adobe/CEP/extensions/com.selgy.youtubetopremiere"
+mkdir -p "$HOME/Library/Application Support/Adobe/CEP/extensions/com.selgy.youtubetopremiere"
+
+# Copy extension files to CEP directory if they exist
+if [ -d "$EXTENSION_DIR" ]; then
+    echo "Copying extension files to system-wide CEP directory..."
+    cp -R "$EXTENSION_DIR/"* "/Library/Application Support/Adobe/CEP/extensions/com.selgy.youtubetopremiere/"
+    
+    echo "Copying extension files to user CEP directory..."
+    cp -R "$EXTENSION_DIR/"* "$HOME/Library/Application Support/Adobe/CEP/extensions/com.selgy.youtubetopremiere/"
+fi
+
+# Make sure the application is executable
+echo "Setting executable permissions..."
+if [ -f "$APP_DIR/YoutubetoPremiere" ]; then
+    chmod +x "$APP_DIR/YoutubetoPremiere"
+fi
+
+if [ -f "$APP_DIR/exec/YoutubetoPremiere" ]; then
+    chmod +x "$APP_DIR/exec/YoutubetoPremiere"
+fi
+
+if [ -f "$APP_DIR/exec/ffmpeg" ]; then
+    chmod +x "$APP_DIR/exec/ffmpeg"
+fi
+
+# Set proper ownership for the CEP extension directories
+echo "Setting ownership for CEP directories..."
+chown -R root:wheel "/Library/Application Support/Adobe/CEP/extensions/com.selgy.youtubetopremiere"
+chmod -R 755 "/Library/Application Support/Adobe/CEP/extensions/com.selgy.youtubetopremiere"
+
+# Set proper ownership for user's CEP extension directory
+CURRENT_USER=$(stat -f "%Su" "$HOME")
+if [ -n "$CURRENT_USER" ]; then
+    chown -R "$CURRENT_USER:staff" "$HOME/Library/Application Support/Adobe/CEP/extensions/com.selgy.youtubetopremiere"
+    chmod -R 755 "$HOME/Library/Application Support/Adobe/CEP/extensions/com.selgy.youtubetopremiere"
+fi
+
+echo "Postinstall completed successfully."
+exit 0 
