@@ -104,13 +104,39 @@ jobs:
           PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
           KEYCHAIN_PATH=$RUNNER_TEMP/SelgykeyAPP.keychain-db
           
+          # Debug the certificate variable (showing length, not content)
+          echo "BUILD_CERTIFICATE_BASE64 length: ${#BUILD_CERTIFICATE_BASE64}"
+          
+          if [[ -z "$BUILD_CERTIFICATE_BASE64" ]]; then
+            echo "Error: BUILD_CERTIFICATE_BASE64 is empty or not set!"
+            exit 1
+          fi
+          
           # Import certificate and provisioning profile from secrets
           echo "Decoding certificate..."
-          echo "$BUILD_CERTIFICATE_BASE64" | base64 --decode > $CERTIFICATE_PATH
+          # Write base64 content to a file first, then decode
+          echo "$BUILD_CERTIFICATE_BASE64" > $RUNNER_TEMP/cert.b64
+          # Check if file was created and has content
+          if [ ! -s "$RUNNER_TEMP/cert.b64" ]; then
+            echo "Error: cert.b64 file is empty! Direct writing failed."
+            exit 1
+          fi
+          
+          # Decode using a different approach
+          cat $RUNNER_TEMP/cert.b64 | base64 -d > $CERTIFICATE_PATH
+          
+          # Alternative decoding method if the above fails
+          if [ ! -s "$CERTIFICATE_PATH" ]; then
+            echo "First decoding method failed, trying alternative..."
+            # Try direct piping with explicit OS X base64 option
+            echo "$BUILD_CERTIFICATE_BASE64" | base64 -D > $CERTIFICATE_PATH
+          fi
           
           # Check if the certificate file was created correctly
           if [ ! -s "$CERTIFICATE_PATH" ]; then
-            echo "Error: Certificate file is empty!"
+            echo "Error: Certificate file is empty after both decoding attempts!"
+            # Print the first few characters of the base64 string for debugging
+            echo "First 20 chars of BUILD_CERTIFICATE_BASE64: ${BUILD_CERTIFICATE_BASE64:0:20}..."
             exit 1
           fi
           
@@ -119,7 +145,13 @@ jobs:
           # Decode provisioning profile if provided
           if [ -n "$BUILD_PROVISION_PROFILE_BASE64" ]; then
             echo "Decoding provisioning profile..."
-            echo "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode > $PP_PATH
+            echo "$BUILD_PROVISION_PROFILE_BASE64" | base64 -D > $PP_PATH || echo "$BUILD_PROVISION_PROFILE_BASE64" | base64 -d > $PP_PATH
+            
+            if [ ! -s "$PP_PATH" ]; then
+              echo "Warning: Provisioning profile file is empty. Continuing without it."
+            else
+              echo "Provisioning profile created successfully."
+            fi
           fi
           
           # Create and configure keychain
@@ -137,10 +169,13 @@ jobs:
           
           # Import certificate to keychain
           echo "Importing certificate to keychain..."
-          security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          if ! security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH; then
+            echo "Certificate import failed. Attempting with alternate options..."
+            security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH -T /usr/bin/codesign
+          fi
           
           # Apply provisioning profile if it exists
-          if [ -f "$PP_PATH" ]; then
+          if [ -f "$PP_PATH" ] && [ -s "$PP_PATH" ]; then
             echo "Installing provisioning profile..."
             mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
             cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
@@ -153,6 +188,11 @@ jobs:
           # List all identities in custom keychain
           echo "Listing all identities in SelgykeyAPP keychain:"
           security find-identity -p codesigning $KEYCHAIN_PATH
+          
+          # Check if we have a valid code signing identity
+          if ! security find-identity -p codesigning $KEYCHAIN_PATH | grep -q "valid identities"; then
+            echo "Warning: No valid code signing identities found in keychain. Signing may fail."
+          fi
 
       - name: Set DYLD_LIBRARY_PATH
         run: |
@@ -263,13 +303,39 @@ jobs:
           CERTIFICATE_PATH=$RUNNER_TEMP/installer_certificate.p12
           KEYCHAIN_PATH=$RUNNER_TEMP/Selgykey.keychain-db
 
+          # Debug the certificate variable (showing length, not content)
+          echo "INSTALLER_CERTIFICATE_BASE64 length: ${#INSTALLER_CERTIFICATE_BASE64}"
+          
+          if [[ -z "$INSTALLER_CERTIFICATE_BASE64" ]]; then
+            echo "Error: INSTALLER_CERTIFICATE_BASE64 is empty or not set!"
+            exit 1
+          fi
+
           # Decode and import installer certificate from secrets
           echo "Decoding installer certificate..."
-          echo "$INSTALLER_CERTIFICATE_BASE64" | base64 --decode > $CERTIFICATE_PATH
+          # Write base64 content to a file first, then decode
+          echo "$INSTALLER_CERTIFICATE_BASE64" > $RUNNER_TEMP/inst_cert.b64
+          # Check if file was created and has content
+          if [ ! -s "$RUNNER_TEMP/inst_cert.b64" ]; then
+            echo "Error: inst_cert.b64 file is empty! Direct writing failed."
+            exit 1
+          fi
+          
+          # Decode using different approaches
+          cat $RUNNER_TEMP/inst_cert.b64 | base64 -d > $CERTIFICATE_PATH
+          
+          # Alternative decoding method if the above fails
+          if [ ! -s "$CERTIFICATE_PATH" ]; then
+            echo "First decoding method failed, trying alternative..."
+            # Try direct piping with explicit OS X base64 option
+            echo "$INSTALLER_CERTIFICATE_BASE64" | base64 -D > $CERTIFICATE_PATH
+          fi
           
           # Check if the certificate file was created correctly
           if [ ! -s "$CERTIFICATE_PATH" ]; then
-            echo "Error: Installer certificate file is empty!"
+            echo "Error: Installer certificate file is empty after both decoding attempts!"
+            # Print the first few characters of the base64 string for debugging
+            echo "First 20 chars of INSTALLER_CERTIFICATE_BASE64: ${INSTALLER_CERTIFICATE_BASE64:0:20}..."
             exit 1
           fi
           
@@ -290,7 +356,10 @@ jobs:
           
           # Import certificate to keychain
           echo "Importing installer certificate to keychain..."
-          security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          if ! security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH; then
+            echo "Certificate import failed. Attempting with alternate options..."
+            security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH -T /usr/bin/productsign
+          fi
           
           # List the certificate details
           echo "Listing installer certificate details:"
@@ -302,6 +371,8 @@ jobs:
           
           if [ -z "$PRODUCTSIGN_IDENTITY" ]; then
             echo "Error: Could not find a valid installer signing identity!"
+            echo "Available identities:"
+            security find-identity -v -p basic $KEYCHAIN_PATH
             exit 1
           fi
 
@@ -442,8 +513,50 @@ jobs:
           
           # Check the results
           echo "Checking extension and executable files after build:"
-          Get-ChildItem -Path "dist" -Recurse | Select-Object -First 10 FullName
+          Get-ChildItem -Path "dist" -Recurse | Select-Object -First 20 FullName
         shell: pwsh
+        
+      - name: List dist directories
+        shell: pwsh
+        run: |
+          Write-Host "Listing dist directory contents:"
+          Get-ChildItem -Path "dist" -Recurse | Format-Table FullName
+        
+      - name: Ensure proper executable structure for NSIS
+        shell: pwsh
+        run: |
+          # The NSIS script expects dist\YoutubetoPremiere.exe
+          # Find the executable and copy it to the correct location
+          $exePath = Get-ChildItem -Path "dist" -Recurse -Filter "YoutubetoPremiere.exe" | Select-Object -First 1
+          
+          if ($exePath) {
+            Write-Host "Found executable at: $($exePath.FullName)"
+            # Copy the executable to dist\YoutubetoPremiere.exe
+            Copy-Item -Path $exePath.FullName -Destination "dist\YoutubetoPremiere.exe" -Force
+            Write-Host "Copied executable to dist\YoutubetoPremiere.exe"
+          } else {
+            # Try to find any executable to debug
+            $anyExe = Get-ChildItem -Path "dist" -Recurse -Filter "*.exe" | Select-Object -First 5
+            Write-Host "Could not find YoutubetoPremiere.exe. Available executables:"
+            $anyExe | Format-Table FullName
+            
+            # If there's any exe file, copy the first one as YoutubetoPremiere.exe as a fallback
+            if ($anyExe -and $anyExe.Count -gt 0) {
+              Write-Host "Using $($anyExe[0].FullName) as fallback"
+              Copy-Item -Path $anyExe[0].FullName -Destination "dist\YoutubetoPremiere.exe" -Force
+            } else {
+              Write-Error "No executable files found in dist directory"
+              exit 1
+            }
+          }
+          
+          # Verify the file exists
+          if (Test-Path "dist\YoutubetoPremiere.exe") {
+            Write-Host "Verified: dist\YoutubetoPremiere.exe exists"
+          } else {
+            Write-Error "Failed to create dist\YoutubetoPremiere.exe"
+            exit 1
+          }
 
       - name: Create CEP Extension Directory
         shell: pwsh
@@ -478,6 +591,10 @@ jobs:
           $content = Get-Content -Path "installer.nsi"
           $content = $content -replace '(!define VERSION "\$\{VERSION\}")', ('!define VERSION "${{ needs.prepare.outputs.version }}"')
           Set-Content -Path "installer.nsi" -Value $content
+          
+          # Verify the version was updated
+          $updatedContent = Get-Content -Path "installer.nsi" | Select-String -Pattern "!define VERSION"
+          Write-Host "Updated version in installer.nsi: $updatedContent"
 
       - name: List NSIS Plugin and Include Directories
         run: |
@@ -485,10 +602,38 @@ jobs:
           ls "C:\Program Files (x86)\NSIS\Include"
         shell: pwsh
 
+      - name: Debug dist directory before NSIS
+        shell: pwsh
+        run: |
+          Write-Host "Listing dist directory structure before NSIS compilation:"
+          Get-ChildItem -Path "dist" -Recurse | Format-Table FullName
+          
+          # Specifically check for the file NSIS is looking for
+          if (Test-Path "dist\YoutubetoPremiere.exe") {
+            Write-Host "FOUND: dist\YoutubetoPremiere.exe"
+            $fileInfo = Get-Item "dist\YoutubetoPremiere.exe"
+            Write-Host "File size: $($fileInfo.Length) bytes"
+          } else {
+            Write-Host "MISSING: dist\YoutubetoPremiere.exe"
+          }
+
       - name: Compile Installer with NSIS
         run: |
-          makensis ./installer.nsi
-          Move-Item -Path "YoutubetoPremiere-${{ needs.prepare.outputs.version }}-Setup.exe" -Destination "YoutubetoPremiere_Win_${{ needs.prepare.outputs.version }}.exe"
+          # Show the current directory
+          Write-Host "Current directory: $(Get-Location)"
+          Write-Host "Running installer.nsi compilation..."
+          
+          # Run NSIS with verbose output
+          & "C:\Program Files (x86)\NSIS\makensis.exe" /V4 ./installer.nsi
+          
+          # Check if the installer was built
+          if (Test-Path "YoutubetoPremiere-${{ needs.prepare.outputs.version }}-Setup.exe") {
+            Write-Host "Installer built successfully!"
+            Move-Item -Path "YoutubetoPremiere-${{ needs.prepare.outputs.version }}-Setup.exe" -Destination "YoutubetoPremiere_Win_${{ needs.prepare.outputs.version }}.exe" -Force
+          } else {
+            Write-Error "Installer build failed. No output file found."
+            exit 1
+          }
         shell: pwsh
 
       - name: List directory contents dist

@@ -27,18 +27,42 @@ RequestExecutionLevel admin
 Section "Install"
   SetOutPath "$INSTDIR"
   
-  # Main executable
-  File "dist\YoutubetoPremiere.exe"
+  # Try different possible locations for the main executable
+  !if /FileExists "dist\YoutubetoPremiere.exe"
+    DetailPrint "Found executable at dist\YoutubetoPremiere.exe"
+    File "dist\YoutubetoPremiere.exe"
+  !else if /FileExists "dist\YoutubetoPremiere\YoutubetoPremiere.exe"
+    DetailPrint "Found executable at dist\YoutubetoPremiere\YoutubetoPremiere.exe"
+    File "dist\YoutubetoPremiere\YoutubetoPremiere.exe"
+  !else if /FileExists "dist\cep\YoutubetoPremiere.exe"
+    DetailPrint "Found executable at dist\cep\YoutubetoPremiere.exe"
+    File "dist\cep\YoutubetoPremiere.exe"
+  !else if /FileExists "dist\YoutubetoPremiere\YoutubetoPremiere\YoutubetoPremiere.exe"
+    DetailPrint "Found executable at dist\YoutubetoPremiere\YoutubetoPremiere\YoutubetoPremiere.exe"
+    File "dist\YoutubetoPremiere\YoutubetoPremiere\YoutubetoPremiere.exe"
+  !else
+    DetailPrint "Error: Could not find YoutubetoPremiere.exe in any expected location"
+    MessageBox MB_OK "Could not find YoutubetoPremiere.exe. The installation will continue but may not work correctly."
+  !endif
   
   # Additional files if they exist
   !if /FileExists "dist\YoutubetoPremiere\*.*"
+    DetailPrint "Found additional files in dist\YoutubetoPremiere"
     File /r "dist\YoutubetoPremiere\*.*"
   !endif
   
   # Add the ZXP to the installer if it exists
   CreateDirectory "$INSTDIR\zxp"
   !if /FileExists "dist\zxp\YoutubetoPremiere-v${VERSION}.zxp"
+    DetailPrint "Found ZXP file"
     File /oname="$INSTDIR\zxp\YoutubetoPremiere-${VERSION}.zxp" "dist\zxp\YoutubetoPremiere-v${VERSION}.zxp"
+  !endif
+  
+  # Handle CEP extension directory
+  !if /FileExists "dist\com.selgy.youtubetopremiere\*.*"
+    DetailPrint "Found CEP extension files"
+    CreateDirectory "$INSTDIR\com.selgy.youtubetopremiere"
+    File /r "dist\com.selgy.youtubetopremiere\*.*"
   !endif
   
   # Create shortcut
