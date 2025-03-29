@@ -94,8 +94,8 @@ jobs:
 
       - name: Create and Configure Keychain
         env:
-          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
-          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE }}
+          P12_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
@@ -258,7 +258,7 @@ jobs:
       - name: "Notarize app bundle"
         env:
           MACOS_NOTARIZATION_APPLE_ID: ${{ secrets.APPLE_ID }}
-          MACOS_NOTARIZATION_PWD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+          MACOS_NOTARIZATION_PWD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           MACOS_NOTARIZATION_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           echo "Create keychain profile"
@@ -295,8 +295,8 @@ jobs:
     
       - name: Create and Sign PKG
         env:
-          INSTALLER_CERTIFICATE_BASE64: ${{ secrets.INSTALLER_CERTIFICATE_BASE64 }}
-          P12_PASSWORD: ${{ secrets.INSTALLER_P12_PASSWORD }}
+          INSTALLER_CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
+          P12_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           # Create variables
@@ -409,7 +409,7 @@ jobs:
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+          APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: |
           # Store the notarization credentials
           echo "Create keychain profile for notarization"
