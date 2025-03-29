@@ -566,7 +566,7 @@ function sendURL(downloadType, additionalData = {}) {
                 const serverUrl = 'http://localhost:3001/handle-video-url';
                 const requestData = {
                     url: currentVideoUrl,
-                    downloadType: downloadType,
+                    type: downloadType,
                     ...additionalData
                 };
 

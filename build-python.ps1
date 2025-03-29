@@ -12,8 +12,23 @@ if (!(Test-Path "dist\cep\js")) {
 if (!(Test-Path "dist\cep\jsx")) {
     New-Item -Path "dist\cep\jsx" -ItemType Directory -Force
 }
-if (!(Test-Path "dist\cep\sounds")) {
-    New-Item -Path "dist\cep\sounds" -ItemType Directory -Force
+if (!(Test-Path "dist\cep\exec\sounds")) {
+    Write-Host "Creating directory: dist\cep\exec\sounds"
+    New-Item -Path "dist\cep\exec\sounds" -ItemType Directory -Force
+}
+
+# Create ZXP distribution directories
+if (!(Test-Path "dist\zxp\cep\exec")) {
+    New-Item -Path "dist\zxp\cep\exec" -ItemType Directory -Force
+}
+if (!(Test-Path "dist\zxp\cep\js")) {
+    New-Item -Path "dist\zxp\cep\js" -ItemType Directory -Force
+}
+if (!(Test-Path "dist\zxp\cep\jsx")) {
+    New-Item -Path "dist\zxp\cep\jsx" -ItemType Directory -Force
+}
+if (!(Test-Path "dist\zxp\cep\exec\sounds")) {
+    New-Item -Path "dist\zxp\cep\exec\sounds" -ItemType Directory -Force
 }
 
 # Create src/exec/sounds directory if it doesn't exist
@@ -87,25 +102,114 @@ New-Item -Path "dist" -ItemType Directory -Force -ErrorAction SilentlyContinue |
 New-Item -Path "build/YoutubetoPremiere-work" -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
 
 if ($isWindows) {
+    # Create a variable to store additional data parameters
+    $dataParams = ""
+    
+    # Only add sounds if they exist and have actual sound files
+    if ((Test-Path "app\sounds") -and (Get-ChildItem -Path "app\sounds" -File -Exclude ".gitkeep" | Measure-Object).Count -gt 0) {
+        $dataParams += " --add-data `"app/sounds;exec/sounds`" "
+    }
+    
     # Windows build command
     pyinstaller --name YoutubetoPremiere --onedir -y --clean `
         --distpath "./dist" `
         --workpath "./build/YoutubetoPremiere-work" `
-        --add-data "app/sounds;sounds" `
+        $dataParams `
+        --add-data "app/*.py;." `
         --hidden-import engineio.async_drivers.threading `
+        --hidden-import flask_socketio `
+        --hidden-import flask_cors `
+        --hidden-import werkzeug `
+        --hidden-import yt_dlp `
+        --hidden-import psutil `
+        --hidden-import requests `
+        --hidden-import tqdm `
+        --hidden-import curl_cffi `
+        --hidden-import python_dotenv `
+        --hidden-import eventlet `
+        --hidden-import gevent_websocket `
+        --hidden-import simple_websocket `
+        --hidden-import video_processing `
+        --hidden-import utils `
+        --hidden-import init `
+        --hidden-import routes `
+        --collect-all yt_dlp `
+        --collect-all flask `
+        --collect-all flask_socketio `
+        --collect-all flask_cors `
+        --collect-all werkzeug `
+        --collect-all psutil `
+        --collect-all requests `
+        --collect-all tqdm `
+        --collect-all curl_cffi `
+        --collect-all python_dotenv `
+        --collect-all eventlet `
+        --collect-all gevent_websocket `
+        --collect-all simple_websocket `
         app/YoutubetoPremiere.py
 } else {
+    # For macOS, build a similar command dynamically
+    $macCommand = "pyinstaller --name YoutubetoPremiere --onedir -y"
+    
+    # Only add sounds if they exist and have actual sound files
+    if ((Test-Path "app/sounds") -and (Get-ChildItem -Path "app/sounds" -File -Exclude ".gitkeep" | Measure-Object).Count -gt 0) {
+        $macCommand += " --add-data 'app/sounds:exec/sounds'"
+    }
+    
+    $macCommand += " --add-data 'app/*.py:.'"
+    
+    # Add the rest of the parameters
+    $macCommand += " --hidden-import engineio.async_drivers.threading --hidden-import flask_socketio"
+    $macCommand += " --hidden-import flask_cors --hidden-import werkzeug --hidden-import yt_dlp"
+    $macCommand += " --hidden-import psutil --hidden-import requests --hidden-import tqdm"
+    $macCommand += " --hidden-import curl_cffi --hidden-import python_dotenv --hidden-import eventlet"
+    $macCommand += " --hidden-import gevent_websocket --hidden-import simple_websocket --hidden-import video_processing"
+    $macCommand += " --hidden-import utils --hidden-import init --hidden-import routes"
+    $macCommand += " --collect-all yt_dlp --collect-all flask --collect-all flask_socketio"
+    $macCommand += " --collect-all flask_cors --collect-all werkzeug --collect-all psutil"
+    $macCommand += " --collect-all requests --collect-all tqdm --collect-all curl_cffi"
+    $macCommand += " --collect-all python_dotenv --collect-all eventlet --collect-all gevent_websocket"
+    $macCommand += " --collect-all simple_websocket app/YoutubetoPremiere.py"
+    
     # macOS build command - use bash for compatibility
-    bash -c "pyinstaller --name YoutubetoPremiere --onedir -y --add-data 'app/sounds:sounds' --hidden-import engineio.async_drivers.threading app/YoutubetoPremiere.py"
+    bash -c $macCommand
 }
 
 # Copy the build output to the CEP directory
-if (Test-Path "dist/YoutubetoPremiere/YoutubetoPremiere" -PathType Leaf) {
-    Write-Host "Copying built executable to dist/cep/exec"
-    Copy-Item -Path "dist/YoutubetoPremiere/YoutubetoPremiere" -Destination "dist/cep/exec/" -Force
-} elseif (Test-Path "dist/YoutubetoPremiere/YoutubetoPremiere.exe" -PathType Leaf) {
-    Write-Host "Copying built executable to dist/cep/exec"
-    Copy-Item -Path "dist/YoutubetoPremiere/YoutubetoPremiere.exe" -Destination "dist/cep/exec/" -Force
+$executablePaths = @(
+    "dist/YoutubetoPremiere/YoutubetoPremiere",
+    "dist/YoutubetoPremiere/YoutubetoPremiere.exe",
+    "dist/YoutubetoPremiere.exe"
+)
+
+$executableCopied = $false
+foreach ($exePath in $executablePaths) {
+    if (Test-Path $exePath -PathType Leaf) {
+        Write-Host "Copying built executable from $exePath to dist/cep/exec"
+        Copy-Item -Path $exePath -Destination "dist/cep/exec/" -Force
+        $executableCopied = $true
+        break
+    }
+}
+
+if (-not $executableCopied) {
+    Write-Host "Error: YoutubetoPremiere executable not found. Searching for it..." -ForegroundColor Yellow
+    $foundExecutables = Get-ChildItem -Path "dist" -Recurse -Include "YoutubetoPremiere.exe", "YoutubetoPremiere" -ErrorAction SilentlyContinue
+    
+    if ($foundExecutables.Count -gt 0) {
+        $exePath = $foundExecutables[0].FullName
+        Write-Host "Found executable at $exePath, copying to dist/cep/exec" -ForegroundColor Green
+        Copy-Item -Path $exePath -Destination "dist/cep/exec/" -Force
+    } else {
+        Write-Host "Error: YoutubetoPremiere executable not found in dist directory" -ForegroundColor Red
+        exit 1
+    }
+}
+
+# Copy the entire _internal directory if it exists
+if (Test-Path "dist/YoutubetoPremiere/_internal" -PathType Container) {
+    Write-Host "Copying _internal directory to dist/cep/exec"
+    Copy-Item -Path "dist/YoutubetoPremiere/_internal" -Destination "dist/cep/exec/" -Recurse -Force
 }
 
 # Copy ffmpeg if available
@@ -127,8 +231,7 @@ if ($isWindows) {
 # Handle sound files from all potential sources
 Write-Host "Handling sound files from all sources..."
 
-# Create sounds directory in all required locations
-New-Item -Path "dist\cep\sounds" -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+# Create sounds directory in exec folder only
 New-Item -Path "dist\cep\exec\sounds" -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
 
 # First check app/sounds
@@ -136,7 +239,6 @@ if (Test-Path "app\sounds") {
     $soundFiles = Get-ChildItem -Path "app\sounds" -Exclude ".gitkeep" -File
     if ($soundFiles.Count -gt 0) {
         Write-Host "Copying sound files from app\sounds..."
-        Copy-Item -Path "app\sounds\*" -Destination "dist\cep\sounds\" -Exclude ".gitkeep" -Force -ErrorAction SilentlyContinue
         Copy-Item -Path "app\sounds\*" -Destination "dist\cep\exec\sounds\" -Exclude ".gitkeep" -Force -ErrorAction SilentlyContinue
     }
 }
@@ -146,105 +248,8 @@ if (Test-Path "src\exec\sounds") {
     $soundFiles = Get-ChildItem -Path "src\exec\sounds" -File
     if ($soundFiles.Count -gt 0) {
         Write-Host "Copying sound files from src\exec\sounds..."
-        Copy-Item -Path "src\exec\sounds\*" -Destination "dist\cep\sounds\" -Force -ErrorAction SilentlyContinue
         Copy-Item -Path "src\exec\sounds\*" -Destination "dist\cep\exec\sounds\" -Force -ErrorAction SilentlyContinue
     }
-}
-
-# If no sound files were found, create a placeholder
-if (!(Get-ChildItem -Path "dist\cep\sounds" -File -ErrorAction SilentlyContinue)) {
-    Write-Host "No sound files found in any source directory, creating placeholder"
-    New-Item -Path "dist\cep\sounds\.gitkeep" -ItemType File -Force | Out-Null
-}
-
-# Create manifest.xml file if it doesn't exist
-if (!(Test-Path "dist\cep\CSXS\manifest.xml")) {
-    Write-Host "Creating CEP extension manifest directory..."
-    New-Item -Path "dist\cep\CSXS" -ItemType Directory -Force | Out-Null
-    
-    # Create a basic manifest.xml file
-    Write-Host "Creating basic manifest.xml file..."
-    @"
-<?xml version="1.0" encoding="UTF-8"?>
-<ExtensionManifest Version="6.0" ExtensionBundleId="com.youtubetopremiere" ExtensionBundleVersion="1.0.0"
-  ExtensionBundleName="YoutubetoPremiere" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <ExtensionList>
-    <Extension Id="com.youtubetopremiere.panel" Version="1.0.0" />
-  </ExtensionList>
-  <ExecutionEnvironment>
-    <HostList>
-      <Host Name="PPRO" Version="[15.0,99.9]" />
-    </HostList>
-    <LocaleList>
-      <Locale Code="All" />
-    </LocaleList>
-    <RequiredRuntimeList>
-      <RequiredRuntime Name="CSXS" Version="9.0" />
-    </RequiredRuntimeList>
-  </ExecutionEnvironment>
-  <DispatchInfoList>
-    <Extension Id="com.youtubetopremiere.panel">
-      <DispatchInfo>
-        <Resources>
-          <MainPath>./index.html</MainPath>
-          <ScriptPath>./jsx/index.js</ScriptPath>
-          <CEFCommandLine>
-            <Parameter>--enable-nodejs</Parameter>
-            <Parameter>--mixed-context</Parameter>
-          </CEFCommandLine>
-        </Resources>
-        <Lifecycle>
-          <AutoVisible>true</AutoVisible>
-        </Lifecycle>
-        <UI>
-          <Type>Panel</Type>
-          <Menu>YouTube to Premiere Pro</Menu>
-          <Geometry>
-            <Size>
-              <Height>600</Height>
-              <Width>400</Width>
-            </Size>
-          </Geometry>
-        </UI>
-      </DispatchInfo>
-    </Extension>
-  </DispatchInfoList>
-</ExtensionManifest>
-"@ | Out-File -FilePath "dist\cep\CSXS\manifest.xml" -Encoding UTF8
-}
-
-# Create a basic index.html if it doesn't exist
-if (!(Test-Path "dist\cep\index.html")) {
-    Write-Host "Creating basic index.html file..."
-    @"
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>YouTube to Premiere Pro</title>
-  <style>
-    body { font-family: sans-serif; margin: 20px; }
-    h1 { color: #333; }
-  </style>
-</head>
-<body>
-  <h1>YouTube to Premiere Pro</h1>
-  <p>This is the YouTube to Premiere Pro extension.</p>
-  <p>If you're seeing this placeholder, the full extension UI wasn't built properly.</p>
-  <script src="./js/index.js"></script>
-</body>
-</html>
-"@ | Out-File -FilePath "dist\cep\index.html" -Encoding UTF8
-}
-
-# Create a basic JavaScript file if it doesn't exist
-if (!(Test-Path "dist\cep\js\index.js")) {
-    Write-Host "Creating basic JavaScript file..."
-    New-Item -Path "dist\cep\js" -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-    @"
-// Basic JavaScript for the extension
-console.log('YouTube to Premiere Pro extension loaded');
-"@ | Out-File -FilePath "dist\cep\js\index.js" -Encoding UTF8
 }
 
 Write-Host "CEP extension files status:"
