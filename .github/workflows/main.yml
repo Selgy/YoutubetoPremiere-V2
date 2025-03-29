@@ -226,57 +226,60 @@ jobs:
       - name: Create and Sign PKG
         env:
           INSTALLER_CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}  # Use same password for keychain and certificate
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           # Set up paths
           CERTIFICATE_PATH=$RUNNER_TEMP/installer_certificate.p12
           KEYCHAIN_PATH=$RUNNER_TEMP/installer.keychain
           
-          # Decode certificate (simpler approach)
+          # Decode certificate
           echo "$INSTALLER_CERTIFICATE_BASE64" | base64 --decode > $CERTIFICATE_PATH
           echo "Installer certificate file size: $(wc -c < $CERTIFICATE_PATH) bytes"
           
           # Remove any existing keychain
-          rm -f $KEYCHAIN_PATH 2>/dev/null || true
+          security delete-keychain $KEYCHAIN_PATH 2>/dev/null || true
           
-          # Create new keychain with minimal options
+          # Create new keychain
           security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           security default-keychain -s $KEYCHAIN_PATH
           
-          # Import certificate
-          security import $CERTIFICATE_PATH -P "$KEYCHAIN_PASSWORD" -k $KEYCHAIN_PATH -T /usr/bin/productsign
+          # Set keychain to not lock automatically
+          security set-keychain-settings -t 3600 -l $KEYCHAIN_PATH
           
-          # Allow codesigning
+          # Import certificate (using KEYCHAIN_PASSWORD for both keychain and P12)
+          security import $CERTIFICATE_PATH -P "$KEYCHAIN_PASSWORD" -k $KEYCHAIN_PATH -T /usr/bin/productsign -T /usr/bin/codesign
+          
+          # Set partition list for codesigning access
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          
+          # List all identities to verify
+          echo "All identities in keychain:"
+          security find-identity -v $KEYCHAIN_PATH
           
           # Find installer identity
           PRODUCTSIGN_IDENTITY=$(security find-identity -v -p basic $KEYCHAIN_PATH | grep 'Developer ID Installer' | head -n 1 | awk '{print $2}')
           echo "Found installer signing identity: $PRODUCTSIGN_IDENTITY"
           
-          # Build and sign package
+          # Build package
           PACKAGE_IDENTIFIER="com.selgy.youtubetopremiere"
           PACKAGE_VERSION="${{ needs.prepare.outputs.version }}"
           PKG_ROOT="./pkgroot"
           OUTPUT_PKG="YoutubetoPremiere.pkg"
           SCRIPTS_DIR="./scripts"
           
-          # Build package
           pkgbuild --root "$PKG_ROOT" \
             --identifier "$PACKAGE_IDENTIFIER" \
             --version "$PACKAGE_VERSION" \
             --install-location "/Applications" \
             --scripts "$SCRIPTS_DIR" \
             "$OUTPUT_PKG"
-            
-          # Sign package
+          
+          # Sign package with the installer identity
           productsign --sign "$PRODUCTSIGN_IDENTITY" "$OUTPUT_PKG" "signed_$OUTPUT_PKG"
           
-          # Verify signature
+          # Verify the signature
           pkgutil --check-signature "signed_$OUTPUT_PKG"
-          
-          # Clean up
-          security delete-keychain $KEYCHAIN_PATH
 
       - name: Notarize PKG Installer
         env:
