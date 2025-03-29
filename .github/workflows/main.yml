@@ -152,36 +152,46 @@ jobs:
             fi
           fi
           
-          # Corrected keychain creation (removed -f flag)
+          # Create temporary keychain with proper permissions
           echo "Creating temporary keychain..."
           security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           security set-keychain-settings -t 21600 -u $KEYCHAIN_PATH
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           
-          # Add keychain to search list
-          security list-keychains -d user -s $KEYCHAIN_PATH $(security list-keychains -d user | sed 's/"//g')
+          # Add keychain to search list with proper escaping
+          existing_keychains=($(security list-keychains -d user | sed 's/"//g'))
+          security list-keychains -d user -s "${existing_keychains[@]}" "$KEYCHAIN_PATH"
           
-          # Set partition list with proper escaping
+          # Set partition list with explicit keychain path
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          # Import certificate to keychain
+          # Import certificate with explicit keychain specification
           echo "Importing certificate to keychain..."
           security import $CERTIFICATE_PATH \
             -P "$P12_PASSWORD" \
-            -k $KEYCHAIN_PATH \
+            -k "$KEYCHAIN_PATH" \
             -T /usr/bin/codesign \
             -T /usr/bin/security \
             -T /usr/bin/productsign
 
-          # Verify certificate presence with timeout
+          # Enhanced certificate verification
           echo "Verifying certificate import..."
-          for i in {1..10}; do
-            if security find-certificate -c "Developer ID Application" $KEYCHAIN_PATH; then
+          for i in {1..15}; do
+            if security find-certificate -c "Developer ID Application" "$KEYCHAIN_PATH"; then
+              echo "Certificate found successfully"
               break
             fi
-            echo "Certificate not found, retrying... ($i/10)"
-            sleep 1
+            echo "Certificate not found, retrying... ($i/15)"
+            sleep 2
+            # Re-unlock keychain if needed
+            security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           done
+          
+          # Final verification check
+          if ! security find-certificate -c "Developer ID Application" "$KEYCHAIN_PATH"; then
+            echo "Error: Certificate verification failed after all attempts"
+            exit 1
+          fi
 
       - name: Set DYLD_LIBRARY_PATH
         run: |
