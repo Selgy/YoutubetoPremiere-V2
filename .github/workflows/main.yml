@@ -152,19 +152,14 @@ jobs:
             fi
           fi
           
-          # Create temporary keychain with forced overwrite
+          # Corrected keychain creation (removed -f flag)
           echo "Creating temporary keychain..."
-          security create-keychain -p "$KEYCHAIN_PASSWORD" -f $KEYCHAIN_PATH
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           security set-keychain-settings -t 21600 -u $KEYCHAIN_PATH
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           
-          # Add keychain to search path (proper array handling)
-          EXISTING_KEYCHAINS=()
-          while IFS= read -r line; do
-            EXISTING_KEYCHAINS+=("$line")
-          done < <(security list-keychains -d user | sed 's/"//g')
-          
-          security list-keychains -d user -s "${EXISTING_KEYCHAINS[@]}" "$KEYCHAIN_PATH"
+          # Add keychain to search list
+          security list-keychains -d user -s $KEYCHAIN_PATH $(security list-keychains -d user | sed 's/"//g')
           
           # Set partition list with proper escaping
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
