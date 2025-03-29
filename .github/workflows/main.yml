@@ -95,89 +95,34 @@ jobs:
       - name: Create and Configure Keychain
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE }}
-          P12_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}  # Use this for both keychain and P12
         run: |
-          # Create variables
+          # Decode certificate
           CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
-          PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
-          KEYCHAIN_PATH=$RUNNER_TEMP/SelgykeyAPP.keychain-db
+          echo "$BUILD_CERTIFICATE_BASE64" | base64 --decode > $CERTIFICATE_PATH
+          echo "Certificate decoded, size: $(wc -c < $CERTIFICATE_PATH) bytes"
           
-          # Debug the certificate variable (showing length, not content)
-          echo "BUILD_CERTIFICATE_BASE64 length: ${#BUILD_CERTIFICATE_BASE64}"
+          # Create keychain
+          KEYCHAIN_PATH="build.keychain"
+          echo "Creating keychain: $KEYCHAIN_PATH"
           
-          if [[ -z "$BUILD_CERTIFICATE_BASE64" ]]; then
-            echo "Error: BUILD_CERTIFICATE_BASE64 is empty or not set!"
-            exit 1
-          fi
+          # Remove existing keychain if present
+          rm -f $KEYCHAIN_PATH 2>/dev/null || true
           
-          # Write base64 content to a file first, then decode
-          echo "$BUILD_CERTIFICATE_BASE64" > $RUNNER_TEMP/cert.b64
-          # Check if file was created and has content
-          if [ ! -s "$RUNNER_TEMP/cert.b64" ]; then
-            echo "Error: cert.b64 file is empty! Direct writing failed."
-            exit 1
-          fi
+          # Create new keychain with your actual certificate password
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security default-keychain -s $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           
-          # Decode using a different approach
-          cat $RUNNER_TEMP/cert.b64 | base64 -d > $CERTIFICATE_PATH
+          # Import certificate using same password that was used to create the P12
+          echo "Importing certificate..."
+          security import $CERTIFICATE_PATH -P "$KEYCHAIN_PASSWORD" -k $KEYCHAIN_PATH -T /usr/bin/codesign
           
-          # Alternative decoding method if the above fails
-          if [ ! -s "$CERTIFICATE_PATH" ]; then
-            echo "First decoding method failed, trying alternative..."
-            # Try direct piping with explicit OS X base64 option
-            echo "$BUILD_CERTIFICATE_BASE64" | base64 -D > $CERTIFICATE_PATH
-          fi
+          # Allow codesigning 
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           
-          # Check if the certificate file was created correctly
-          if [ ! -s "$CERTIFICATE_PATH" ]; then
-            echo "Error: Certificate file is empty after both decoding attempts!"
-            # Print the first few characters of the base64 string for debugging
-            echo "First 20 chars of BUILD_CERTIFICATE_BASE64: ${BUILD_CERTIFICATE_BASE64:0:20}..."
-            exit 1
-          fi
-          
-          echo "Certificate file size: $(wc -c < $CERTIFICATE_PATH) bytes"
-          
-          # Decode provisioning profile if provided
-          if [ -n "$BUILD_PROVISION_PROFILE_BASE64" ]; then
-            echo "Decoding provisioning profile..."
-            echo "$BUILD_PROVISION_PROFILE_BASE64" | base64 -D > $PP_PATH || echo "$BUILD_PROVISION_PROFILE_BASE64" | base64 -d > $PP_PATH
-            
-            if [ ! -s "$PP_PATH" ]; then
-              echo "Warning: Provisioning profile file is empty. Continuing without it."
-            else
-              echo "Provisioning profile created successfully."
-            fi
-          fi
-          
-          # Simplified keychain setup
-          echo "Creating temporary keychain..."
-          # Delete existing keychain if it exists
-          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
-          
-          # Create fresh keychain
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          
-          # Make it default keychain
-          security default-keychain -s "$KEYCHAIN_PATH"
-          
-          # Add to search list (simpler approach)
-          security list-keychains -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
-          
-          # Allow signing operations
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          
-          # Import certificate with basic options
-          echo "Importing certificate to keychain..."
-          security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          
-          # List identities to verify import
-          echo "Listing identities in keychain:"
-          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+          # Verify import
+          security find-identity -v -p codesigning $KEYCHAIN_PATH
 
       - name: Set DYLD_LIBRARY_PATH
         run: |
@@ -242,13 +187,13 @@ jobs:
 
       - name: "Notarize app bundle"
         env:
-          MACOS_NOTARIZATION_APPLE_ID: ${{ secrets.APPLE_ID }}
-          MACOS_NOTARIZATION_PWD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          MACOS_NOTARIZATION_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: |
           echo "Create keychain profile"
-          xcrun notarytool store-credentials "notarytool-profile" --apple-id "$MACOS_NOTARIZATION_APPLE_ID" --team-id "$MACOS_NOTARIZATION_TEAM_ID" --password "$MACOS_NOTARIZATION_PWD"
-
+          xcrun notarytool store-credentials "notarytool-profile" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APP_PASSWORD"
+          
           echo "Creating temp notarization archive"
           ditto -c -k --keepParent "./dist/YoutubetoPremiere" "notarization.zip"
 
