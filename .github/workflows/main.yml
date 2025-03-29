@@ -154,33 +154,27 @@ jobs:
             fi
           fi
           
-          # Create and configure keychain
+          # Create temporary keychain with more robust parameters
           echo "Creating temporary keychain..."
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH || true
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -t 21600 -u $KEYCHAIN_PATH
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           
-          # Set keychain as default - fixed approach
-          EXISTING_KEYCHAINS=$(security list-keychains | grep -v $KEYCHAIN_PATH || echo "")
-          security list-keychains -s $KEYCHAIN_PATH $EXISTING_KEYCHAINS
-          security default-keychain -s $KEYCHAIN_PATH
+          # Set keychain search path (safer alternative to modifying default)
+          security list-keychains -d user -s $KEYCHAIN_PATH $(security list-keychains -d user | sed s/\"//g)
           
-          # Allow codesigning
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          
-          # Import certificate to keychain
+          # Modified certificate import command
           echo "Importing certificate to keychain..."
-          if ! security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH; then
-            echo "Certificate import failed. Attempting with alternate options..."
-            security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH -T /usr/bin/codesign
-          fi
-          
-          # Apply provisioning profile if it exists
-          if [ -f "$PP_PATH" ] && [ -s "$PP_PATH" ]; then
-            echo "Installing provisioning profile..."
-            mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-            cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
-          fi
+          security import $CERTIFICATE_PATH \
+            -P "$P12_PASSWORD" \
+            -k $KEYCHAIN_PATH \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security \
+            -T /usr/bin/productsign
+
+          # Verify certificate import
+          echo "Checking certificate in keychain:"
+          security find-certificate -c "Developer ID Application" $KEYCHAIN_PATH
           
           # Find certificate in custom keychain
           echo "Finding certificate in SelgykeyAPP keychain:"
