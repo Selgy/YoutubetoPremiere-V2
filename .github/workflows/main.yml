@@ -348,8 +348,9 @@ jobs:
           security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           
-          # Set keychain as default
-          security list-keychains -d user -s $KEYCHAIN_PATH $(security list-keychains -d user | sed s/\"//g)
+          # Set keychain as default - fixed approach
+          EXISTING_KEYCHAINS=$(security list-keychains | grep -v $KEYCHAIN_PATH || echo "")
+          security list-keychains -s $KEYCHAIN_PATH $EXISTING_KEYCHAINS
           security default-keychain -s $KEYCHAIN_PATH
           
           # Allow codesigning
