@@ -226,114 +226,56 @@ jobs:
       - name: Create and Sign PKG
         env:
           INSTALLER_CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE }}
-          P12_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}  # Use same password for keychain and certificate
         run: |
-          # Create variables
+          # Set up paths
           CERTIFICATE_PATH=$RUNNER_TEMP/installer_certificate.p12
-          KEYCHAIN_PATH=$RUNNER_TEMP/Selgykey.keychain-db
-
-          # Debug the certificate variable (showing length, not content)
-          echo "INSTALLER_CERTIFICATE_BASE64 length: ${#INSTALLER_CERTIFICATE_BASE64}"
+          KEYCHAIN_PATH=$RUNNER_TEMP/installer.keychain
           
-          if [[ -z "$INSTALLER_CERTIFICATE_BASE64" ]]; then
-            echo "Error: INSTALLER_CERTIFICATE_BASE64 is empty or not set!"
-            exit 1
-          fi
-
-          # Decode and import installer certificate from secrets
-          echo "Decoding installer certificate..."
-          # Write base64 content to a file first, then decode
-          echo "$INSTALLER_CERTIFICATE_BASE64" > $RUNNER_TEMP/inst_cert.b64
-          # Check if file was created and has content
-          if [ ! -s "$RUNNER_TEMP/inst_cert.b64" ]; then
-            echo "Error: inst_cert.b64 file is empty! Direct writing failed."
-            exit 1
-          fi
-          
-          # Decode using different approaches
-          cat $RUNNER_TEMP/inst_cert.b64 | base64 -d > $CERTIFICATE_PATH
-          
-          # Alternative decoding method if the above fails
-          if [ ! -s "$CERTIFICATE_PATH" ]; then
-            echo "First decoding method failed, trying alternative..."
-            # Try direct piping with explicit OS X base64 option
-            echo "$INSTALLER_CERTIFICATE_BASE64" | base64 -D > $CERTIFICATE_PATH
-          fi
-          
-          # Check if the certificate file was created correctly
-          if [ ! -s "$CERTIFICATE_PATH" ]; then
-            echo "Error: Installer certificate file is empty after both decoding attempts!"
-            # Print the first few characters of the base64 string for debugging
-            echo "First 20 chars of INSTALLER_CERTIFICATE_BASE64: ${INSTALLER_CERTIFICATE_BASE64:0:20}..."
-            exit 1
-          fi
-          
+          # Decode certificate (simpler approach)
+          echo "$INSTALLER_CERTIFICATE_BASE64" | base64 --decode > $CERTIFICATE_PATH
           echo "Installer certificate file size: $(wc -c < $CERTIFICATE_PATH) bytes"
-
-          # Create temporary keychain for installer certificate
-          echo "Creating installer certificate keychain..."
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH || true
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           
-          # Set keychain as default - fixed approach
-          EXISTING_KEYCHAINS=$(security list-keychains | grep -v $KEYCHAIN_PATH || echo "")
-          security list-keychains -s $KEYCHAIN_PATH $EXISTING_KEYCHAINS
+          # Remove any existing keychain
+          rm -f $KEYCHAIN_PATH 2>/dev/null || true
+          
+          # Create new keychain with minimal options
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           security default-keychain -s $KEYCHAIN_PATH
+          
+          # Import certificate
+          security import $CERTIFICATE_PATH -P "$KEYCHAIN_PASSWORD" -k $KEYCHAIN_PATH -T /usr/bin/productsign
           
           # Allow codesigning
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           
-          # Import certificate to keychain
-          echo "Importing installer certificate to keychain..."
-          if ! security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH; then
-            echo "Certificate import failed. Attempting with alternate options..."
-            security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH -T /usr/bin/productsign
-          fi
-          
-          # List the certificate details
-          echo "Listing installer certificate details:"
-          security find-certificate -a $KEYCHAIN_PATH
-          
-          # Find code signing identities
+          # Find installer identity
           PRODUCTSIGN_IDENTITY=$(security find-identity -v -p basic $KEYCHAIN_PATH | grep 'Developer ID Installer' | head -n 1 | awk '{print $2}')
           echo "Found installer signing identity: $PRODUCTSIGN_IDENTITY"
           
-          if [ -z "$PRODUCTSIGN_IDENTITY" ]; then
-            echo "Error: Could not find a valid installer signing identity!"
-            echo "Available identities:"
-            security find-identity -v -p basic $KEYCHAIN_PATH
-            exit 1
-          fi
-
-          # Build the package
+          # Build and sign package
           PACKAGE_IDENTIFIER="com.selgy.youtubetopremiere"
           PACKAGE_VERSION="${{ needs.prepare.outputs.version }}"
           PKG_ROOT="./pkgroot"
           OUTPUT_PKG="YoutubetoPremiere.pkg"
           SCRIPTS_DIR="./scripts"
           
-          ls -la pkgroot/
-
           # Build package
-          echo "Building package..."
           pkgbuild --root "$PKG_ROOT" \
             --identifier "$PACKAGE_IDENTIFIER" \
             --version "$PACKAGE_VERSION" \
             --install-location "/Applications" \
             --scripts "$SCRIPTS_DIR" \
             "$OUTPUT_PKG"
-
-          # Sign the package with the installer certificate
-          echo "Signing package with identity: $PRODUCTSIGN_IDENTITY"
+            
+          # Sign package
           productsign --sign "$PRODUCTSIGN_IDENTITY" "$OUTPUT_PKG" "signed_$OUTPUT_PKG"
-
-          # Verify the signed package
-          echo "Verifying signed package..."
+          
+          # Verify signature
           pkgutil --check-signature "signed_$OUTPUT_PKG"
-
-          # Remove temporary keychain
+          
+          # Clean up
           security delete-keychain $KEYCHAIN_PATH
 
       - name: Notarize PKG Installer
