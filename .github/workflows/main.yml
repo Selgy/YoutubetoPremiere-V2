@@ -112,8 +112,6 @@ jobs:
             exit 1
           fi
           
-          # Import certificate and provisioning profile from secrets
-          echo "Decoding certificate..."
           # Write base64 content to a file first, then decode
           echo "$BUILD_CERTIFICATE_BASE64" > $RUNNER_TEMP/cert.b64
           # Check if file was created and has content
@@ -154,16 +152,24 @@ jobs:
             fi
           fi
           
-          # Create temporary keychain with more robust parameters
+          # Create temporary keychain with forced overwrite
           echo "Creating temporary keychain..."
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security create-keychain -p "$KEYCHAIN_PASSWORD" -f $KEYCHAIN_PATH
           security set-keychain-settings -t 21600 -u $KEYCHAIN_PATH
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           
-          # Set keychain search path (safer alternative to modifying default)
-          security list-keychains -d user -s $KEYCHAIN_PATH $(security list-keychains -d user | sed s/\"//g)
+          # Add keychain to search path (proper array handling)
+          EXISTING_KEYCHAINS=()
+          while IFS= read -r line; do
+            EXISTING_KEYCHAINS+=("$line")
+          done < <(security list-keychains -d user | sed 's/"//g')
           
-          # Modified certificate import command
+          security list-keychains -d user -s "${EXISTING_KEYCHAINS[@]}" "$KEYCHAIN_PATH"
+          
+          # Set partition list with proper escaping
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import certificate to keychain
           echo "Importing certificate to keychain..."
           security import $CERTIFICATE_PATH \
             -P "$P12_PASSWORD" \
@@ -172,22 +178,15 @@ jobs:
             -T /usr/bin/security \
             -T /usr/bin/productsign
 
-          # Verify certificate import
-          echo "Checking certificate in keychain:"
-          security find-certificate -c "Developer ID Application" $KEYCHAIN_PATH
-          
-          # Find certificate in custom keychain
-          echo "Finding certificate in SelgykeyAPP keychain:"
-          security find-certificate -a $KEYCHAIN_PATH
-          
-          # List all identities in custom keychain
-          echo "Listing all identities in SelgykeyAPP keychain:"
-          security find-identity -p codesigning $KEYCHAIN_PATH
-          
-          # Check if we have a valid code signing identity
-          if ! security find-identity -p codesigning $KEYCHAIN_PATH | grep -q "valid identities"; then
-            echo "Warning: No valid code signing identities found in keychain. Signing may fail."
-          fi
+          # Verify certificate presence with timeout
+          echo "Verifying certificate import..."
+          for i in {1..10}; do
+            if security find-certificate -c "Developer ID Application" $KEYCHAIN_PATH; then
+              break
+            fi
+            echo "Certificate not found, retrying... ($i/10)"
+            sleep 1
+          done
 
       - name: Set DYLD_LIBRARY_PATH
         run: |
