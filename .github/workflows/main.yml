@@ -152,46 +152,32 @@ jobs:
             fi
           fi
           
-          # Create temporary keychain with proper permissions
+          # Simplified keychain setup
           echo "Creating temporary keychain..."
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security set-keychain-settings -t 21600 -u $KEYCHAIN_PATH
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          # Delete existing keychain if it exists
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
           
-          # Add keychain to search list with proper escaping
-          existing_keychains=($(security list-keychains -d user | sed 's/"//g'))
-          security list-keychains -d user -s "${existing_keychains[@]}" "$KEYCHAIN_PATH"
+          # Create fresh keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           
-          # Set partition list with explicit keychain path
+          # Make it default keychain
+          security default-keychain -s "$KEYCHAIN_PATH"
+          
+          # Add to search list (simpler approach)
+          security list-keychains -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+          
+          # Allow signing operations
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          # Import certificate with explicit keychain specification
-          echo "Importing certificate to keychain..."
-          security import $CERTIFICATE_PATH \
-            -P "$P12_PASSWORD" \
-            -k "$KEYCHAIN_PATH" \
-            -T /usr/bin/codesign \
-            -T /usr/bin/security \
-            -T /usr/bin/productsign
-
-          # Enhanced certificate verification
-          echo "Verifying certificate import..."
-          for i in {1..15}; do
-            if security find-certificate -c "Developer ID Application" "$KEYCHAIN_PATH"; then
-              echo "Certificate found successfully"
-              break
-            fi
-            echo "Certificate not found, retrying... ($i/15)"
-            sleep 2
-            # Re-unlock keychain if needed
-            security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          done
           
-          # Final verification check
-          if ! security find-certificate -c "Developer ID Application" "$KEYCHAIN_PATH"; then
-            echo "Error: Certificate verification failed after all attempts"
-            exit 1
-          fi
+          # Import certificate with basic options
+          echo "Importing certificate to keychain..."
+          security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          
+          # List identities to verify import
+          echo "Listing identities in keychain:"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
       - name: Set DYLD_LIBRARY_PATH
         run: |
