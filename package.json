@@ -1,6 +1,6 @@
 {
   "name": "bolt-cep",
-  "version": "3.0.1",
+  "version": "3.0.0",
   "scripts": {
     "version": "cross-env-shell \"node scripts/version-update.js $npm_package_version && git add -A && (git commit -m v$npm_package_version || true) && git tag -f v$npm_package_version\" && git push && git push --tags -f",
     "postversion": "",
@@ -75,5 +75,6 @@
     "yarn": "^1.22.17"
   },
   "main": "index.js",
-  "license": "MIT"
+  "license": "MIT",
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
 }

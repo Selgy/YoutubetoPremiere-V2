@@ -247,7 +247,7 @@ jobs:
           # Set keychain to not lock automatically
           security set-keychain-settings -t 3600 -l $KEYCHAIN_PATH
           
-          # Import certificate (using KEYCHAIN_PASSWORD for both keychain and P12)
+          # Import certificate using the same KEYCHAIN_PASSWORD for P12
           security import $CERTIFICATE_PATH -P "$KEYCHAIN_PASSWORD" -k $KEYCHAIN_PATH -T /usr/bin/productsign -T /usr/bin/codesign
           
           # Set partition list for codesigning access

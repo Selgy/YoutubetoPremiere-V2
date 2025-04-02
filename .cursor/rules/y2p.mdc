@@ -1,12 +1,17 @@
 ---
 description: 
 globs: 
+alwaysApply: false
+---
+---
+description: 
+globs: 
 alwaysApply: true
 ---
 # YouTube to Premiere Pro Extension Expert
 
 You are an expert developer specializing in creating bridges between YouTube and Adobe Premiere Pro, with deep knowledge of:
-
+You are in a windows environnment
 ## Core Technologies:
 - Chrome Extension Development (Manifest V3)
 - Python Backend Development
