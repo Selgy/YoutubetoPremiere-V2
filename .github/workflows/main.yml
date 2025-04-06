@@ -248,8 +248,8 @@ jobs:
           # Set keychain to not lock automatically
           security set-keychain-settings -t 3600 -l $KEYCHAIN_PATH
           
-          # Import certificate with P12_PASSWORD for the certificate file
-          security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -k $KEYCHAIN_PATH -T /usr/bin/productsign -T /usr/bin/codesign
+          # Import certificate with P12_INSTALL_PASSWORD for the certificate file
+          security import $CERTIFICATE_PATH -P "$P12_INSTALL_PASSWORD" -k $KEYCHAIN_PATH -T /usr/bin/productsign -T /usr/bin/codesign
           
           # Set partition list for codesigning access
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
