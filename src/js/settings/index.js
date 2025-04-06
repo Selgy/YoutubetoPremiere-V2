@@ -318,6 +318,25 @@ async function startPythonServer() {
         let PythonExecutablePath;
         if (process.platform === 'win32') {
             PythonExecutablePath = path.join(extensionRoot, 'exec', 'YoutubetoPremiere.exe');
+            
+            // Ensure Windows paths are properly quoted and escaped
+            PythonExecutablePath = path.normalize(PythonExecutablePath);
+            
+            // Check for short path name option if path contains spaces (Windows only)
+            if (PythonExecutablePath.includes(' ')) {
+                try {
+                    const { execSync } = window.cep_node.require('child_process');
+                    // Get short path name to avoid spaces in path
+                    const shortPath = execSync(`for %I in ("${PythonExecutablePath}") do @echo %~sI`, { encoding: 'utf8' }).trim();
+                    if (shortPath && fs.existsSync(shortPath)) {
+                        console.log('Using Windows short path to avoid spaces:', shortPath);
+                        PythonExecutablePath = shortPath;
+                    }
+                } catch (err) {
+                    console.warn('Failed to get short path name:', err.message);
+                    // Continue with the original path
+                }
+            }
         } else if (process.platform === 'darwin') {
             PythonExecutablePath = path.join(extensionRoot, 'exec', 'YoutubetoPremiere');
         } else {
@@ -481,13 +500,78 @@ async function startPythonServer() {
                 serverEnv.SOUNDS_DIR = path.join(appSupportDir, 'sounds');
             }
             
-            // Launch with extra verbosity for debugging
-            PythonServerProcess = spawn(PythonExecutablePath, ['--verbose'], {
-                cwd: path.dirname(PythonExecutablePath),
-                env: serverEnv,
-                stdio: ['inherit', 'pipe', 'pipe'],
-                detached: false
-            });
+            // Use child_process.exec instead of spawn for better permission handling
+            const { exec } = window.cep_node.require('child_process');
+            
+            if (process.platform === 'win32') {
+                // Windows-specific command using start command
+                const cmd = `start /B "" "${PythonExecutablePath}" --verbose`;
+                
+                console.log('Executing Windows command:', cmd);
+                PythonServerProcess = exec(cmd, {
+                    cwd: path.dirname(PythonExecutablePath),
+                    env: serverEnv,
+                    windowsHide: false // Show window for debugging
+                });
+            } else if (process.platform === 'darwin') {
+                // macOS-specific command using AppleScript
+                const appleScriptCommand = `tell application "Finder" to launch application "${PythonExecutablePath}"`;
+                const cmd = `osascript -e '${appleScriptCommand}' -e 'delay 1'`;
+                
+                console.log('Executing macOS command:', cmd);
+                PythonServerProcess = exec(cmd, {
+                    env: serverEnv
+                });
+            }
+            
+            // Handle process events for exec
+            if (PythonServerProcess) {
+                // Handle standard output and error
+                if (PythonServerProcess.stdout) {
+                    PythonServerProcess.stdout.on('data', (data) => {
+                        console.log(`Python server stdout: ${data}`);
+                    });
+                }
+                
+                if (PythonServerProcess.stderr) {
+                    PythonServerProcess.stderr.on('data', (data) => {
+                        console.error(`Python server stderr: ${data}`);
+                    });
+                }
+                
+                // Handle process events
+                PythonServerProcess.on('error', (err) => {
+                    console.error(`Failed to start Python server: ${err}`);
+                    // Handle permission errors specifically
+                    handleProcessPermissionError(err, PythonExecutablePath, exec, path, extensionRoot);
+                });
+                
+                PythonServerProcess.on('exit', (code) => {
+                    if (code !== 0) {
+                        console.error(`Python server process exited with code ${code}`);
+                    } else {
+                        console.log('Python server process exited successfully');
+                    }
+                    PythonServerProcess = null;
+                });
+            }
+
+            // Set up health check mechanism for background process
+            const checkServerHealth = async () => {
+                try {
+                    const isRunning = await isServerRunning();
+                    if (isRunning) {
+                        console.log('Server health check passed');
+                    } else {
+                        console.warn('Server health check failed, server may not be running');
+                    }
+                } catch (error) {
+                    console.error('Error checking server health:', error);
+                }
+            };
+            
+            // Check server health after a delay
+            setTimeout(checkServerHealth, 5000);
         } catch (spawnError) {
             console.error(`Error spawning Python process: ${spawnError.message}`);
             // On Mac, try with a direct Python call if the script fails
@@ -543,27 +627,6 @@ async function startPythonServer() {
             }
         }
 
-        PythonServerProcess.stdout.on('data', (data) => {
-            console.log(`Python server stdout: ${data}`);
-        });
-
-        PythonServerProcess.stderr.on('data', (data) => {
-            console.error(`Python server stderr: ${data}`);
-        });
-
-        PythonServerProcess.on('error', (err) => {
-            console.error(`Failed to start Python server: ${err}`);
-        });
-
-        PythonServerProcess.on('close', (code) => {
-            if (code !== 0) {
-                console.error(`Python server process exited with code ${code}`);
-            } else {
-                console.log('Python server process exited successfully');
-            }
-            PythonServerProcess = null;
-        });
-
         // Set up event listeners only after everything is initialized
         csInterface.addEventListener('com.adobe.csxs.events.ApplicationBeforeQuit', stopPythonServer);
         window.addEventListener('unload', stopPythonServer);
@@ -577,8 +640,48 @@ async function startPythonServer() {
 function stopPythonServer() {
     if (PythonServerProcess) {
         console.log("Stopping Python server...");
-        PythonServerProcess.kill();
+        
+        // For exec processes, we need to terminate differently
+        if (process.platform === 'win32') {
+            // On Windows, find and terminate by looking up the process
+            try {
+                const { exec } = window.cep_node.require('child_process');
+                exec('taskkill /F /IM YoutubetoPremiere.exe', (error) => {
+                    if (error) {
+                        console.error('Error terminating process:', error);
+                    } else {
+                        console.log('Process terminated successfully');
+                    }
+                });
+            } catch (error) {
+                console.error('Failed to terminate process:', error);
+            }
+        } else if (process.platform === 'darwin') {
+            // On macOS, use the killall command
+            try {
+                const { exec } = window.cep_node.require('child_process');
+                exec('killall YoutubetoPremiere', (error) => {
+                    if (error) {
+                        console.error('Error terminating process:', error);
+                    } else {
+                        console.log('Process terminated successfully');
+                    }
+                });
+            } catch (error) {
+                console.error('Failed to terminate process:', error);
+            }
+        }
+        
+        // Also try standard process termination
+        try {
+            PythonServerProcess.kill();
+        } catch (error) {
+            console.warn('Standard kill method failed:', error);
+        }
+        
+        PythonServerProcess = null;
     }
+    
     if (fsWatcher) {
         fsWatcher.close();
     }
@@ -597,6 +700,85 @@ function stopPythonServer() {
             }
         } catch (err) {
             console.error("Error cleaning up safe executable:", err);
+        }
+    }
+}
+
+// Helper function to handle permission errors specifically
+function handleProcessPermissionError(error, execPath, exec, path, extensionRoot) {
+    // Check if this is a permission error
+    const isPermissionError = 
+        error.code === 'EACCES' || 
+        error.message.includes('permission') || 
+        error.message.includes('access') ||
+        error.message.includes('denied');
+    
+    if (!isPermissionError) return;
+    
+    console.error('Permission error detected when spawning process');
+    
+    if (process.platform === 'win32') {
+        // For Windows, try to launch with elevated permissions via different methods
+        try {
+            console.log('Attempting to relaunch with elevated permissions...');
+            
+            // Method 1: Try using PowerShell's Start-Process with RunAs verb
+            const psCommand = `powershell.exe -Command "Start-Process -FilePath '${execPath}' -ArgumentList '--verbose' -Verb RunAs -WindowStyle Hidden"`;
+            
+            console.log('Executing elevation command:', psCommand);
+            exec(psCommand, (error, stdout, stderr) => {
+                if (error) {
+                    console.error('PowerShell elevation failed:', error);
+                    
+                    // Method 2: Try using the built-in Windows start command as fallback
+                    const startCommand = `start /B /min "" "${execPath}" --verbose`;
+                    console.log('Trying fallback elevation method:', startCommand);
+                    
+                    exec(startCommand, (startError, startStdout, startStderr) => {
+                        if (startError) {
+                            console.error('Start command elevation failed:', startError);
+                        } else {
+                            console.log('Process started with start command');
+                        }
+                    });
+                } else {
+                    console.log('Process elevated successfully via PowerShell');
+                }
+            });
+        } catch (elevationError) {
+            console.error('Failed to launch with elevation:', elevationError);
+        }
+    } else if (process.platform === 'darwin') {
+        // For macOS, try using AppleScript for better permission handling
+        try {
+            console.log('Attempting to relaunch with improved macOS permissions...');
+            
+            // Method 1: Use AppleScript to launch the application
+            const appleScriptCommand = `tell application "Finder" to launch application "${execPath}"`;
+            const osascript = `osascript -e '${appleScriptCommand}'`;
+            
+            console.log('Executing macOS permission command:', osascript);
+            exec(osascript, (error, stdout, stderr) => {
+                if (error) {
+                    console.error('AppleScript launch failed:', error);
+                    
+                    // Method 2: Try admin privileges as fallback
+                    const adminCommand = `osascript -e 'do shell script "${execPath} --verbose" with administrator privileges'`;
+                    console.log('Trying admin privileges as fallback:', adminCommand);
+                    
+                    exec(adminCommand, (adminError, adminStdout, adminStderr) => {
+                        if (adminError) {
+                            console.error('Admin privileges launch failed:', adminError);
+                        } else {
+                            console.log('Process launched with admin privileges');
+                        }
+                    });
+                } else {
+                    console.log('Process launched via AppleScript');
+                }
+            });
+        } catch (osascriptError) {
+            console.error('Failed to launch with AppleScript:', osascriptError);
         }
     }
 }
