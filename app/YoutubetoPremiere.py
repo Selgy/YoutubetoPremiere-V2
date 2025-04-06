@@ -457,7 +457,30 @@ def setup_environment():
     
     # Set environment variables
     if config['ffmpeg_path']:
+        # Set both the directory and the full path for maximum compatibility
         os.environ['FFMPEG_PATH'] = config['ffmpeg_path']
+        
+        # Add the directory containing ffmpeg to PATH
+        ffmpeg_dir = os.path.dirname(config['ffmpeg_path'])
+        if ffmpeg_dir:
+            os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
+            logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
+            
+        # On Windows, create symbolic links to ffmpeg in system temp directory for better accessibility
+        if sys.platform == 'win32':
+            try:
+                temp_dir = get_temp_dir()
+                temp_ffmpeg_path = os.path.join(temp_dir, 'ffmpeg.exe')
+                if not os.path.exists(temp_ffmpeg_path) and os.path.exists(config['ffmpeg_path']):
+                    # Copy ffmpeg to temp directory as symbolink links might not work well in all Windows contexts
+                    import shutil
+                    shutil.copy2(config['ffmpeg_path'], temp_ffmpeg_path)
+                    logging.info(f"Created ffmpeg copy in temp directory: {temp_ffmpeg_path}")
+                    
+                    # Add temp directory to PATH as well
+                    os.environ["PATH"] = temp_dir + os.pathsep + os.environ["PATH"]
+            except Exception as e:
+                logging.warning(f"Failed to create ffmpeg copy in temp directory: {str(e)}")
     
     # Clear temporary files from previous runs
     temp_dir = get_temp_dir()
@@ -465,6 +488,10 @@ def setup_environment():
     
     # Create necessary directories
     os.makedirs(temp_dir, exist_ok=True)
+    
+    # Log environment info
+    logging.info(f"Environment PATH: {os.environ.get('PATH')}")
+    logging.info(f"Environment FFMPEG_PATH: {os.environ.get('FFMPEG_PATH')}")
     
     return config
 

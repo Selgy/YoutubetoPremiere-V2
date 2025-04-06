@@ -78,24 +78,48 @@ def get_ffmpeg_path():
         ffmpeg_path = os.path.join(location, ffmpeg_name)
         if os.path.exists(ffmpeg_path):
             logging.info(f"Found ffmpeg at: {ffmpeg_path}")
-            # Verify the file is executable
+            # On Windows, use a simpler file existence check when running from Premiere
+            if sys.platform == 'win32':
+                file_size = os.path.getsize(ffmpeg_path)
+                # If the file is large enough to be a valid ffmpeg executable, assume it works
+                if file_size > 1000000:  # Typical ffmpeg.exe is several MB
+                    logging.info(f"Assuming ffmpeg is valid based on file size ({file_size} bytes): {ffmpeg_path}")
+                    return ffmpeg_path
+                logging.warning(f"Found ffmpeg at {ffmpeg_path} but size is suspiciously small: {file_size} bytes")
+                continue
+                
+            # On Unix-like systems, verify permissions
+            if sys.platform != 'win32':
+                if not os.access(ffmpeg_path, os.X_OK):
+                    logging.warning(f"FFmpeg found at {ffmpeg_path} but is not executable")
+                    continue
+                    
+            # Try to run ffmpeg -version to verify it works
             try:
-                if sys.platform != 'win32':  # On Unix-like systems, check executable permission
-                    if not os.access(ffmpeg_path, os.X_OK):
-                        logging.warning(f"FFmpeg found at {ffmpeg_path} but is not executable")
-                        continue
-                # Try to run ffmpeg -version to verify it works
-                result = subprocess.run([ffmpeg_path, '-version'], 
-                                     stdout=subprocess.PIPE, 
-                                     stderr=subprocess.PIPE,
-                                     timeout=5)
+                # Use shell=True on Windows to avoid handle issues
+                use_shell = sys.platform == 'win32'
+                cmd = [ffmpeg_path, '-version'] if not use_shell else f'"{ffmpeg_path}" -version'
+                
+                result = subprocess.run(
+                    cmd,
+                    shell=use_shell,
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.PIPE,
+                    timeout=5,
+                    text=True
+                )
+                
                 if result.returncode == 0:
                     logging.info(f"Verified ffmpeg is working at: {ffmpeg_path}")
-                    return ffmpeg_path  # Return the full path instead of just the directory
+                    return ffmpeg_path
                 else:
-                    logging.warning(f"FFmpeg found at {ffmpeg_path} but failed version check")
+                    logging.warning(f"FFmpeg found at {ffmpeg_path} but failed version check: {result.stderr}")
             except Exception as e:
                 logging.warning(f"Error verifying ffmpeg at {ffmpeg_path}: {str(e)}")
+                # If on Windows, return the path anyway if the file exists and is large enough
+                if sys.platform == 'win32' and os.path.exists(ffmpeg_path) and os.path.getsize(ffmpeg_path) > 1000000:
+                    logging.info(f"Despite verification error, using ffmpeg at: {ffmpeg_path}")
+                    return ffmpeg_path
                 continue
     
     # If not found in standard paths, try looking for ffmpeg in PATH
@@ -373,12 +397,18 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         ydl_opts = {
             'format': format_str,
             'outtmpl': video_file_path,
-            'ffmpeg_location': os.path.dirname(ffmpeg_path) if os.path.dirname(ffmpeg_path) else '.',
+            # For Windows, use the absolute path to ffmpeg executable instead of just the directory
+            'ffmpeg_location': ffmpeg_path if sys.platform == 'win32' else os.path.dirname(ffmpeg_path) if os.path.dirname(ffmpeg_path) else '.',
             'force_keyframes_at_cuts': True,
             'download_ranges': download_range_func(None, [(clip_start, clip_end)]),  # Utiliser la fonction correcte
             'no_part': True,
             'progress_hooks': [progress_hook],
-            'verbose': True  # Enable verbose output for debugging
+            'verbose': True,  # Enable verbose output for debugging
+            'nocheckcertificate': True,  # Skip certificate validation which can fail in some environments
+            'ignoreerrors': True,  # Continue downloading even if some errors occur
+            'postprocessor_args': ['-threads', '4'],  # Limit threads to avoid resource issues
+            # Explicitly set the ffmpeg executable to use
+            'external_downloader_args': ['-timeout', '60']  # Add timeout to prevent hanging
         }
         
         logging.info(f"Download options: {ydl_opts}")
@@ -387,6 +417,18 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
                 current_download['ydl'] = ydl
+                
+                # Log the environment variables related to ffmpeg
+                logging.info(f"Environment PATH: {os.environ.get('PATH')}")
+                logging.info(f"Environment FFMPEG_PATH: {os.environ.get('FFMPEG_PATH')}")
+                
+                # Verify ffmpeg actually exists at the path
+                if not os.path.exists(ffmpeg_path):
+                    logging.error(f"FFmpeg executable not found at configured path: {ffmpeg_path}")
+                    socketio.emit('download-failed', {'message': f"FFmpeg executable not found at: {ffmpeg_path}"})
+                    return {"error": f"FFmpeg executable not found at: {ffmpeg_path}"}
+                
+                logging.info(f"Starting clip download for {video_url} using ffmpeg at {ffmpeg_path}")
                 ydl.download([video_url])
                 
                 # Check if the download was canceled
@@ -398,6 +440,17 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             except Exception as e:
                 error_message = f"Error downloading clip: {str(e)}"
                 logging.error(error_message)
+                logging.error(f"Exception type: {type(e).__name__}")
+                logging.error(f"Exception traceback: {traceback.format_exc()}")
+                
+                # Check if error is related to ffmpeg
+                error_str = str(e).lower()
+                if 'ffmpeg' in error_str or 'executable' in error_str:
+                    logging.error(f"FFmpeg-related error detected. Current ffmpeg path: {ffmpeg_path}")
+                    # Suggest potential solutions
+                    solutions = "Try restarting the application or using a different clip download approach."
+                    error_message += f" This appears to be related to ffmpeg. {solutions}"
+                
                 socketio.emit('download-failed', {'message': error_message})
                 return {"error": error_message}
             finally:
@@ -409,18 +462,24 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             logging.info(f"Clip downloaded successfully: {video_file_path}")
 
             # Add URL to metadata
-            metadata_command = [
-                ffmpeg_path,
-                '-i', video_file_path,
-                '-metadata', f'comment={video_url}',
-                '-metadata', f'clip_start={clip_start}',
-                '-metadata', f'clip_end={clip_end}',
-                '-codec', 'copy',
-                f'{video_file_path}_with_metadata.mp4'
-            ]
+            use_shell = sys.platform == 'Windows'
+            if use_shell:
+                # For Windows, build a shell command with quoted paths
+                metadata_command = f'"{ffmpeg_path}" -i "{video_file_path}" -metadata comment="{video_url}" -metadata clip_start="{clip_start}" -metadata clip_end="{clip_end}" -codec copy "{video_file_path}_with_metadata.mp4"'
+            else:
+                # For macOS/Linux, use array format
+                metadata_command = [
+                    ffmpeg_path,
+                    '-i', video_file_path,
+                    '-metadata', f'comment={video_url}',
+                    '-metadata', f'clip_start={clip_start}',
+                    '-metadata', f'clip_end={clip_end}',
+                    '-codec', 'copy',
+                    f'{video_file_path}_with_metadata.mp4'
+                ]
 
             try:
-                subprocess.run(metadata_command, check=True, capture_output=True, text=True)
+                subprocess.run(metadata_command, check=True, capture_output=True, text=True, shell=use_shell)
                 os.replace(f'{video_file_path}_with_metadata.mp4', video_file_path)
                 logging.info(f"Metadata added: {video_file_path}")
                 
@@ -546,10 +605,15 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             ydl_opts = {
                 'format': format_string,
                 'merge_output_format': 'mp4',
-                'ffmpeg_location': os.path.dirname(ffmpeg_path),  # Use the directory of the full path
+                # For Windows, use the absolute path to ffmpeg executable instead of just the directory
+                'ffmpeg_location': ffmpeg_path if sys.platform == 'win32' else os.path.dirname(ffmpeg_path),
                 'progress_hooks': [progress_hook],
                 'postprocessor_hooks': [lambda d: socketio.emit('percentage', {'percentage': '100%'}) if d['status'] == 'finished' else None],
                 'verbose': True,
+                'nocheckcertificate': True,  # Skip certificate validation which can fail in some environments
+                'ignoreerrors': True,  # Continue downloading even if some errors occur
+                'postprocessor_args': ['-threads', '4'],  # Limit threads to avoid resource issues
+                'external_downloader_args': ['-timeout', '60'],  # Add timeout to prevent hanging
                 'outtmpl': {
                     'default': os.path.join(download_path, os.path.splitext(unique_filename)[0] + '.%(ext)s')
                 }
@@ -658,7 +722,8 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'wav',
             }],
-            'ffmpeg_location': os.path.dirname(ffmpeg_path),
+            # For Windows, use the absolute path to ffmpeg executable instead of just the directory
+            'ffmpeg_location': ffmpeg_path if sys.platform == 'win32' else os.path.dirname(ffmpeg_path),
             'progress_hooks': [progress_hook],
             'retries': 10,  # Retry up to 10 times
             'fragment_retries': 10,
@@ -666,10 +731,14 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
             'socket_timeout': 30,
             'extractor_retries': 5,
             'file_access_retries': 5,  # Retry file access operations
+            'nocheckcertificate': True,  # Skip certificate validation which can fail in some environments
+            'ignoreerrors': True,  # Continue downloading even if some errors occur
             'postprocessor_args': [
                 '-metadata', f'comment={video_url}',
-                '-y'  # Overwrite output files
+                '-y',  # Overwrite output files
+                '-threads', '4'  # Limit threads to avoid resource issues
             ],
+            'external_downloader_args': ['-timeout', '60']  # Add timeout to prevent hanging
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:

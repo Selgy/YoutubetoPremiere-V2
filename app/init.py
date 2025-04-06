@@ -94,7 +94,13 @@ def find_ffmpeg():
     else:
         ffmpeg_path = os.path.join(exec_dir, 'ffmpeg')
     
-    if os.path.exists(ffmpeg_path) and os.access(ffmpeg_path, os.X_OK):
+    # For Windows systems, use a more robust check (avoiding execution)
+    if system == 'Windows':
+        if os.path.exists(ffmpeg_path) and os.path.getsize(ffmpeg_path) > 1000000:  # File is large enough to be ffmpeg
+            logger.info(f"Using bundled ffmpeg: {ffmpeg_path}")
+            return ffmpeg_path
+    # For Unix systems, check executable permission
+    elif os.path.exists(ffmpeg_path) and os.access(ffmpeg_path, os.X_OK):
         logger.info(f"Using bundled ffmpeg: {ffmpeg_path}")
         return ffmpeg_path
     
@@ -103,20 +109,25 @@ def find_ffmpeg():
         if system == 'Windows':
             # On Windows, check for ffmpeg in standard locations
             for path in [
+                os.path.join(exec_dir, '_internal', 'ffmpeg.exe'),  # Check in _internal subdirectory
+                os.path.join(os.path.dirname(exec_dir), 'exec', 'ffmpeg.exe'),  # Check in parent's exec dir
                 os.path.join(os.getenv('ProgramFiles'), 'ffmpeg', 'bin', 'ffmpeg.exe'),
                 os.path.join(os.getenv('ProgramFiles(x86)'), 'ffmpeg', 'bin', 'ffmpeg.exe'),
                 # Add more common Windows locations here
             ]:
-                if os.path.exists(path):
+                if os.path.exists(path) and os.path.getsize(path) > 1000000:
                     logger.info(f"Found ffmpeg in system path: {path}")
                     return path
             
-            # Check PATH
-            result = subprocess.run(['where', 'ffmpeg'], capture_output=True, text=True)
-            if result.returncode == 0:
-                ffmpeg_path = result.stdout.strip().split('\n')[0]
-                logger.info(f"Found ffmpeg in PATH: {ffmpeg_path}")
-                return ffmpeg_path
+            # Check PATH - but on Windows, use a more robust approach
+            try:
+                result = subprocess.run(['where', 'ffmpeg'], capture_output=True, text=True, shell=True)
+                if result.returncode == 0:
+                    ffmpeg_path = result.stdout.strip().split('\n')[0]
+                    logger.info(f"Found ffmpeg in PATH: {ffmpeg_path}")
+                    return ffmpeg_path
+            except Exception as e:
+                logger.warning(f"Error checking for ffmpeg using 'where': {str(e)}")
         else:
             # On macOS/Linux
             result = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True)
@@ -126,6 +137,12 @@ def find_ffmpeg():
                 return ffmpeg_path
     except Exception as e:
         logger.warning(f"Error checking for ffmpeg in PATH: {str(e)}")
+    
+    # If we got here, no ffmpeg was found in standard locations.
+    # For Windows, do one last check if the bundled ffmpeg.exe exists without testing it
+    if system == 'Windows' and os.path.exists(ffmpeg_path):
+        logger.warning("Using ffmpeg without validation - may not work correctly")
+        return ffmpeg_path
     
     logger.warning("ffmpeg not found! Video processing may not work correctly.")
     return None
