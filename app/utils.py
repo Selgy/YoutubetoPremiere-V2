@@ -25,7 +25,8 @@ def load_settings():
         'secondsAfter': '15',
         'notificationVolume': 30,
         'notificationSound': 'notification_sound',
-        'licenseKey': None
+        'licenseKey': None,
+        'preferredAudioLanguage': 'original'
     }
 
     script_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))

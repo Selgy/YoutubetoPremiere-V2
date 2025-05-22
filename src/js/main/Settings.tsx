@@ -6,16 +6,7 @@ interface SettingsProps {
   onBack: () => void;
 }
 
-const Settings = ({ onBack }: SettingsProps) => {
-  const [settings, setSettings] = useState({
-    notificationVolume: 30,
-    notificationSound: 'notification_sound',
-    resolution: '1080',
-    downloadMP3: false,
-    secondsBefore: '15',
-    secondsAfter: '15',
-    licenseKey: ''
-  });
+const Settings = ({ onBack }: SettingsProps) => {  const [settings, setSettings] = useState({    notificationVolume: 30,    notificationSound: 'notification_sound',    resolution: '1080',    downloadMP3: false,    secondsBefore: '15',    secondsAfter: '15',    licenseKey: '',    preferredAudioLanguage: 'original'  });
   const [isTestPlaying, setIsTestPlaying] = useState(false);
   const [availableSounds, setAvailableSounds] = useState<string[]>([]);
   const [serverIP, setServerIP] = useState('localhost');
@@ -71,6 +62,12 @@ const Settings = ({ onBack }: SettingsProps) => {
   const handleSoundChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const sound = e.target.value;
     const newSettings = { ...settings, notificationSound: sound };
+    await saveSettings(newSettings);
+  };
+
+  const handleAudioLanguageChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const language = e.target.value;
+    const newSettings = { ...settings, preferredAudioLanguage: language };
     await saveSettings(newSettings);
   };
 
@@ -183,6 +180,41 @@ const Settings = ({ onBack }: SettingsProps) => {
                 >
                   {isTestPlaying ? 'Playing...' : 'Test Sound'}
                 </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Audio Language Settings */}
+          <div className="bg-background-panel rounded-lg p-6">
+            <h2 className="text-xl font-semibold text-white mb-4">Audio Language Settings</h2>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-white font-medium mb-2">
+                  Preferred Audio Language
+                </label>
+                <select
+                  value={settings.preferredAudioLanguage}
+                  onChange={handleAudioLanguageChange}
+                  className="input-base"
+                >
+                  <option value="original">Original Audio</option>
+                  <option value="en">English</option>
+                  <option value="fr">Français</option>
+                  <option value="es">Español</option>
+                  <option value="de">Deutsch</option>
+                  <option value="it">Italiano</option>
+                  <option value="pt">Português</option>
+                  <option value="ru">Русский</option>
+                  <option value="ja">日本語</option>
+                  <option value="ko">한국어</option>
+                  <option value="zh">中文</option>
+                  <option value="ar">العربية</option>
+                  <option value="hi">हिन्दी</option>
+                </select>
+                <p className="text-gray-400 text-sm mt-2">
+                  If the selected language is not available for a video, the original audio will be used instead.
+                </p>
               </div>
             </div>
           </div>

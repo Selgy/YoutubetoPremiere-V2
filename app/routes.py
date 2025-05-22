@@ -1,7 +1,7 @@
 from flask import request, jsonify
 import logging
 import json
-from video_processing import handle_video_url
+from video_processing import handle_video_url, get_audio_language_options
 from utils import play_notification_sound, save_license_key, get_license_key, load_settings, save_settings, save_download_path
 import os
 import sys
@@ -321,6 +321,27 @@ def register_routes(app, socketio, settings):
         except Exception as e:
             logging.error(f'Error getting IP address: {e}')
             return jsonify({'ip': 'localhost', 'error': str(e)})
+
+    @app.route('/get-audio-languages', methods=['POST'])
+    def get_audio_languages():
+        try:
+            data = request.get_json()
+            video_url = data.get('url')
+            
+            if not video_url:
+                return jsonify({'error': 'No URL provided'}), 400
+                
+            # Validate the URL is from YouTube
+            if not validate_youtube_url(video_url):
+                return jsonify({'error': 'Invalid YouTube URL'}), 400
+            
+            # Get available audio languages for this video
+            languages = get_audio_language_options(video_url)
+            return jsonify({'languages': languages}), 200
+            
+        except Exception as e:
+            logging.error(f"Error getting audio languages: {e}")
+            return jsonify({'error': str(e)}), 500
 
     # Process the request to get a download folder
     @socketio.on('project_path_response')

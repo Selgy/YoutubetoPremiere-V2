@@ -228,7 +228,8 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
                 download_path=download_path,
                 ffmpeg_path=ffmpeg_path,
                 socketio=socketio,
-                current_download=current_download
+                current_download=current_download,
+                settings=settings
             )
             
             if result and os.path.exists(result):
@@ -366,10 +367,17 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         video_file_path = os.path.join(download_path, unique_filename)
         logging.info(f"Setting output path to: {video_file_path}")
 
-        # Format string for the desired quality - FORCE AVC1 CODEC
+        # Get preferred audio language from settings
+        preferred_language = settings.get('preferredAudioLanguage', 'original')
+        logging.info(f"Using preferred audio language for clip: {preferred_language}")
+        
+        # Format string for the desired quality - FORCE AVC1 CODEC with language preference
         sanitized_resolution = sanitize_resolution(resolution)
-        format_str = f'bestvideo[height<={sanitized_resolution}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/best[vcodec^=avc1][ext=mp4]/best'
-        logging.info(f"Using format string with AVC1 codec: {format_str}")
+        if preferred_language != 'original':
+            format_str = f'bestvideo[height<={sanitized_resolution}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a][language~="{preferred_language}"]/bestvideo[height<={sanitized_resolution}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/best[vcodec^=avc1][ext=mp4]/best'
+        else:
+            format_str = f'bestvideo[height<={sanitized_resolution}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/best[vcodec^=avc1][ext=mp4]/best'
+        logging.info(f"Using format string with AVC1 codec and language preference: {format_str}")
         
         # CORRECTION: Utiliser download_ranges au lieu de download_sections
         logging.info(f"Using download ranges: start={clip_start}, end={clip_end}")
@@ -550,9 +558,18 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 except Exception as e:
                     logging.error(f"Error in progress hook: {e}")
 
-        # Configure yt-dlp options with AVC1 codec for better compatibility
-        format_string = f'bestvideo[vcodec^=avc1][height<={int(resolution.replace("p", ""))}][ext=mp4]+bestaudio[ext=m4a]/best[vcodec^=avc1][ext=mp4]/best[ext=mp4]'
-        logging.info(f"Using format string with AVC1 codec: {format_string}")
+        # Get preferred audio language from settings
+        preferred_language = settings.get('preferredAudioLanguage', 'original')
+        logging.info(f"Using preferred audio language: {preferred_language}")
+        
+        # Configure yt-dlp options with AVC1 codec and audio language preference
+        if preferred_language != 'original':
+            # Use language-specific format selector
+            format_string = f'bestvideo[vcodec^=avc1][height<={int(resolution.replace("p", ""))}][ext=mp4]+bestaudio[ext=m4a][language~="{preferred_language}"]/bestvideo[vcodec^=avc1][height<={int(resolution.replace("p", ""))}][ext=mp4]+bestaudio[ext=m4a]/best[vcodec^=avc1][ext=mp4]/best[ext=mp4]'
+        else:
+            format_string = f'bestvideo[vcodec^=avc1][height<={int(resolution.replace("p", ""))}][ext=mp4]+bestaudio[ext=m4a]/best[vcodec^=avc1][ext=mp4]/best[ext=mp4]'
+        
+        logging.info(f"Using format string with AVC1 codec and language preference: {format_string}")
 
         # Check if download path exists or try to get default path
         if not download_path:
@@ -668,7 +685,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         socketio.emit('download-failed', {'message': error_message})
         return None
 
-def download_audio(video_url, download_path, ffmpeg_path, socketio, current_download=None):
+def download_audio(video_url, download_path, ffmpeg_path, socketio, current_download=None, settings=None):
     check_result = check_ffmpeg(None, socketio)
     if not check_result['success']:
         return None
@@ -698,6 +715,18 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
             socketio.emit('download-failed', {'message': error_msg})
             return None
 
+        # Get preferred audio language from settings
+        preferred_language = 'original'
+        if settings:
+            preferred_language = settings.get('preferredAudioLanguage', 'original')
+        logging.info(f"Using preferred audio language for audio download: {preferred_language}")
+        
+        # Configure format selector based on language preference
+        if preferred_language != 'original':
+            audio_format = f'bestaudio[language~="{preferred_language}"]/bestaudio/best'
+        else:
+            audio_format = 'bestaudio/best'
+        
         # Define progress hook function
         def progress_hook(d):
             if d['status'] == 'downloading':
@@ -714,10 +743,10 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                     logging.error(f"Error in progress hook: {e}")
             elif d['status'] == 'finished':
                 socketio.emit('percentage', {'percentage': "Conversion audio en cours...", 'type': 'audio'})
-
+        
         # Configure yt-dlp options with retries and timeouts
         ydl_opts = {
-            'format': 'bestaudio/best',
+            'format': audio_format,
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'wav',
@@ -840,6 +869,66 @@ def format_timestamp(seconds):
     minutes = (seconds % 3600) // 60
     seconds = seconds % 60
     return f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
+
+def get_audio_format_selector(preferred_language='original'):
+    """
+    Create a format selector string for yt-dlp that prefers a specific audio language
+    with fallback to original audio if the preferred language is not available.
+    """
+    if preferred_language == 'original':
+        # Return the original best format selector
+        return 'bestvideo+bestaudio/best'
+    
+    # Language mapping for common cases
+    language_codes = {
+        'en': ['en', 'eng', 'english'],
+        'fr': ['fr', 'fre', 'fra', 'french', 'français'],
+        'es': ['es', 'spa', 'spanish', 'español'],
+        'de': ['de', 'ger', 'deu', 'german', 'deutsch'],
+        'it': ['it', 'ita', 'italian', 'italiano'],
+        'pt': ['pt', 'por', 'portuguese', 'português'],
+        'ru': ['ru', 'rus', 'russian', 'русский'],
+        'ja': ['ja', 'jpn', 'japanese', '日本語'],
+        'ko': ['ko', 'kor', 'korean', '한국어'],
+        'zh': ['zh', 'chi', 'zho', 'chinese', '中文'],
+        'ar': ['ar', 'ara', 'arabic', 'العربية'],
+        'hi': ['hi', 'hin', 'hindi', 'हिन्दी']
+    }
+    
+    # Get all possible language codes for the preferred language
+    lang_variants = language_codes.get(preferred_language, [preferred_language])
+    
+    # Create format selector that prefers the specified language
+    # Format: try language-specific audio + best video, fallback to original best
+    lang_conditions = '|'.join(lang_variants)
+    format_selector = f'bestvideo+bestaudio[language~="{lang_conditions}"]/bestvideo+bestaudio/best'
+    
+    return format_selector
+
+def get_audio_language_options(video_url):
+    """
+    Extract available audio language options from a YouTube video.
+    Returns a list of available languages.
+    """
+    try:
+        with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+            if not info:
+                return []
+            
+            available_languages = set()
+            formats = info.get('formats', [])
+            
+            for fmt in formats:
+                if fmt.get('acodec') != 'none':  # Audio format
+                    lang = fmt.get('language')
+                    if lang:
+                        available_languages.add(lang)
+            
+            return sorted(list(available_languages))
+    except Exception as e:
+        logging.error(f"Error extracting audio languages: {str(e)}")
+        return []
 
 # Main execution
 if __name__ == "__main__":
