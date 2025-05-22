@@ -285,10 +285,7 @@ def emit_to_client_type(event, data, client_type=None):
         socketio.emit(event, data)
         app_logger.debug(f'Broadcasting {event}')
 
-@socketio.on('percentage')
-def handle_percentage(data):
-    """Forward progress only to Chrome extension"""
-    emit_to_client_type('percentage', data, 'chrome')
+@socketio.on('progress')
 
 @socketio.on('import_video')
 def handle_import_video(data):

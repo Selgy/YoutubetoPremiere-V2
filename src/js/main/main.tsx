@@ -47,8 +47,7 @@ const Main = () => {
     secondsAfter: '15',
     notificationVolume: 30,
     notificationSound: 'notification_sound',
-    licenseKey: '',
-    preferredAudioLanguage: 'original'
+const Main = () => {
   });
 
   const [lastPaths, setLastPaths] = useState<string[]>([]);

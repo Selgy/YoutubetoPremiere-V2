@@ -393,14 +393,12 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                     if '_percent_str' in d:
                         percentage = d['_percent_str'].strip()
                         percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
-                        percentage = percentage.replace(' ', '')
-                        if not percentage.endswith('%'):
-                            percentage += '%'
-                        logging.info(f'Clip Progress: {percentage}')
-                        socketio.emit('percentage', {'percentage': f"Clip: {percentage}"})
+                        percentage = percentage.replace(' ', '').replace('%', '')
+                        logging.info(f'Clip Progress: {percentage}%')
+                        socketio.emit('progress', {'progress': percentage, 'type': 'clip'})
                 except Exception as e:
                     logging.error(f"Error in clip progress hook: {e}")
-                    
+
         # Configure yt-dlp options avec download_ranges - CORRECTION IMPORTANTE
         ydl_opts = {
             'format': format_str,
@@ -492,7 +490,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                 logging.info(f"Metadata added: {video_file_path}")
                 
                 # Emit events
-                socketio.emit('percentage', {'percentage': "Clip terminé"})
+                socketio.emit('complete', {'type': 'clip', 'message': 'Clip téléchargé avec succès'})
                 socketio.emit('download-complete', {'url': video_url, 'path': video_file_path})
                 socketio.emit('download_complete')
                 return {"success": True, "path": video_file_path}
@@ -550,11 +548,9 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     if '_percent_str' in d:
                         percentage = d['_percent_str'].strip()
                         percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
-                        percentage = percentage.replace(' ', '')
-                        if not percentage.endswith('%'):
-                            percentage += '%'
-                        logging.info(f'Progress: {percentage}')
-                        socketio.emit('percentage', {'percentage': percentage, 'type': 'video'})
+                        percentage = percentage.replace(' ', '').replace('%', '')
+                        logging.info(f'Progress: {percentage}%')
+                        socketio.emit('progress', {'progress': percentage, 'type': 'full'})
                 except Exception as e:
                     logging.error(f"Error in progress hook: {e}")
 
@@ -625,7 +621,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 # For Windows, use the absolute path to ffmpeg executable instead of just the directory
                 'ffmpeg_location': ffmpeg_path if sys.platform == 'win32' else os.path.dirname(ffmpeg_path),
                 'progress_hooks': [progress_hook],
-                'postprocessor_hooks': [lambda d: socketio.emit('percentage', {'percentage': '100%'}) if d['status'] == 'finished' else None],
+                'postprocessor_hooks': [lambda d: socketio.emit('progress', {'progress': '100', 'type': 'full'}) if d['status'] == 'finished' else None],
                 'verbose': True,
                 'nocheckcertificate': True,  # Skip certificate validation which can fail in some environments
                 'ignoreerrors': True,  # Continue downloading even if some errors occur
@@ -691,8 +687,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
         return None
 
     try:
-        # Emit initial status
-        socketio.emit('percentage', {'percentage': "Préparation du téléchargement audio..."})
+                        # Emit initial status        socketio.emit('progress', {'progress': '0', 'type': 'audio'})
         
         # Check if download path exists or try to get default path
         if not download_path:
@@ -734,16 +729,14 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                     if '_percent_str' in d:
                         percentage = d['_percent_str'].strip()
                         percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
-                        percentage = percentage.replace(' ', '')
-                        if not percentage.endswith('%'):
-                            percentage += '%'
-                        logging.info(f'Progress: {percentage}')
-                        socketio.emit('percentage', {'percentage': f"Audio: {percentage}", 'type': 'audio'})
+                        percentage = percentage.replace(' ', '').replace('%', '')
+                        logging.info(f'Progress: {percentage}%')
+                        socketio.emit('progress', {'progress': percentage, 'type': 'audio'})
                 except Exception as e:
                     logging.error(f"Error in progress hook: {e}")
             elif d['status'] == 'finished':
-                socketio.emit('percentage', {'percentage': "Conversion audio en cours...", 'type': 'audio'})
-        
+                socketio.emit('progress', {'progress': '100', 'type': 'audio'})
+
         # Configure yt-dlp options with retries and timeouts
         ydl_opts = {
             'format': audio_format,
