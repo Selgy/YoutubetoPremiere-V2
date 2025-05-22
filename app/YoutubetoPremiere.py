@@ -20,12 +20,21 @@ from init import init
 # Configure logging with more detailed format
 logging.basicConfig(
     level=logging.WARNING,
-    format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
+    format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
         logging.FileHandler(os.path.join(os.environ.get('TEMP' if sys.platform == 'win32' else 'TMPDIR', '/tmp'), 'YoutubetoPremiere.log'))
     ]
 )
+
+# Set higher log levels for verbose libraries
+logging.getLogger('engineio.server').setLevel(logging.ERROR)
+logging.getLogger('socketio.server').setLevel(logging.ERROR)
+logging.getLogger('werkzeug').setLevel(logging.ERROR)
+
+# Log only important app events
+app_logger = logging.getLogger('app')
+app_logger.setLevel(logging.INFO)
 
 # Track connected clients by type and IP
 connected_clients = {
@@ -193,7 +202,7 @@ def options_handler(path=None):
 
 @socketio.on_error()
 def error_handler(e):
-    logging.error(f'SocketIO error: {str(e)}')
+    app_logger.error(f'SocketIO error: {str(e)}')
     # Attempt to notify client of error
     try:
         socketio.emit('server_error', {'error': str(e)})
@@ -202,7 +211,7 @@ def error_handler(e):
 
 @socketio.on_error_default
 def default_error_handler(e):
-    logging.error(f'SocketIO default error: {str(e)}')
+    app_logger.error(f'SocketIO default error: {str(e)}')
     # Attempt to notify client of error
     try:
         socketio.emit('server_error', {'error': str(e)})
@@ -218,22 +227,22 @@ def handle_connect():
     # Validate client type
     if client_type not in ['chrome', 'premiere']:
         client_type = 'unknown'
-        logging.warning(f'Connection with unspecified client type from {client_ip}')
+        app_logger.warning(f'Connection with unspecified client type from {client_ip}')
     
     # Check if this IP already has a connection of this type
     existing_sid = connected_clients[client_type].get(client_ip)
     if existing_sid:
         # If the existing connection is still active, update it
         if socketio.server.manager.is_connected(existing_sid):
-            logging.info(f'Updating existing connection for {client_ip} ({client_type})')
+            app_logger.info(f'Updating existing connection for {client_ip} ({client_type})')
             del connected_clients[client_type][client_ip]
         else:
-            logging.info(f'Replacing dead connection for {client_ip} ({client_type})')
+            app_logger.info(f'Replacing dead connection for {client_ip} ({client_type})')
     
     # Add new connection
     connected_clients[client_type][client_ip] = sid
     
-    logging.info(f'Client connected - Type: {client_type}, SID: {sid}, IP: {client_ip}')
+    app_logger.info(f'Client connected - Type: {client_type}, IP: {client_ip}')
     socketio.emit('connection_status', {'status': 'connected'}, room=sid)
 
 @socketio.on('disconnect')
@@ -250,11 +259,14 @@ def handle_disconnect():
             break
 
 @socketio.on('connection_check')
-def handle_connection_check():
+def handle_connection_check(data):
+    """Handle connection check requests from clients"""
     try:
+        # This simply responds with a status "ok" message
+        # No need to log every connection check
         emit_to_client_type('connection_status', {'status': 'ok'}, request.args.get('client_type'))
     except Exception as e:
-        logging.error(f'Error in handle_connection_check: {str(e)}')
+        app_logger.error(f'Error in handle_connection_check: {str(e)}')
 
 def emit_to_client_type(event, data, client_type=None):
     """Emit event to specific client type or all if client_type is None"""
@@ -263,13 +275,15 @@ def emit_to_client_type(event, data, client_type=None):
         for sid in connected_clients[client_type].values():
             try:
                 socketio.emit(event, data, room=sid)
-                logging.debug(f'Emitting {event} to {client_type} client {sid}')
+                # Reduced to debug level to minimize logs
+                if event != 'connection_status': # Don't log frequent connection status updates
+                    app_logger.debug(f'Emitting {event} to {client_type} client')
             except Exception as e:
-                logging.error(f'Error emitting to client {sid}: {str(e)}')
+                app_logger.error(f'Error emitting to client: {str(e)}')
     else:
         # For backwards compatibility, emit to all if no type specified
         socketio.emit(event, data)
-        logging.debug(f'Broadcasting {event} to all clients')
+        app_logger.debug(f'Broadcasting {event}')
 
 @socketio.on('percentage')
 def handle_percentage(data):
@@ -443,12 +457,13 @@ def progress_hook(d, socketio):
         try:
             percentage = d.get('_percent_str', '0%')
             percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
-            # Log only once
-            logging.info(f'Progress: {percentage}')
+            # Log progress less frequently - only at certain milestones
+            if percentage.strip() in ['0%', '25%', '50%', '75%', '100%']:
+                app_logger.info(f'Download progress: {percentage}')
             # Emit only to chrome clients
             emit_to_client_type('percentage', {'percentage': percentage}, 'chrome')
         except Exception as e:
-            logging.error(f"Error in progress hook: {e}")
+            app_logger.error(f"Error in progress hook: {e}")
 
 def setup_environment():
     """Set up the application environment"""

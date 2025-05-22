@@ -1,13 +1,17 @@
 {
   "manifest_version": 3,
   "name": "Youtube to Premiere Pro V2",
-  "version": "3.0.1",
-  "description": "",
+  "version": "3.0.2",
+  "description": "Import YouTube videos directly into Adobe Premiere Pro",
   "permissions": [
-    "activeTab"
+    "activeTab",
+    "storage",
+    "downloads"
   ],
   "host_permissions": [
     "https://www.youtube.com/*",
+    "https://youtu.be/*",
+    "https://youtube.com/*",
     "https://localhost:3001/*",
     "http://localhost:3001/*",
     "https://127.0.0.1:3001/*",
@@ -23,9 +27,15 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://www.youtube.com/*"],
+      "matches": ["https://www.youtube.com/*", "https://youtube.com/*"],
       "js": ["socket.io.min.js", "content.js"],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["icon.png"],
+      "matches": ["https://www.youtube.com/*", "https://youtube.com/*"]
     }
   ],
   "icons": {
