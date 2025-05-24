@@ -1,12 +1,21 @@
 import { useState, useEffect } from 'react';
-import { FaDiscord, FaArrowLeft } from 'react-icons/fa';
 import { openLinkInBrowser } from '../lib/utils/bolt';
 
 interface SettingsProps {
   onBack: () => void;
 }
 
-const Settings = ({ onBack }: SettingsProps) => {  const [settings, setSettings] = useState({    notificationVolume: 30,    notificationSound: 'notification_sound',    resolution: '1080',    downloadMP3: false,    secondsBefore: '15',    secondsAfter: '15',    licenseKey: '',    preferredAudioLanguage: 'original'  });
+const Settings = ({ onBack }: SettingsProps) => {
+  const [settings, setSettings] = useState({
+    notificationVolume: 30,
+    notificationSound: 'notification_sound',
+    resolution: '1080',
+    downloadMP3: false,
+    secondsBefore: '15',
+    secondsAfter: '15',
+    licenseKey: '',
+    preferredAudioLanguage: 'original'
+  });
   const [isTestPlaying, setIsTestPlaying] = useState(false);
   const [availableSounds, setAvailableSounds] = useState<string[]>([]);
   const [serverIP, setServerIP] = useState('localhost');
@@ -125,46 +134,73 @@ const Settings = ({ onBack }: SettingsProps) => {  const [settings, setSettings]
   }, []);
 
   return (
-    <div className="min-h-screen bg-background p-4 sm:p-6">
+    <div className="min-h-screen bg-gradient-to-br from-background-DEFAULT to-background-panel p-4 sm:p-6">
       <div className="max-w-2xl mx-auto">
+        {/* Header */}
         <div className="flex items-center mb-6 sm:mb-8">
           <button 
             onClick={onBack}
-            className="mr-4 p-2 rounded-lg hover:bg-background-panel transition-colors"
+            className="mr-4 p-3 rounded-xl transition-all duration-300 backdrop-blur-20 border border-white border-opacity-10 hover:bg-white hover:bg-opacity-10"
+            style={{
+              background: 'linear-gradient(135deg, rgba(46, 47, 119, 0.3) 0%, rgba(30, 32, 87, 0.3) 100%)'
+            }}
           >
-            <FaArrowLeft className="w-6 h-6 text-white" />
+            <span className="material-symbols-outlined text-white">arrow_back</span>
           </button>
-          <h1 className="text-2xl sm:text-3xl font-bold text-white">Settings</h1>
+          <div className="flex items-center gap-3">
+            <span className="material-symbols-outlined text-3xl text-blue-400">settings</span>
+            <h1 className="text-2xl sm:text-3xl font-bold text-white">Settings</h1>
+          </div>
         </div>
         
         <div className="space-y-6">
           {/* Notification Settings */}
-          <div className="bg-background-panel rounded-lg p-6">
-            <h2 className="text-xl font-semibold text-white mb-4">Notification Settings</h2>
+          <div className="p-6 rounded-xl backdrop-blur-20 border border-white border-opacity-10"
+               style={{
+                 background: 'linear-gradient(135deg, rgba(46, 47, 119, 0.3) 0%, rgba(30, 32, 87, 0.3) 100%)',
+                 boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)'
+               }}>
+            <div className="flex items-center gap-2 mb-6">
+              <span className="material-symbols-outlined text-2xl text-blue-400">notifications</span>
+              <h2 className="text-xl font-semibold text-white">Notification Settings</h2>
+            </div>
             
-            <div className="space-y-4">
+            <div className="space-y-6">
+              {/* Volume Slider */}
               <div>
-                <label className="block text-white font-medium mb-2">
-                  Notification Volume: {settings.notificationVolume}%
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={settings.notificationVolume}
-                  onChange={handleVolumeChange}
-                  className="w-full"
-                />
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="material-symbols-outlined text-blue-400">volume_up</span>
+                  <label className="text-white font-medium">
+                    Notification Volume: {settings.notificationVolume}%
+                  </label>
+                </div>
+                <div className="relative">
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={settings.notificationVolume}
+                    onChange={handleVolumeChange}
+                    className="volume-slider"
+                    style={{
+                      background: `linear-gradient(to right, #4e52ff 0%, #4e52ff ${settings.notificationVolume}%, rgba(255,255,255,0.1) ${settings.notificationVolume}%, rgba(255,255,255,0.1) 100%)`
+                    }}
+                  />
+                </div>
               </div>
 
+              {/* Sound Selection */}
               <div>
-                <label className="block text-white font-medium mb-2">
-                  Notification Sound
-                </label>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="material-symbols-outlined text-blue-400">music_note</span>
+                  <label className="text-white font-medium">
+                    Notification Sound
+                  </label>
+                </div>
                 <select
                   value={settings.notificationSound}
                   onChange={handleSoundChange}
-                  className="input-base mb-2"
+                  className="input-base mb-3"
                 >
                   {availableSounds.map(sound => (
                     <option key={sound} value={sound}>
@@ -176,8 +212,11 @@ const Settings = ({ onBack }: SettingsProps) => {  const [settings, setSettings]
                 <button
                   onClick={playTestSound}
                   disabled={isTestPlaying}
-                  className="btn w-full mt-2"
+                  className={`btn w-full flex items-center justify-center gap-2 ${isTestPlaying ? 'btn-loading' : ''}`}
                 >
+                  <span className="material-symbols-outlined">
+                    {isTestPlaying ? 'volume_up' : 'play_arrow'}
+                  </span>
                   {isTestPlaying ? 'Playing...' : 'Test Sound'}
                 </button>
               </div>
@@ -185,55 +224,107 @@ const Settings = ({ onBack }: SettingsProps) => {  const [settings, setSettings]
           </div>
 
           {/* Audio Language Settings */}
-          <div className="bg-background-panel rounded-lg p-6">
-            <h2 className="text-xl font-semibold text-white mb-4">Audio Language Settings</h2>
+          <div className="p-6 rounded-xl backdrop-blur-20 border border-white border-opacity-10"
+               style={{
+                 background: 'linear-gradient(135deg, rgba(46, 47, 119, 0.3) 0%, rgba(30, 32, 87, 0.3) 100%)',
+                 boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)'
+               }}>
+            <div className="flex items-center gap-2 mb-6">
+              <span className="material-symbols-outlined text-2xl text-blue-400">language</span>
+              <h2 className="text-xl font-semibold text-white">Audio Language Settings</h2>
+            </div>
             
             <div className="space-y-4">
               <div>
-                <label className="block text-white font-medium mb-2">
-                  Preferred Audio Language
-                </label>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="material-symbols-outlined text-blue-400">record_voice_over</span>
+                  <label className="text-white font-medium">
+                    Preferred Audio Language
+                  </label>
+                </div>
                 <select
                   value={settings.preferredAudioLanguage}
                   onChange={handleAudioLanguageChange}
                   className="input-base"
                 >
-                  <option value="original">Original Audio</option>
+                  <option value="original">Original</option>
                   <option value="en">English</option>
-                  <option value="fr">Français</option>
-                  <option value="es">Español</option>
-                  <option value="de">Deutsch</option>
-                  <option value="it">Italiano</option>
-                  <option value="pt">Português</option>
-                  <option value="ru">Русский</option>
-                  <option value="ja">日本語</option>
-                  <option value="ko">한국어</option>
-                  <option value="zh">中文</option>
-                  <option value="ar">العربية</option>
-                  <option value="hi">हिन्दी</option>
+                  <option value="fr">French</option>
+                  <option value="es">Spanish</option>
+                  <option value="de">German</option>
+                  <option value="it">Italian</option>
+                  <option value="pt">Portuguese</option>
+                  <option value="ru">Russian</option>
+                  <option value="ja">Japanese</option>
+                  <option value="ko">Korean</option>
+                  <option value="zh">Chinese</option>
                 </select>
-                <p className="text-gray-400 text-sm mt-2">
-                  If the selected language is not available for a video, the original audio will be used instead.
+                <p className="text-sm text-gray-400 mt-2 flex items-center gap-1">
+                  <span className="material-symbols-outlined text-xs">info</span>
+                  When available, videos will be downloaded with this audio language
                 </p>
               </div>
             </div>
           </div>
 
           {/* Support Section */}
-          <div className="bg-background-panel rounded-lg p-6">
-            <h2 className="text-xl font-semibold text-white mb-4">Support</h2>
+          <div className="p-6 rounded-xl backdrop-blur-20 border border-white border-opacity-10"
+               style={{
+                 background: 'linear-gradient(135deg, rgba(46, 47, 119, 0.3) 0%, rgba(30, 32, 87, 0.3) 100%)',
+                 boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)'
+               }}>
+            <div className="flex items-center gap-2 mb-6">
+              <span className="material-symbols-outlined text-2xl text-blue-400">support_agent</span>
+              <h2 className="text-xl font-semibold text-white">Support & Community</h2>
+            </div>
             
-            <div 
-              className="flex items-center justify-between bg-discord p-4 rounded-lg cursor-pointer hover:bg-discord-hover transition-colors"
-              onClick={() => openLinkInBrowser('https://discord.gg/s2gfM3w47y')}
-            >
-              <div className="flex items-center space-x-3">
-                <FaDiscord className="w-8 h-8 text-white" />
-                <span className="text-white font-medium">Join our Discord Community</span>
+            <div className="space-y-4">
+              <button
+                onClick={() => openLinkInBrowser('https://discord.gg/your-discord-server')}
+                className="btn w-full flex items-center justify-center gap-3"
+                style={{
+                  background: 'linear-gradient(135deg, #5865F2 0%, #4752C4 100%)'
+                }}
+              >
+                <span className="material-symbols-outlined">chat</span>
+                <span>Join Discord Community</span>
+              </button>
+              
+              <div className="text-center">
+                <p className="text-gray-400 text-sm flex items-center justify-center gap-1">
+                  <span className="material-symbols-outlined text-xs">help</span>
+                  Get help, report bugs, and suggest features
+                </p>
               </div>
-              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
+            </div>
+          </div>
+
+          {/* Advanced Settings */}
+          <div className="p-6 rounded-xl backdrop-blur-20 border border-white border-opacity-10"
+               style={{
+                 background: 'linear-gradient(135deg, rgba(46, 47, 119, 0.3) 0%, rgba(30, 32, 87, 0.3) 100%)',
+                 boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)'
+               }}>
+            <div className="flex items-center gap-2 mb-6">
+              <span className="material-symbols-outlined text-2xl text-blue-400">tune</span>
+              <h2 className="text-xl font-semibold text-white">Advanced Settings</h2>
+            </div>
+            
+            <div className="space-y-4">
+              <div className="p-4 rounded-lg border border-white border-opacity-10"
+                   style={{background: 'rgba(0, 0, 0, 0.2)'}}>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="material-symbols-outlined text-yellow-400">warning</span>
+                  <h3 className="text-white font-medium">Server Connection</h3>
+                </div>
+                <p className="text-gray-400 text-sm mb-3">
+                  Current server IP: <span className="text-blue-400 font-mono">{serverIP}</span>
+                </p>
+                <p className="text-gray-400 text-xs">
+                  The extension automatically detects the server IP address. If you're experiencing connection issues, 
+                  try restarting the application.
+                </p>
+              </div>
             </div>
           </div>
         </div>

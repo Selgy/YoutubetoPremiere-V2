@@ -47,7 +47,7 @@ const Main = () => {
     secondsAfter: '15',
     notificationVolume: 30,
     notificationSound: 'notification_sound',
-const Main = () => {
+    licenseKey: '',
   });
 
   const [lastPaths, setLastPaths] = useState<string[]>([]);
@@ -58,7 +58,10 @@ const Main = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [latestVersion, setLatestVersion] = useState('');
-  const currentVersion = '3.0.1'; // Get this from your package.json
+  const [updateInfo, setUpdateInfo] = useState<any>(null);
+  const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const currentVersion = '3.0.1';
   const [currentPage, setCurrentPage] = useState('main');
   const [serverIP, setServerIP] = useState('localhost');
   const [isCEPEnvironment, setIsCEPEnvironment] = useState(false);
@@ -180,29 +183,38 @@ const Main = () => {
   }, [serverIP]);
 
   const checkForUpdates = async () => {
+    if (isCheckingUpdates) return;
+    
+    setIsCheckingUpdates(true);
     try {
-      const response = await fetch(`http://${serverIP}:3001/get-version`);
+      const response = await fetch(`http://${serverIP}:3001/check-updates`);
       const data = await response.json();
-      const latestVersion = data.version;
-      setLatestVersion(latestVersion);
       
-      // Compare versions
-      const isNewer = compareVersions(latestVersion, currentVersion);
-      setUpdateAvailable(isNewer);
+      if (data.success) {
+        setUpdateInfo(data);
+        setLatestVersion(data.latest_version);
+        setUpdateAvailable(data.has_update);
+        
+        // Show modal if update available
+        if (data.has_update) {
+          setShowUpdateModal(true);
+        }
+      } else {
+        console.error('Error checking for updates:', data.error);
+      }
     } catch (error) {
       console.error('Error checking for updates:', error);
+    } finally {
+      setIsCheckingUpdates(false);
     }
   };
 
-  const compareVersions = (latest: string, current: string) => {
-    const latestParts = latest.split('.').map(Number);
-    const currentParts = current.split('.').map(Number);
-    
-    for (let i = 0; i < 3; i++) {
-      if (latestParts[i] > currentParts[i]) return true;
-      if (latestParts[i] < currentParts[i]) return false;
+  const handleDownloadUpdate = () => {
+    if (updateAvailable && updateInfo) {
+      setShowUpdateModal(true);
+    } else if (updateInfo?.download_url) {
+      window.open(updateInfo.download_url, '_blank');
     }
-    return false;
   };
 
   const handleLicenseSubmit = async () => {
@@ -351,10 +363,22 @@ const Main = () => {
     }
   };
 
+  const showNotification = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    // Simple console log instead of toast notification
+    console.log(`${type.toUpperCase()}: ${message}`);
+  };
+
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background p-4 sm:p-6">
-        <div className="w-full max-w-md bg-background-panel rounded-xl shadow-lg p-6 sm:p-8 text-center">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background-DEFAULT to-background-panel p-4 sm:p-6">
+        <div className="w-full max-w-md rounded-xl shadow-2xl p-6 sm:p-8 text-center backdrop-blur-20 border border-white border-opacity-10" 
+             style={{
+               background: 'linear-gradient(135deg, #1e2057 0%, #2e2f77 100%)',
+               boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)'
+             }}>
+          <div className="flex items-center justify-center mb-6">
+            <span className="material-symbols-outlined text-4xl text-blue-400 animate-spin">refresh</span>
+          </div>
           <h2 className="text-xl sm:text-2xl font-bold text-white mb-4">Loading...</h2>
           <p className="text-gray-300 text-sm sm:text-base">Please wait while we check the version and settings.</p>
         </div>
@@ -364,9 +388,16 @@ const Main = () => {
 
   if (!isLicenseValid) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background p-4 sm:p-6">
-        <div className="w-full max-w-md bg-background-panel rounded-xl shadow-lg p-6 sm:p-8">
-          <h2 className="text-xl sm:text-2xl font-bold text-white text-center mb-4 sm:mb-6">Enter Your License Key</h2>
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background-DEFAULT to-background-panel p-4 sm:p-6">
+        <div className="w-full max-w-md rounded-xl shadow-2xl p-6 sm:p-8 backdrop-blur-20 border border-white border-opacity-10"
+             style={{
+               background: 'linear-gradient(135deg, #1e2057 0%, #2e2f77 100%)',
+               boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)'
+             }}>
+          <div className="text-center mb-6">
+            <span className="material-symbols-outlined text-4xl text-blue-400 mb-4 block">key</span>
+            <h2 className="text-xl sm:text-2xl font-bold text-white">Enter Your License Key</h2>
+          </div>
           <input
             type="text"
             value={licenseKey}
@@ -375,36 +406,50 @@ const Main = () => {
             className="input-base mb-4"
           />
           <button onClick={handleLicenseSubmit} className="btn w-full">
+            <span className="material-symbols-outlined mr-2">verified_user</span>
             Submit
           </button>
-          {errorMessage && <p className="text-red-500 mt-4 text-center text-sm sm:text-base">{errorMessage}</p>}
+          {errorMessage && (
+            <div className="mt-4 p-3 rounded-lg bg-red-500 bg-opacity-20 border border-red-500 border-opacity-30">
+              <p className="text-red-300 text-center text-sm sm:text-base">{errorMessage}</p>
+            </div>
+          )}
         </div>
       </div>
     );
   }
 
   return currentPage === 'main' ? (
-    <div className="min-h-screen bg-background p-4 sm:p-6">
+    <div className="min-h-screen bg-gradient-to-br from-background-DEFAULT to-background-panel p-4 sm:p-6">
       <div className="max-w-2xl mx-auto">
+        {/* Header - Simple */}
         <div className="flex items-center justify-between mb-6 sm:mb-8">
-          <h1 className="text-2xl sm:text-3xl font-bold text-white">Youtube to Premiere</h1>
+          <div className="flex items-center gap-3">
+            <span className="material-symbols-outlined text-3xl text-blue-400">video_library</span>
+            <h1 className="text-xl sm:text-2xl font-bold text-white">Youtube to Premiere</h1>
+          </div>
           <button 
             onClick={() => setCurrentPage('settings')}
-            className="btn flex items-center space-x-2"
+            className="btn flex items-center gap-2 px-4 py-2"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-            <span>Settings</span>
+            <span className="material-symbols-outlined text-lg">settings</span>
+            <span className="hidden sm:inline">Settings</span>
           </button>
         </div>
         
         <div className="space-y-4 sm:space-y-6">
-          <div className="bg-background-panel rounded-lg p-4 sm:p-6">
-            <label htmlFor="resolution" className="block text-white font-medium mb-2">
-              Resolution:
-            </label>
+          {/* Resolution Setting */}
+          <div className="p-4 sm:p-6 rounded-xl backdrop-blur-20 border border-white border-opacity-10"
+               style={{
+                 background: 'linear-gradient(135deg, rgba(46, 47, 119, 0.3) 0%, rgba(30, 32, 87, 0.3) 100%)',
+                 boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)'
+               }}>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="material-symbols-outlined text-blue-400">high_quality</span>
+              <label htmlFor="resolution" className="text-white font-medium">
+                Resolution:
+              </label>
+            </div>
             <select 
               id="resolution"
               value={settings.resolution}
@@ -418,10 +463,18 @@ const Main = () => {
             </select>
           </div>
 
-          <div className="mb-6">
-            <label className="block text-white font-medium mb-2">
-              Download Path:
-            </label>
+          {/* Download Path Setting */}
+          <div className="p-4 sm:p-6 rounded-xl backdrop-blur-20 border border-white border-opacity-10"
+               style={{
+                 background: 'linear-gradient(135deg, rgba(46, 47, 119, 0.3) 0%, rgba(30, 32, 87, 0.3) 100%)',
+                 boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)'
+               }}>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="material-symbols-outlined text-blue-400">folder</span>
+              <label className="text-white font-medium">
+                Download Path:
+              </label>
+            </div>
             <div className="flex gap-2">
               <input
                 type="text"
@@ -432,21 +485,38 @@ const Main = () => {
               />
               <button
                 onClick={handleFolderSelect}
-                className="bg-primary hover:bg-primary/80 text-white font-medium py-2 px-4 rounded-lg transition-colors"
+                className="btn flex items-center gap-2 px-4"
+                style={{
+                  background: 'linear-gradient(135deg, #2e2f77 0%, #4e52ff 100%)',
+                  minWidth: 'auto'
+                }}
               >
-                Browse
+                <span className="material-symbols-outlined">folder_open</span>
+                <span>Browse</span>
               </button>
             </div>
-            <p className="text-sm text-gray-400 mt-1">
+            <p className="text-sm text-gray-400 mt-2 flex items-center gap-1">
+              <span className="material-symbols-outlined text-xs">info</span>
               If left empty, the video will be saved in a folder next to the currently open Premiere Pro project.
             </p>
           </div>
 
-          <div className="bg-background-panel rounded-lg p-4 sm:p-6">
-            <label className="block text-white font-medium mb-4">Clip Settings:</label>
+          {/* Clip Settings */}
+          <div className="p-4 sm:p-6 rounded-xl backdrop-blur-20 border border-white border-opacity-10"
+               style={{
+                 background: 'linear-gradient(135deg, rgba(46, 47, 119, 0.3) 0%, rgba(30, 32, 87, 0.3) 100%)',
+                 boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)'
+               }}>
+            <div className="flex items-center gap-2 mb-4">
+              <span className="material-symbols-outlined text-blue-400">content_cut</span>
+              <label className="text-white font-medium">Clip Settings:</label>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
               <div>
-                <label className="text-sm text-gray-300 mb-1 block">Time Before:</label>
+                <div className="flex items-center gap-1 mb-2">
+                  <span className="material-symbols-outlined text-xs text-blue-400">fast_rewind</span>
+                  <label className="text-sm text-gray-300">Time Before:</label>
+                </div>
                 <select
                   value={settings.secondsBefore}
                   onChange={(e) => saveSettings({ ...settings, secondsBefore: e.target.value })}
@@ -462,7 +532,10 @@ const Main = () => {
               </div>
               
               <div>
-                <label className="text-sm text-gray-300 mb-1 block">Time After:</label>
+                <div className="flex items-center gap-1 mb-2">
+                  <span className="material-symbols-outlined text-xs text-blue-400">fast_forward</span>
+                  <label className="text-sm text-gray-300">Time After:</label>
+                </div>
                 <select
                   value={settings.secondsAfter}
                   onChange={(e) => saveSettings({ ...settings, secondsAfter: e.target.value })}
@@ -479,17 +552,125 @@ const Main = () => {
             </div>
           </div>
         </div>
-      </div>
-      <div className="mt-8 text-center">
-        <p className="text-gray-400 text-sm">
-          Current Version: {currentVersion}
-          {updateAvailable && (
-            <span className="text-primary ml-2">
-              (Update {latestVersion} available)
+
+        {/* Version and Update - Bottom */}
+        <div className="mt-8 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm">
+            <span className="material-symbols-outlined text-blue-400 text-lg">
+              {updateAvailable ? 'new_releases' : 'verified'}
             </span>
-          )}
-        </p>
+            <span className="text-gray-300">
+              Version {currentVersion}
+              {updateAvailable && (
+                <span className="ml-2 text-green-400 font-semibold">
+                  → {latestVersion} available!
+                </span>
+              )}
+            </span>
+          </div>
+          <button 
+            onClick={updateAvailable ? () => setShowUpdateModal(true) : checkForUpdates}
+            disabled={isCheckingUpdates}
+            className={`btn flex items-center gap-2 px-4 py-2 text-sm ${updateAvailable ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700'} disabled:opacity-50 disabled:cursor-not-allowed ${isCheckingUpdates ? 'btn-loading' : ''}`}
+          >
+            {isCheckingUpdates ? (
+              <>
+                <span className="material-symbols-outlined animate-spin text-sm">refresh</span>
+                <span>Checking...</span>
+              </>
+            ) : updateAvailable ? (
+              <>
+                <span className="material-symbols-outlined text-sm">download</span>
+                <span>Update</span>
+              </>
+            ) : (
+              <>
+                <span className="material-symbols-outlined text-sm">update</span>
+                <span>Check</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
+
+      {/* Update Modal */}
+      {showUpdateModal && updateInfo && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+          <div className="rounded-xl shadow-2xl max-w-md w-full p-6 backdrop-blur-20 border border-white border-opacity-10"
+               style={{
+                 background: 'linear-gradient(135deg, #1e2057 0%, #2e2f77 100%)',
+                 boxShadow: '0 20px 64px rgba(0, 0, 0, 0.4)'
+               }}>
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-2xl text-green-400">new_releases</span>
+                <h3 className="text-xl font-bold text-white">Update Available!</h3>
+              </div>
+              <button 
+                onClick={() => setShowUpdateModal(false)}
+                className="text-gray-400 hover:text-white transition-colors p-1 rounded-lg hover:bg-white hover:bg-opacity-10"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <p className="text-white">
+                  A new version ({updateInfo.latest_version}) is available!
+                </p>
+                <p className="text-sm text-gray-400">
+                  Current version: {updateInfo.current_version}
+                </p>
+              </div>
+              
+              {updateInfo.release_notes && (
+                <div>
+                  <h4 className="text-white font-medium mb-2 flex items-center gap-1">
+                    <span className="material-symbols-outlined text-sm">description</span>
+                    Release Notes:
+                  </h4>
+                  <div className="p-3 rounded-lg max-h-32 overflow-y-auto backdrop-blur-10 border border-white border-opacity-10"
+                       style={{background: 'rgba(0, 0, 0, 0.2)'}}>
+                    <p className="text-sm text-gray-300 whitespace-pre-wrap">
+                      {updateInfo.release_notes}
+                    </p>
+                  </div>
+                </div>
+              )}
+              
+              <div className="text-sm text-gray-400 flex items-center gap-4">
+                <div className="flex items-center gap-1">
+                  <span className="material-symbols-outlined text-xs">computer</span>
+                  <span>OS: {updateInfo.os_type}</span>
+                </div>
+                {updateInfo.release_date && (
+                  <div className="flex items-center gap-1">
+                    <span className="material-symbols-outlined text-xs">calendar_today</span>
+                    <span>Released: {new Date(updateInfo.release_date).toLocaleDateString()}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            <div className="flex space-x-3 mt-6">
+              <button
+                onClick={() => setShowUpdateModal(false)}
+                className="flex-1 px-4 py-2 rounded-lg transition-colors font-medium backdrop-blur-10 border border-white border-opacity-20 text-white hover:bg-white hover:bg-opacity-10"
+              >
+                Later
+              </button>
+              <button
+                onClick={handleDownloadUpdate}
+                className="flex-1 btn flex items-center justify-center gap-2"
+              >
+                <span className="material-symbols-outlined">download</span>
+                Download
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   ) : (
     <Settings onBack={() => setCurrentPage('main')} />

@@ -1,13 +1,134 @@
+/* Import Google Fonts for icons */
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+* {
+  font-family: 'Roboto', 'Arial', sans-serif;
+}
+
 @layer components {
   .input-base {
-    @apply w-full px-4 py-3 bg-background-panel text-white border border-border rounded-lg focus:border-primary focus:outline-none;
+    @apply w-full px-4 py-3 text-white border border-opacity-20 rounded-xl transition-all duration-300 focus:outline-none;
+    background: linear-gradient(135deg, #2e2f77 0%, #1e2057 100%);
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+  }
+  
+  .input-base:focus {
+    border-color: #4e52ff;
+    box-shadow: 0 4px 20px rgba(78, 82, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1);
   }
   
   .btn {
-    @apply px-4 py-3 bg-primary text-white rounded-lg transition-all hover:bg-primary-hover hover:shadow-lg focus:outline-none;
+    @apply px-6 py-3 text-white rounded-xl transition-all duration-300 font-medium relative overflow-hidden;
+    background: linear-gradient(135deg, #2e2f77 0%, #4e52ff 100%);
+    box-shadow: 0 4px 12px rgba(46, 47, 119, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+    position: relative;
+  }
+
+  .btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: left 0.5s;
+  }
+
+  .btn:hover::before {
+    left: 100%;
+  }
+  
+  .btn:hover {
+    transform: scale(1.02);
+    background: linear-gradient(135deg, #4e52ff 0%, #6366f1 100%);
+    box-shadow: 0 8px 25px rgba(78, 82, 255, 0.6);
+  }
+  
+  .btn:active {
+    transform: scale(0.98);
+  }
+
+  .btn-loading {
+    @apply pointer-events-auto;
+    animation: pulse-glow 2s infinite;
+  }
+
+  .btn-loading:hover {
+    transform: scale(1.02);
+  }
+
+  /* Custom range slider styles */
+  .volume-slider {
+    @apply w-full h-2 rounded-full appearance-none cursor-pointer;
+  }
+
+  .volume-slider::-webkit-slider-thumb {
+    appearance: none;
+    height: 18px;
+    width: 18px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #4e52ff 0%, #6366f1 100%);
+    cursor: pointer;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 2px 8px rgba(78, 82, 255, 0.4);
+  }
+
+  .volume-slider::-moz-range-thumb {
+    height: 18px;
+    width: 18px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #4e52ff 0%, #6366f1 100%);
+    cursor: pointer;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 2px 8px rgba(78, 82, 255, 0.4);
+  }
+
+  .volume-slider::-webkit-slider-track {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 9999px;
+    height: 8px;
+  }
+
+  .volume-slider::-moz-range-track {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 9999px;
+    height: 8px;
+    border: none;
+  }
+
+  @keyframes pulse-glow {
+    0% { 
+      transform: scale(1);
+      box-shadow: 0 4px 12px rgba(46, 47, 119, 0.4);
+    }
+    50% { 
+      transform: scale(1.02);
+      box-shadow: 0 8px 20px rgba(78, 82, 255, 0.6);
+    }
+    100% { 
+      transform: scale(1);
+      box-shadow: 0 4px 12px rgba(46, 47, 119, 0.4);
+    }
+  }
+
+  /* Fix select dropdown options */
+  .input-base option {
+    background: #2e2f77;
+    color: white;
+    padding: 8px;
+  }
+
+  .input-base option:hover {
+    background: #4e52ff;
   }
 }

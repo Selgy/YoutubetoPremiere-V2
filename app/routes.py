@@ -62,8 +62,113 @@ def register_routes(app, socketio, settings):
 
     @app.route('/get-version', methods=['GET'])
     def get_version():
-        return jsonify(version='2.1.6') 
+        return jsonify(version='3.0.1')
 
+    @app.route('/check-updates', methods=['GET'])
+    def check_updates():
+        """Check for available updates from GitHub releases"""
+        try:
+            import platform
+            import re
+            
+            # Current version
+            current_version = '3.0.1'
+            
+            # Detect OS
+            system = platform.system().lower()
+            machine = platform.machine().lower()
+            
+            # Determine OS type for download links
+            if system == 'darwin':
+                if 'arm' in machine or 'aarch64' in machine:
+                    os_type = 'mac_arm64'
+                else:
+                    os_type = 'mac_intel'
+            elif system == 'windows':
+                os_type = 'windows'
+            else:
+                os_type = 'unknown'
+            
+            # Check GitHub releases API
+            github_api_url = 'https://api.github.com/repos/Selgy/YoutubetoPremiere-V2/releases/latest'
+            
+            try:
+                response = requests.get(github_api_url, timeout=10)
+                logging.info(f"GitHub API response status: {response.status_code}")
+                
+                if response.status_code == 200:
+                    release_data = response.json()
+                    latest_version = release_data.get('tag_name', '').lstrip('v')
+                    release_notes = release_data.get('body', '')
+                    release_date = release_data.get('published_at', '')
+                    
+                    # Compare versions
+                    def version_tuple(v):
+                        return tuple(map(int, (v.split("."))))
+                    
+                    is_newer = False
+                    try:
+                        is_newer = version_tuple(latest_version) > version_tuple(current_version)
+                    except:
+                        is_newer = latest_version != current_version
+                    
+                    # Generate download URLs based on OS
+                    download_urls = {}
+                    base_url = f"https://github.com/Selgy/YoutubetoPremiere-V2/releases/download/v{latest_version}"
+                    
+                    download_urls['windows'] = f"{base_url}/YoutubetoPremiere_Win_{latest_version}.exe"
+                    download_urls['mac_arm64'] = f"{base_url}/YoutubetoPremiere_Mac_arm64_{latest_version}.pkg"
+                    download_urls['mac_intel'] = f"{base_url}/YoutubetoPremiere_Mac_intel_{latest_version}.pkg"
+                    
+                    # Get the appropriate download URL for current OS
+                    download_url = download_urls.get(os_type)
+                    
+                    return jsonify({
+                        'current_version': current_version,
+                        'latest_version': latest_version,
+                        'has_update': is_newer,
+                        'os_type': os_type,
+                        'download_url': download_url,
+                        'all_download_urls': download_urls,
+                        'release_notes': release_notes,
+                        'release_date': release_date,
+                        'success': True
+                    })
+                elif response.status_code == 404:
+                    # Repository not found or not public
+                    return jsonify({
+                        'current_version': current_version,
+                        'latest_version': current_version,
+                        'has_update': False,
+                        'os_type': os_type,
+                        'success': True,
+                        'message': 'Repository not found. You have the latest available version.'
+                    })
+                else:
+                    return jsonify({
+                        'current_version': current_version,
+                        'success': False,
+                        'error': f'GitHub API returned status {response.status_code}'
+                    })
+                    
+            except requests.RequestException as e:
+                logging.error(f"Network error checking updates: {e}")
+                return jsonify({
+                    'current_version': current_version,
+                    'latest_version': current_version,
+                    'has_update': False,
+                    'os_type': os_type,
+                    'success': True,
+                    'message': 'Unable to check for updates. You may be offline or GitHub is unavailable.'
+                })
+                
+        except Exception as e:
+            logging.error(f"Error checking updates: {e}")
+            return jsonify({
+                'current_version': current_version,
+                'success': False,
+                'error': str(e)
+            }), 500
 
     @app.route('/settings', methods=['GET', 'POST'])
     def handle_settings():

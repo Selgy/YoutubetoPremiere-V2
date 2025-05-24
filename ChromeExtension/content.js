@@ -1489,7 +1489,7 @@ document.addEventListener('yt-navigate-finish', () => {
             addButtons();
         }
     }, 500);
-});
+}); 
 
 // Also listen for URL changes (for direct navigation)
 let currentUrl = window.location.href;
