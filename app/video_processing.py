@@ -287,6 +287,14 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
                 
     except Exception as e:
         error_message = f"Error processing URL: {str(e)}"
+        context = {
+            'video_url': video_url,
+            'download_type': download_type,
+            'settings': {k: v for k, v in settings.items() if k not in ['licenseKey']},  # Exclude sensitive data
+            'clip_start': clip_start,
+            'clip_end': clip_end
+        }
+        write_error_log(error_message, context)
         logging.error(error_message)
         return {"error": error_message}
 
@@ -922,6 +930,26 @@ def get_audio_language_options(video_url):
     except Exception as e:
         logging.error(f"Error extracting audio languages: {str(e)}")
         return []
+
+def write_error_log(error_message, context=None):
+    """Write error to dedicated error log file"""
+    try:
+        log_dir = os.environ.get('YTPP_LOG_DIR')
+        if not log_dir:
+            return
+        
+        error_log_path = os.path.join(log_dir, 'video_processing_errors.log')
+        
+        from datetime import datetime
+        timestamp = datetime.now().isoformat()
+        
+        with open(error_log_path, 'a', encoding='utf-8') as f:
+            f.write(f"\n[{timestamp}] ERROR: {error_message}\n")
+            if context:
+                f.write(f"Context: {json.dumps(context, indent=2)}\n")
+            f.write("-" * 50 + "\n")
+    except Exception as e:
+        logging.error(f"Failed to write to error log: {e}")
 
 # Main execution
 if __name__ == "__main__":

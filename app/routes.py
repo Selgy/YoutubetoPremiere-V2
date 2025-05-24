@@ -1,4 +1,4 @@
-from flask import request, jsonify
+from flask import request, jsonify, send_file
 import logging
 import json
 from video_processing import handle_video_url, get_audio_language_options
@@ -7,6 +7,10 @@ import os
 import sys
 import requests
 import socket
+import platform
+import re
+import tempfile
+import subprocess
 
 def register_routes(app, socketio, settings):
     connected_clients = set()
@@ -42,7 +46,7 @@ def register_routes(app, socketio, settings):
     def handle_connect():
         client_id = request.sid
         connected_clients.add(client_id)
-        logging.info(f'Client connected: {client_id}')
+        logging.info(f'Client connected to route handler')
         socketio.emit('connection_status', {'status': 'connected'}, room=client_id)
 
     @socketio.on('disconnect')
@@ -50,7 +54,7 @@ def register_routes(app, socketio, settings):
         client_id = request.sid
         if client_id in connected_clients:
             connected_clients.remove(client_id)
-        logging.info(f'Client disconnected: {client_id}')
+        logging.info(f'Client disconnected from route handler')
 
     @app.route('/')
     def root():
@@ -68,9 +72,6 @@ def register_routes(app, socketio, settings):
     def check_updates():
         """Check for available updates from GitHub releases"""
         try:
-            import platform
-            import re
-            
             # Current version
             current_version = '3.0.1'
             
@@ -415,12 +416,13 @@ def register_routes(app, socketio, settings):
             
             # If we found any valid IPs, return the first one
             if possible_ips:
-                logging.info(f'Found IP addresses: {possible_ips}')
+                # Don't log actual IP addresses for privacy
+                logging.info(f'Found {len(possible_ips)} IP address(es)')
                 return jsonify({'ip': possible_ips[0]})
             
             # Fallback to the basic method
             local_ip = socket.gethostbyname(hostname)
-            logging.info(f'Using fallback IP: {local_ip}')
+            logging.info(f'Using fallback IP method')
             return jsonify({'ip': local_ip})
             
         except Exception as e:
@@ -473,3 +475,100 @@ def register_routes(app, socketio, settings):
         except Exception as e:
             logging.error(f"Error handling project path response: {str(e)}")
             return {'error': str(e)}
+
+    @app.route('/open-logs-folder', methods=['POST'])
+    def open_logs_folder():
+        """Open the logs folder in the system file explorer"""
+        try:
+            # Get log directory from environment
+            log_dir = os.environ.get('YTPP_LOG_DIR')
+            if not log_dir or not os.path.exists(log_dir):
+                return jsonify({
+                    'success': False,
+                    'error': 'Log directory not found'
+                }), 404
+            
+            logging.info(f"Opening logs folder: {log_dir}")
+            
+            # Determine the command based on the operating system
+            system = platform.system().lower()
+            success = False
+            error_messages = []
+            
+            if system == 'windows':
+                # Windows: try multiple methods
+                try:
+                    # Method 1: Use os.startfile (most reliable on Windows)
+                    os.startfile(log_dir)
+                    success = True
+                    logging.info("Successfully opened logs folder using os.startfile")
+                except Exception as e:
+                    error_messages.append(f"os.startfile failed: {str(e)}")
+                    try:
+                        # Method 2: Use explorer with /select flag (more reliable)
+                        # Create a dummy file path to select in the directory
+                        dummy_file = os.path.join(log_dir, "YoutubetoPremiere.log")
+                        if os.path.exists(dummy_file):
+                            subprocess.run(['explorer', '/select,', dummy_file], check=True)
+                        else:
+                            subprocess.run(['explorer', '/root,', log_dir], check=True)
+                        success = True
+                        logging.info("Successfully opened logs folder using explorer /select")
+                    except Exception as e2:
+                        error_messages.append(f"explorer /select failed: {str(e2)}")
+                        try:
+                            # Method 3: Use cmd to open explorer
+                            subprocess.run(['cmd', '/c', 'start', '', log_dir], check=True)
+                            success = True
+                            logging.info("Successfully opened logs folder using cmd start")
+                        except Exception as e3:
+                            error_messages.append(f"cmd start failed: {str(e3)}")
+                            
+            elif system == 'darwin':
+                # macOS: use open
+                try:
+                    subprocess.run(['open', log_dir], check=True)
+                    success = True
+                    logging.info("Successfully opened logs folder using open command")
+                except Exception as e:
+                    error_messages.append(f"open command failed: {str(e)}")
+                    
+            elif system == 'linux':
+                # Linux: try common file managers
+                file_managers = ['xdg-open', 'nautilus', 'dolphin', 'thunar', 'pcmanfm']
+                for fm in file_managers:
+                    try:
+                        subprocess.run([fm, log_dir], check=True)
+                        success = True
+                        logging.info(f"Successfully opened logs folder using {fm}")
+                        break
+                    except Exception as e:
+                        error_messages.append(f"{fm} failed: {str(e)}")
+                        continue
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': f'Unsupported operating system: {system}'
+                }), 500
+            
+            if success:
+                return jsonify({
+                    'success': True,
+                    'message': 'Logs folder opened successfully',
+                    'path': log_dir
+                })
+            else:
+                error_msg = f"All methods failed to open logs folder. Errors: {'; '.join(error_messages)}"
+                logging.error(error_msg)
+                return jsonify({
+                    'success': False,
+                    'error': error_msg
+                }), 500
+            
+        except Exception as e:
+            error_msg = f"Error opening logs folder: {str(e)}"
+            logging.error(error_msg)
+            return jsonify({
+                'success': False,
+                'error': error_msg
+            }), 500

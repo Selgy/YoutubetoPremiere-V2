@@ -19,6 +19,7 @@ const Settings = ({ onBack }: SettingsProps) => {
   const [isTestPlaying, setIsTestPlaying] = useState(false);
   const [availableSounds, setAvailableSounds] = useState<string[]>([]);
   const [serverIP, setServerIP] = useState('localhost');
+  const [isOpeningLogsFolder, setIsOpeningLogsFolder] = useState(false);
 
   useEffect(() => {
     const storedIP = localStorage.getItem('serverIP');
@@ -85,7 +86,7 @@ const Settings = ({ onBack }: SettingsProps) => {
     
     setIsTestPlaying(true);
     try {
-      const response = await fetch('http://localhost:3001/test-sound', {
+      const response = await fetch(`http://${serverIP}:3001/test-sound`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -110,7 +111,7 @@ const Settings = ({ onBack }: SettingsProps) => {
     // Load settings from server
     const loadSettings = async () => {
       try {
-        const response = await fetch('http://localhost:3001/settings');
+        const response = await fetch(`http://${serverIP}:3001/settings`);
         if (response.ok) {
           const serverSettings = await response.json();
           setSettings(serverSettings);
@@ -123,7 +124,7 @@ const Settings = ({ onBack }: SettingsProps) => {
     loadSettings();
 
     // Fetch available sounds
-    fetch('http://localhost:3001/available-sounds')
+    fetch(`http://${serverIP}:3001/available-sounds`)
       .then(response => response.json())
       .then(data => {
         if (data.sounds && data.sounds.length > 0) {
@@ -131,7 +132,39 @@ const Settings = ({ onBack }: SettingsProps) => {
         }
       })
       .catch(error => console.error('Error fetching sounds:', error));
-  }, []);
+  }, [serverIP]);
+
+  const openLogsFolder = async () => {
+    if (isOpeningLogsFolder) return;
+    
+    setIsOpeningLogsFolder(true);
+    try {
+      console.log('Opening logs folder...');
+      console.log('Server IP:', serverIP);
+      
+      const response = await fetch(`http://${serverIP}:3001/open-logs-folder`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+      
+      console.log('Response status:', response.status);
+      console.log('Response ok:', response.ok);
+      
+      if (response.ok) {
+        const result = await response.json();
+        console.log('Logs folder opened successfully:', result.path);
+      } else {
+        const errorData = await response.json();
+        console.error('Failed to open logs folder:', errorData.error);
+      }
+    } catch (error) {
+      console.error('Error opening logs folder:', error);
+    } finally {
+      setIsOpeningLogsFolder(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background-DEFAULT to-background-panel p-4 sm:p-6">
@@ -275,54 +308,43 @@ const Settings = ({ onBack }: SettingsProps) => {
                }}>
             <div className="flex items-center gap-2 mb-6">
               <span className="material-symbols-outlined text-2xl text-blue-400">support_agent</span>
-              <h2 className="text-xl font-semibold text-white">Support & Community</h2>
+              <h2 className="text-xl font-semibold text-white">Support & Logs</h2>
             </div>
             
             <div className="space-y-4">
-              <button
-                onClick={() => openLinkInBrowser('https://discord.gg/your-discord-server')}
-                className="btn w-full flex items-center justify-center gap-3"
-                style={{
-                  background: 'linear-gradient(135deg, #5865F2 0%, #4752C4 100%)'
-                }}
-              >
-                <span className="material-symbols-outlined">chat</span>
-                <span>Join Discord Community</span>
-              </button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <button
+                  onClick={() => openLinkInBrowser('https://discord.gg/s2gfM3w47y')}
+                  className="btn w-full flex items-center justify-center gap-3"
+                  style={{
+                    background: 'linear-gradient(135deg, #5865F2 0%, #4752C4 100%)'
+                  }}
+                >
+                  <span className="material-symbols-outlined">chat</span>
+                  <span>Discord Support</span>
+                </button>
+                
+                <button
+                  onClick={openLogsFolder}
+                  disabled={isOpeningLogsFolder}
+                  className={`btn w-full flex items-center justify-center gap-3 ${isOpeningLogsFolder ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  style={{
+                    background: isOpeningLogsFolder 
+                      ? 'linear-gradient(135deg, #6B7280 0%, #4B5563 100%)'
+                      : 'linear-gradient(135deg, #0EA5E9 0%, #0284C7 100%)'
+                  }}
+                >
+                  <span className="material-symbols-outlined">
+                    {isOpeningLogsFolder ? 'hourglass_empty' : 'folder_open'}
+                  </span>
+                  <span>{isOpeningLogsFolder ? 'Opening...' : 'Open Logs Folder'}</span>
+                </button>
+              </div>
               
               <div className="text-center">
                 <p className="text-gray-400 text-sm flex items-center justify-center gap-1">
                   <span className="material-symbols-outlined text-xs">help</span>
-                  Get help, report bugs, and suggest features
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Advanced Settings */}
-          <div className="p-6 rounded-xl backdrop-blur-20 border border-white border-opacity-10"
-               style={{
-                 background: 'linear-gradient(135deg, rgba(46, 47, 119, 0.3) 0%, rgba(30, 32, 87, 0.3) 100%)',
-                 boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)'
-               }}>
-            <div className="flex items-center gap-2 mb-6">
-              <span className="material-symbols-outlined text-2xl text-blue-400">tune</span>
-              <h2 className="text-xl font-semibold text-white">Advanced Settings</h2>
-            </div>
-            
-            <div className="space-y-4">
-              <div className="p-4 rounded-lg border border-white border-opacity-10"
-                   style={{background: 'rgba(0, 0, 0, 0.2)'}}>
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="material-symbols-outlined text-yellow-400">warning</span>
-                  <h3 className="text-white font-medium">Server Connection</h3>
-                </div>
-                <p className="text-gray-400 text-sm mb-3">
-                  Current server IP: <span className="text-blue-400 font-mono">{serverIP}</span>
-                </p>
-                <p className="text-gray-400 text-xs">
-                  The extension automatically detects the server IP address. If you're experiencing connection issues, 
-                  try restarting the application.
+                  Having issues? Open the logs folder to view real-time logs or ask for help on Discord
                 </p>
               </div>
             </div>

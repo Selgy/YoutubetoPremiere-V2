@@ -15,17 +15,129 @@ import subprocess
 import requests
 from pathlib import Path
 from init import init
+import tempfile
+from datetime import datetime
 
 
-# Configure logging with more detailed format
+# Determine log directory
+if sys.platform == 'win32':
+    log_dir = os.path.join(os.environ.get('TEMP', tempfile.gettempdir()), 'YoutubetoPremiere')
+else:
+    log_dir = os.path.join(tempfile.gettempdir(), 'YoutubetoPremiere')
+
+# Create log directory if it doesn't exist
+os.makedirs(log_dir, exist_ok=True)
+
+# Set up log files
+main_log_file = os.path.join(log_dir, 'YoutubetoPremiere.log')
+error_log_file = os.path.join(log_dir, 'errors.log')
+
+# Clear previous logs at session start
+def clear_previous_logs():
+    """Clear log files from previous sessions"""
+    try:
+        # Clear main log file
+        if os.path.exists(main_log_file):
+            with open(main_log_file, 'w', encoding='utf-8') as f:
+                f.write('')
+        
+        # Clear error log file  
+        if os.path.exists(error_log_file):
+            with open(error_log_file, 'w', encoding='utf-8') as f:
+                f.write('')
+        
+        # Clear video processing error log if it exists
+        video_error_log = os.path.join(log_dir, 'video_processing_errors.log')
+        if os.path.exists(video_error_log):
+            with open(video_error_log, 'w', encoding='utf-8') as f:
+                f.write('')
+                
+        print(f"Previous logs cleared for new session")
+    except Exception as e:
+        print(f"Warning: Could not clear previous logs: {e}")
+
+# Clear logs before setting up new logging
+clear_previous_logs()
+
+# Configure logging with file and console handlers
+console_handler = logging.StreamHandler(sys.stdout)
+main_file_handler = logging.FileHandler(main_log_file, mode='a', encoding='utf-8')
+error_file_handler = logging.FileHandler(error_log_file, mode='a', encoding='utf-8')
+
+# Set levels for handlers
+console_handler.setLevel(logging.INFO)
+main_file_handler.setLevel(logging.INFO)
+error_file_handler.setLevel(logging.ERROR)
+
+# Set formatter
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+console_handler.setFormatter(formatter)
+main_file_handler.setFormatter(formatter)
+error_file_handler.setFormatter(formatter)
+
+# Force immediate flush for file handlers (important for PyInstaller)
+class FlushFileHandler(logging.FileHandler):
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
+# Replace file handlers with flushing versions
+main_file_handler = FlushFileHandler(main_log_file, mode='a', encoding='utf-8')
+error_file_handler = FlushFileHandler(error_log_file, mode='a', encoding='utf-8')
+
+# Set levels and formatters again
+main_file_handler.setLevel(logging.INFO)
+error_file_handler.setLevel(logging.ERROR)
+main_file_handler.setFormatter(formatter)
+error_file_handler.setFormatter(formatter)
+
+# Configure root logger
 logging.basicConfig(
-    level=logging.WARNING,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler(os.path.join(os.environ.get('TEMP' if sys.platform == 'win32' else 'TMPDIR', '/tmp'), 'YoutubetoPremiere.log'))
-    ]
+    level=logging.INFO,
+    handlers=[console_handler, main_file_handler, error_file_handler],
+    force=True  # Force reconfiguration
 )
+
+# Store log directory for later use
+os.environ['YTPP_LOG_DIR'] = log_dir
+
+def write_test_log():
+    """Write a test log to verify file logging works"""
+    try:
+        # Write session header and test to main log
+        session_header = f"""
+{'='*60}
+SESSION STARTED: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+YouTube to Premiere Pro Extension v3.0.1
+{'='*60}
+"""
+        with open(main_log_file, 'a', encoding='utf-8') as f:
+            f.write(session_header)
+            f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - TEST - INFO - Logging system initialized\n")
+            f.flush()
+        
+        # Write session header to error log
+        with open(error_log_file, 'a', encoding='utf-8') as f:
+            f.write(session_header)
+            f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - TEST - ERROR - Error logging initialized\n")
+            f.flush()
+    except Exception as e:
+        print(f"Failed to write test log: {e}")
+
+# Test direct file writing first
+write_test_log()
+
+logging.info(f"Logging initialized. Log directory: {log_dir}")
+logging.info(f"Main log file: {main_log_file}")
+logging.info(f"Error log file: {error_log_file}")
+
+# Force an error log to test error handler
+logging.error("Test error log entry - this should appear in errors.log")
+
+# Manual flush of all handlers
+for handler in logging.getLogger().handlers:
+    if hasattr(handler, 'flush'):
+        handler.flush()
 
 # Set higher log levels for verbose libraries
 logging.getLogger('engineio.server').setLevel(logging.ERROR)
@@ -77,8 +189,26 @@ def get_app_paths():
         'extension_root': os.environ.get('EXTENSION_ROOT', '')
     }
     
+    # Helper function to sanitize paths - hide username and other sensitive info
+    def sanitize_path(path):
+        if not path:
+            return path
+        # Replace username with [USER] in paths
+        import re
+        # Match common user directory patterns - escape backslashes properly
+        patterns = [
+            (r'C:\\Users\\[^\\]+', r'C:\\Users\\[USER]'),
+            (r'/Users/[^/]+', r'/Users/[USER]'),
+            (r'/home/[^/]+', r'/home/[USER]'),
+        ]
+        sanitized = path
+        for pattern, replacement in patterns:
+            sanitized = re.sub(pattern, replacement, sanitized)
+        return sanitized
+    
     for key, path in paths.items():
-        logging.info(f'{key}: {path}')
+        sanitized_path = sanitize_path(path)
+        logging.info(f'{key}: {sanitized_path}')
         if os.path.exists(path):
             logging.info(f'{key} exists: True')
         else:
@@ -91,7 +221,7 @@ logging.info(f'Python version: {sys.version}')
 logging.info(f'Platform: {platform.platform()}')
 logging.info(f'Process ID: {os.getpid()}')
 
-# Get and log all application paths
+# Get and log all application paths (but hide sensitive user paths)
 paths = get_app_paths()
 
 # Add ffmpeg to PATH - look in multiple possible locations
@@ -222,41 +352,37 @@ def default_error_handler(e):
 def handle_connect():
     sid = request.sid
     client_type = request.args.get('client_type', 'unknown')
-    client_ip = request.remote_addr
+    # Don't log client IP for privacy reasons
     
     # Validate client type
     if client_type not in ['chrome', 'premiere']:
         client_type = 'unknown'
-        app_logger.warning(f'Connection with unspecified client type from {client_ip}')
+        app_logger.warning(f'Connection with unspecified client type')
     
-    # Check if this IP already has a connection of this type
-    existing_sid = connected_clients[client_type].get(client_ip)
-    if existing_sid:
-        # If the existing connection is still active, update it
-        if socketio.server.manager.is_connected(existing_sid):
-            app_logger.info(f'Updating existing connection for {client_ip} ({client_type})')
-            del connected_clients[client_type][client_ip]
-        else:
-            app_logger.info(f'Replacing dead connection for {client_ip} ({client_type})')
+    # For tracking connections, we'll use 'anonymous' instead of IP
+    client_key = f'client_{len(connected_clients[client_type])}'
     
     # Add new connection
-    connected_clients[client_type][client_ip] = sid
+    connected_clients[client_type][client_key] = sid
     
-    app_logger.info(f'Client connected - Type: {client_type}, IP: {client_ip}')
+    app_logger.info(f'Client connected - Type: {client_type}')
     socketio.emit('connection_status', {'status': 'connected'}, room=sid)
 
 @socketio.on('disconnect')
 def handle_disconnect():
     """Handle client disconnection"""
     sid = request.sid
-    client_ip = request.remote_addr
     
-    # Remove from appropriate client list
+    # Remove from appropriate client list - find by SID instead of IP
     for client_type, clients in connected_clients.items():
-        if client_ip in clients and clients[client_ip] == sid:
-            del clients[client_ip]
-            logging.info(f'Client disconnected - Type: {client_type}, SID: {sid}, IP: {client_ip}')
-            break
+        for client_key, client_sid in list(clients.items()):
+            if client_sid == sid:
+                del clients[client_key]
+                logging.info(f'Client disconnected - Type: {client_type}, SID: {sid}')
+                return
+    
+    # If we get here, the client wasn't found in our tracking
+    logging.info(f'Unknown client disconnected - SID: {sid}')
 
 @socketio.on('connection_check')
 def handle_connection_check(data):
@@ -353,10 +479,8 @@ def run_server():
     logging.info('Settings loaded: %s', settings)
     register_routes(app, socketio, settings)
 
-    # Get local IP address for logging purposes
-    hostname = socket.gethostname()
-    local_ip = socket.gethostbyname(hostname)
-    logging.info(f'Starting server on all interfaces (including {local_ip}:3001)')
+    # Start server without exposing IP addresses
+    logging.info(f'Starting server on all interfaces on port 3001')
 
     server_thread = threading.Thread(target=lambda: socketio.run(
         app, 
