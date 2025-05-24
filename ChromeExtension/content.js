@@ -708,6 +708,31 @@ let buttonsVisible = localStorage.getItem('ytp-buttons-visible') !== 'false';
 // Socket connection
 let socket = null;
 
+// Function to check if we're on a video or shorts page
+function isVideoPage() {
+    const currentPath = window.location.pathname;
+    const hasVideoParam = window.location.search.includes('v=');
+    const isWatchPage = currentPath === '/watch' && hasVideoParam;
+    const isShortsPage = currentPath.startsWith('/shorts/');
+    
+    return isWatchPage || isShortsPage;
+}
+
+// Function to show/hide the floating container based on page type
+function updateButtonsVisibility() {
+    const floatingContainer = document.querySelector('#ytp-floating-container');
+    
+    if (floatingContainer) {
+        if (isVideoPage()) {
+            floatingContainer.style.display = 'block';
+            floatingContainer.style.visibility = 'visible';
+        } else {
+            floatingContainer.style.display = 'none';
+            floatingContainer.style.visibility = 'hidden';
+        }
+    }
+}
+
 function initializeSocket() {
     if (socket && socket.connected) {
         return;
@@ -1148,9 +1173,36 @@ function sendURL(downloadType, additionalData = {}) {
             button.classList.add('loading');
             button.dataset.downloading = 'true';
             
-            const videoId = new URLSearchParams(window.location.search).get('v');
+            // Extract video ID from different YouTube URL formats
+            let videoId = null;
+            let currentVideoUrl = null;
+            
+            // Check if it's a regular YouTube video (/watch?v=...)
+            const urlParams = new URLSearchParams(window.location.search);
+            videoId = urlParams.get('v');
+            
+            // If no videoId found, check if it's a YouTube Short (/shorts/...)
+            if (!videoId) {
+                const pathname = window.location.pathname;
+                const shortsMatch = pathname.match(/^\/shorts\/([a-zA-Z0-9_-]+)/);
+                if (shortsMatch) {
+                    videoId = shortsMatch[1];
+                }
+            }
+            
+            // If no videoId found, try to extract from current URL
+            if (!videoId) {
+                // Try to extract from youtu.be links or other formats
+                const urlMatch = window.location.href.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/);
+                if (urlMatch) {
+                    videoId = urlMatch[1];
+                }
+            }
+            
             if (videoId) {
-                const currentVideoUrl = `https://youtu.be/${videoId}`;
+                // Use the current page URL directly to preserve all parameters and context
+                currentVideoUrl = window.location.href;
+                
                 const serverUrl = 'http://localhost:3001/handle-video-url';
                 const requestData = {
                     url: currentVideoUrl,
@@ -1191,6 +1243,15 @@ function sendURL(downloadType, additionalData = {}) {
                         resetButtonState(button);
                     }, 1000);
                 });
+            } else {
+                // No video ID found
+                button.classList.remove('loading');
+                button.classList.add('failure');
+                showNotification('Impossible de détecter l\'ID de la vidéo YouTube.', 'error');
+                setTimeout(() => {
+                    button.classList.remove('failure');
+                    buttonStates[buttonType].isDownloading = false;
+                }, 1000);
             }
         })
         .catch(error => {
@@ -1314,9 +1375,12 @@ function checkAvailableSpace() {
     }
 }
 
-
-
 function addButtons() {
+    // Only add buttons if we're on a video or shorts page
+    if (!isVideoPage()) {
+        return;
+    }
+    
     // Create fixed container in bottom left
     let targetContainer = document.querySelector('#ytp-floating-container');
     
@@ -1385,6 +1449,9 @@ function addButtons() {
             // Show first-time notification about the toggle button
             showFirstTimeNotification();
         }
+        
+        // Update visibility based on current page
+        updateButtonsVisibility();
     } else {
         setTimeout(addButtons, 1000);
     }
@@ -1393,9 +1460,12 @@ function addButtons() {
 // Simple observer to recreate buttons if they're removed
 const setupObservers = () => {
     new MutationObserver(() => {
-        // Check if our container was removed and recreate if needed
-        if (!document.getElementById('ytp-floating-container') || 
-            !document.getElementById('ytp-main-container')) {
+        // Always update button visibility based on current page
+        updateButtonsVisibility();
+        
+        // Check if our container was removed and recreate if needed (only on video pages)
+        if (isVideoPage() && (!document.getElementById('ytp-floating-container') || 
+            !document.getElementById('ytp-main-container'))) {
             setTimeout(addButtons, 100);
         }
     }).observe(document.body, { 
@@ -1408,13 +1478,29 @@ const setupObservers = () => {
 addButtons();
 setupObservers();
 
-
-
 // Simple navigation listener for YouTube page changes
 document.addEventListener('yt-navigate-finish', () => {
     setTimeout(() => {
-        if (!document.getElementById('ytp-floating-container')) {
+        // Update button visibility for any page change
+        updateButtonsVisibility();
+        
+        // Only create buttons if we're on a video page and they don't exist
+        if (isVideoPage() && !document.getElementById('ytp-floating-container')) {
             addButtons();
         }
     }, 500);
-}); 
+});
+
+// Also listen for URL changes (for direct navigation)
+let currentUrl = window.location.href;
+setInterval(() => {
+    if (window.location.href !== currentUrl) {
+        currentUrl = window.location.href;
+        setTimeout(() => {
+            updateButtonsVisibility();
+            if (isVideoPage() && !document.getElementById('ytp-floating-container')) {
+                addButtons();
+            }
+        }, 500);
+    }
+}, 1000); 
