@@ -1,6 +1,100 @@
 // YouTube to Premiere Pro Extension - Enhanced UI
 // Modern button design with icons and improved animations - Original Colors
 
+// Debug: Version check
+console.log('YTP: Content script loaded - Version 3.0.3 with Enhanced Cookie Extraction & Debug');
+
+// Fonction pour récupérer les cookies YouTube pour le serveur
+async function getCookiesForServer() {
+    return new Promise((resolve) => {
+        console.log('YTP: Getting YouTube cookies for server');
+        
+        try {
+            chrome.runtime.sendMessage({
+                type: 'GET_YOUTUBE_COOKIES'
+            }, (response) => {
+                if (chrome.runtime.lastError) {
+                    console.error('YTP: Chrome runtime error:', chrome.runtime.lastError);
+                    resolve({ cookies: [], error: chrome.runtime.lastError.message });
+                    return;
+                }
+                
+                const cookies = response ? response.cookies || [] : [];
+                console.log('YTP: Retrieved', cookies.length, 'cookies for server');
+                resolve({ cookies: cookies });
+            });
+        } catch (error) {
+            console.error('YTP: Error getting cookies for server:', error);
+            resolve({ cookies: [], error: error.message });
+        }
+    });
+}
+
+// Fonction pour vérifier si l'utilisateur est connecté à YouTube
+async function checkYouTubeAuth() {
+    const cookiesData = await getCookiesForServer();
+    const authCookies = cookiesData.cookies.filter(cookie => 
+        ['SAPISID', 'APISID', 'HSID', 'SSID', 'LOGIN_INFO', '__Secure-3PAPISID', '__Secure-3PSID'].includes(cookie.name)
+    );
+    
+    return {
+        isLoggedIn: authCookies.length > 0,
+        cookieCount: cookiesData.cookies.length,
+        authCookieCount: authCookies.length
+    };
+}
+
+// Fonction pour guider l'utilisateur vers la connexion si nécessaire
+function promptUserLogin() {
+    const notification = showNotification(
+        'Pour télécharger des vidéos avec restrictions d\'âge, veuillez vous connecter à votre compte YouTube dans cet onglet, puis rafraîchir la page.', 
+        'info', 
+        10000
+    );
+    
+    // Ajouter un bouton pour ouvrir la page de connexion YouTube
+    setTimeout(() => {
+        const loginButton = document.createElement('button');
+        loginButton.textContent = 'Se connecter à YouTube';
+        loginButton.style.cssText = `
+            background: #ff0000;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 8px;
+        `;
+        loginButton.onclick = () => {
+            window.open('https://accounts.google.com/signin', '_blank');
+        };
+        
+        if (notification && notification.parentNode) {
+            notification.appendChild(loginButton);
+        }
+    }, 1000);
+}
+
+
+
+// Handle YouTube cookies requests from settings panel (legacy - si nécessaire)
+window.addEventListener('message', async (event) => {
+    console.log('YTP: Content script received message:', event.data);
+    
+    if (event.data.type === 'REQUEST_YOUTUBE_COOKIES' && event.data.source === 'YTP_SETTINGS') {
+        console.log('YTP: Processing YouTube cookies request');
+        
+        const cookiesData = await getCookiesForServer();
+        
+        // Send cookies back to settings panel
+        window.postMessage({
+            type: 'YOUTUBE_COOKIES_RESPONSE',
+            cookies: cookiesData.cookies,
+            error: cookiesData.error
+        }, '*');
+    }
+});
+
 // Add styles to the document
 const styleSheet = document.createElement("style");
 styleSheet.textContent = `
@@ -1204,16 +1298,44 @@ function sendURL(downloadType, additionalData = {}) {
                 currentVideoUrl = window.location.href;
                 
                 const serverUrl = 'http://localhost:3001/handle-video-url';
-                const requestData = {
-                    url: currentVideoUrl,
-                    type: downloadType,
-                    ...additionalData
-                };
+                
+                // Récupérer les cookies YouTube avant d'envoyer la requête
+                getCookiesForServer().then(cookiesData => {
+                    console.log('YTP: Cookies retrieved for server:', cookiesData.cookies.length, 'cookies');
+                    
+                    if (cookiesData.cookies.length > 0) {
+                        // Log authentication cookies for debugging
+                        const authCookies = cookiesData.cookies.filter(cookie => 
+                            ['SAPISID', 'APISID', 'HSID', 'SSID', 'LOGIN_INFO', '__Secure-3PAPISID', '__Secure-3PSID', 'SID'].includes(cookie.name)
+                        );
+                        
+                        console.log('YTP: Authentication cookies found:', authCookies.length);
+                        console.log('YTP: Cookie domains:', [...new Set(cookiesData.cookies.map(c => c.domain))]);
+                        
+                        if (authCookies.length === 0) {
+                            console.warn('YTP: WARNING - No authentication cookies found! User may not be logged in.');
+                            showNotification('Attention: Aucun cookie d\'authentification trouvé. Veuillez vous connecter à YouTube.', 'warning', 8000);
+                        } else {
+                            console.log('YTP: User appears authenticated - found', authCookies.length, 'auth cookies');
+                        }
+                    } else {
+                        console.warn('YTP: No cookies retrieved!');
+                        showNotification('Attention: Aucun cookie trouvé. Veuillez vous connecter à YouTube.', 'warning', 8000);
+                    }
+                    
+                    const requestData = {
+                        url: currentVideoUrl,
+                        type: downloadType,
+                        cookies: cookiesData.cookies,
+                        userAgent: navigator.userAgent,
+                        ...additionalData
+                    };
 
-                fetch(serverUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(requestData)
+                    return fetch(serverUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(requestData)
+                    });
                 })
                 .then(response => response.json().then(data => ({status: response.status, data})))
                 .then(({status, data}) => {
@@ -1478,6 +1600,8 @@ const setupObservers = () => {
 addButtons();
 setupObservers();
 
+
+
 // Simple navigation listener for YouTube page changes
 document.addEventListener('yt-navigate-finish', () => {
     setTimeout(() => {
@@ -1503,4 +1627,6 @@ setInterval(() => {
             }
         }, 500);
     }
-}, 1000); 
+}, 1000);
+
+ 

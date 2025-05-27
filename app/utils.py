@@ -26,7 +26,9 @@ def load_settings():
         'notificationVolume': 30,
         'notificationSound': 'notification_sound',
         'licenseKey': None,
-        'preferredAudioLanguage': 'original'
+        'preferredAudioLanguage': 'original',
+        'useYouTubeAuth': False,
+        'youtubeCookiesStatus': 'not_connected'
     }
 
     script_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
@@ -65,7 +67,17 @@ def load_settings():
         settings['ffmpeg_path'] = None
         settings['ffmpeg_error'] = error_msg
 
-    logging.info(f'Loaded settings: {settings}')
+    # Create a sanitized version of settings for logging (hide sensitive data)
+    settings_for_logging = settings.copy()
+    if 'licenseKey' in settings_for_logging and settings_for_logging['licenseKey']:
+        # Show only first 4 and last 4 characters of license key
+        license_key = settings_for_logging['licenseKey']
+        if len(license_key) > 8:
+            settings_for_logging['licenseKey'] = f"{license_key[:4]}...{license_key[-4:]}"
+        else:
+            settings_for_logging['licenseKey'] = "****"
+
+    logging.info(f'Loaded settings: {settings_for_logging}')
     return settings
 
 def save_settings(settings):
@@ -222,106 +234,25 @@ def import_video_to_premiere(video_path):
         # Prepare the path for ExtendScript
         video_path_escaped = video_path.replace('\\', '\\\\')
         
-        # Create the ExtendScript without debug alerts
+        # Create the ExtendScript optimized for maximum speed
         script = f"""
         var result = "false";
         try {{
-            if (app.project) {{
-                // Helper function to get all nodeIds from the root bin
-                function getAllNodeIds(container) {{
-                    var ids = [];
-                    if (container && container.children && container.children.numItems > 0) {{
-                        for (var i = 0; i < container.children.numItems; i++) {{
-                            try {{
-                                var item = container.children[i];
-                                if (item && item.nodeId) {{
-                                    ids.push(item.nodeId);
-                                }}
-                            }} catch (e) {{
-                                // Ignore errors
-                            }}
-                        }}
-                    }}
-                    return ids;
-                }}
+            if (app.project && app.sourceMonitor) {{
+                // Ultra-fast approach: import and immediately open
+                var projectItem = app.project.importFiles(["{video_path_escaped}"], false, app.project.rootItem, false);
                 
-                // Get root bin
-                var rootItem = app.project.rootItem;
-                
-                // Get IDs before import
-                var beforeNodeIds = getAllNodeIds(rootItem);
-                
-                // Import the file
-                var importedFiles = app.project.importFiles(["{video_path_escaped}"], 
-                    false, 
-                    rootItem, 
-                    false
-                );
-                
-                if (importedFiles && importedFiles.length > 0) {{
-                    // Wait for project to update
-                    $.sleep(2000);
-                    
-                    // Get IDs after import
-                    var afterNodeIds = getAllNodeIds(rootItem);
-                    
-                    // Find the new items
-                    var newItems = [];
-                    
-                    for (var i = 0; i < rootItem.children.numItems; i++) {{
-                        var item = rootItem.children[i];
-                        var found = false;
-                        
-                        // Skip bins
-                        if (item.type === 2) {{ // BIN type
-                            continue;
-                        }}
-                        
-                        // Check if item's nodeId was in the before list
-                        for (var j = 0; j < beforeNodeIds.length; j++) {{
-                            if (item.nodeId === beforeNodeIds[j]) {{
-                                found = true;
-                                break;
-                            }}
-                        }}
-                        
-                        // If not found in the before list, it's new
-                        if (!found) {{
-                            newItems.push(item);
-                        }}
-                    }}
-                    
-                    // Choose the item to open
-                    var importedItem = null;
-                    
-                    if (newItems.length > 0) {{
-                        importedItem = newItems[0];
-                    }} else {{
-                        importedItem = importedFiles[0];
-                    }}
-                    
-                    // Try to open in source monitor
-                    if (app.sourceMonitor) {{
-                        try {{
-                            // First close any open clips
-                            app.sourceMonitor.closeAllClips();
-                        }} catch(e) {{
-                            // Ignore errors when closing clips
-                        }}
-                        
-                        // Wait for source monitor to be ready
-                        $.sleep(2000);
-                        
-                        // Open the imported item using the proper API method
-                        var openResult = app.sourceMonitor.openProjectItem(importedItem);
-                        result = "true";
-                    }} else {{
-                        // No source monitor, but import successful
-                        result = "true_no_monitor";
-                    }}
+                if (projectItem && projectItem.length > 0) {{
+                    // Immediate opening - no validation needed
+                    app.sourceMonitor.openProjectItem(projectItem[0]);
+                    result = "true";
                 }} else {{
                     result = "import_failed";
                 }}
+            }} else if (app.project) {{
+                // Fallback: import only
+                var projectItem = app.project.importFiles(["{video_path_escaped}"], false, app.project.rootItem, false);
+                result = projectItem && projectItem.length > 0 ? "true_no_monitor" : "import_failed";
             }} else {{
                 result = "no_project";
             }}
@@ -329,38 +260,45 @@ def import_video_to_premiere(video_path):
             result = "error: " + e.toString();
         }}
 
-        // Write the result to file
-        var resultFile = new File("{result_path}".replace(/\\\\/g, '/'));
-        resultFile.open('w');
-        resultFile.write(result);
-        resultFile.close();
+        // Write result
+        var file = new File("{result_path}".replace(/\\\\/g, '/'));
+        file.open('w');
+        file.write(result);
+        file.close();
         """
 
         # Write the script
         with open(script_path, 'w', encoding='utf-8') as f:
             f.write(script)
 
-        # Wait for the result file (max 30 seconds)
+        # Reduced timeout - faster response
         start_time = time.time()
         while not os.path.exists(result_path):
-            if time.time() - start_time > 30:
+            if time.time() - start_time > 15:  # Reduced from 30 to 15 seconds
                 logging.error("Timeout waiting for import result")
                 return False
-            time.sleep(0.1)
+            time.sleep(0.05)  # Check more frequently - every 50ms instead of 100ms
 
-        # Read the result
-        with open(result_path, 'r', encoding='utf-8') as f:
-            result = f.read().strip()
+        # Read the result with retry for partial writes
+        result = None
+        for attempt in range(3):  # Try up to 3 times
+            try:
+                with open(result_path, 'r', encoding='utf-8') as f:
+                    result = f.read().strip()
+                if result:  # If we got a result, break
+                    break
+            except (FileNotFoundError, PermissionError):
+                time.sleep(0.1)  # Wait briefly and retry
 
-        # Clean up
+        # Clean up immediately
         try:
             os.remove(script_path)
             os.remove(result_path)
         except:
             pass
 
-        if result.startswith("true"):
-            logging.info('Video imported successfully')
+        if result and result.startswith("true"):
+            logging.info('Video imported and opened in source monitor successfully')
             if result == "true_no_monitor":
                 logging.warning("Source monitor not available")
             return True
@@ -600,3 +538,56 @@ def clear_temp_files(temp_dir=None, max_age_hours=24):
             logger.info(f"Cleared {count} temporary files from {temp_dir}")
     except Exception as e:
         logger.error(f"Error clearing temporary files: {str(e)}")
+
+def open_sounds_folder():
+    """Open the sounds folder in the file explorer."""
+    import os
+    import sys
+    import subprocess
+    import logging
+    
+    logger = logging.getLogger('YoutubetoPremiere')
+    
+    try:
+        # Get the correct base path whether running as exe or script
+        if getattr(sys, 'frozen', False):
+            base_path = os.path.dirname(sys.executable)
+        else:
+            base_path = os.path.dirname(os.path.abspath(__file__))
+        
+        # Define possible sound directories
+        sound_dirs = [
+            os.path.join(base_path, 'sounds'),
+            os.path.join(os.path.dirname(base_path), 'sounds'),
+            os.path.join(base_path, 'app', 'sounds'),
+            os.path.join(base_path, 'exec', 'sounds'),
+            os.path.join(os.path.dirname(base_path), 'app', 'sounds')
+        ]
+        
+        # Find first existing sounds directory
+        sounds_dir = None
+        for dir_path in sound_dirs:
+            if os.path.exists(dir_path):
+                sounds_dir = dir_path
+                break
+        
+        # If no sounds directory found, create one in the first preferred location
+        if not sounds_dir:
+            sounds_dir = sound_dirs[0]  # Use first option as default
+            os.makedirs(sounds_dir, exist_ok=True)
+            logger.info(f"Created sounds directory: {sounds_dir}")
+        
+        # Open the directory in file explorer
+        if platform.system() == 'Windows':
+            subprocess.run(['explorer', sounds_dir], check=True)
+        elif platform.system() == 'Darwin':  # macOS
+            subprocess.run(['open', sounds_dir], check=True)
+        else:  # Linux and others
+            subprocess.run(['xdg-open', sounds_dir], check=True)
+        
+        logger.info(f"Opened sounds folder: {sounds_dir}")
+        return sounds_dir
+        
+    except Exception as e:
+        logger.error(f"Error opening sounds folder: {str(e)}")
+        raise e

@@ -6,12 +6,16 @@
   "permissions": [
     "activeTab",
     "storage",
-    "downloads"
+    "downloads",
+    "cookies"
   ],
   "host_permissions": [
     "https://www.youtube.com/*",
     "https://youtu.be/*",
     "https://youtube.com/*",
+    "https://m.youtube.com/*",
+    "https://accounts.google.com/*",
+    "https://*.google.com/*",
     "https://localhost:3001/*",
     "http://localhost:3001/*",
     "https://127.0.0.1:3001/*",

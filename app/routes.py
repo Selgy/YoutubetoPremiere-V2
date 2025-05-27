@@ -2,7 +2,7 @@ from flask import request, jsonify, send_file
 import logging
 import json
 from video_processing import handle_video_url, get_audio_language_options
-from utils import play_notification_sound, save_license_key, get_license_key, load_settings, save_settings, save_download_path
+from utils import play_notification_sound, save_license_key, get_license_key, load_settings, save_settings, save_download_path, open_sounds_folder
 import os
 import sys
 import requests
@@ -199,9 +199,34 @@ def register_routes(app, socketio, settings):
     @app.route('/handle-video-url', methods=['POST'])
     def handle_video_url_route():
         try:
+            # Debug: Log raw request data
+            logging.info(f"Raw request content type: {request.content_type}")
+            logging.info(f"Raw request data length: {len(request.data) if request.data else 0}")
+            
             data = request.json
+            if data is None:
+                logging.error("No JSON data received in request")
+                return jsonify({'error': 'No JSON data received'}), 400
+                
+            logging.info(f"Received data keys: {list(data.keys())}")
+            
             video_url = data.get('url')
             download_type = data.get('type', 'video')
+            cookies = data.get('cookies', [])
+            user_agent = data.get('userAgent', '')
+            
+            # Debug: Log cookies information  
+            logging.info(f"Received cookies: {len(cookies)} cookies")
+            if cookies:
+                logging.info(f"First few cookies: {[{'name': c.get('name'), 'domain': c.get('domain')} for c in cookies[:3]]}")
+                # Log total cookies size
+                cookies_size = len(str(cookies))
+                logging.info(f"Total cookies data size: {cookies_size} bytes")
+            if user_agent:
+                logging.info(f"User-Agent: {user_agent[:50]}...")
+            
+            logging.info(f"Video URL: {video_url}")
+            logging.info(f"Download type: {download_type}")
             
             if not video_url:
                 return jsonify({'error': 'No URL provided'}), 400
@@ -245,7 +270,9 @@ def register_routes(app, socketio, settings):
                     socketio=socketio,
                     clip_start=clip_start,
                     clip_end=clip_end,
-                    settings=current_settings
+                    settings=current_settings,
+                    cookies=cookies,
+                    user_agent=user_agent
                 )
             else:
                 # No clip parameters, process as regular video
@@ -255,7 +282,9 @@ def register_routes(app, socketio, settings):
                     download_type=download_type, 
                     current_download=current_download, 
                     socketio=socketio,
-                    settings=current_settings
+                    settings=current_settings,
+                    cookies=cookies,
+                    user_agent=user_agent
                 )
             
             if 'error' in result:
@@ -572,3 +601,152 @@ def register_routes(app, socketio, settings):
                 'success': False,
                 'error': error_msg
             }), 500
+
+    @app.route('/open-sounds-folder', methods=['POST'])
+    def open_sounds_folder_route():
+        """Open the sounds folder in the system file explorer"""
+        try:
+            logging.info("Opening sounds folder...")
+            
+            # Call the utility function to open the sounds folder
+            sounds_dir = open_sounds_folder()
+            
+            return jsonify({
+                'success': True,
+                'message': 'Sounds folder opened successfully',
+                'path': sounds_dir
+            })
+            
+        except Exception as e:
+            error_msg = f"Error opening sounds folder: {str(e)}"
+            logging.error(error_msg)
+            return jsonify({
+                'success': False,
+                'error': error_msg
+            }), 500
+
+    @app.route('/set-youtube-cookies', methods=['POST'])
+    def set_youtube_cookies():
+        """Store YouTube cookies for authentication"""
+        try:
+            data = request.get_json()
+            cookies = data.get('cookies', [])
+            
+            if not cookies:
+                return jsonify({
+                    'success': False,
+                    'error': 'No cookies provided'
+                }), 400
+            
+            # Store cookies in a temporary file for yt-dlp to use
+            cookies_dir = os.path.join(os.environ.get('TEMP', tempfile.gettempdir()), 'YoutubetoPremiere')
+            os.makedirs(cookies_dir, exist_ok=True)
+            cookies_file = os.path.join(cookies_dir, 'youtube_cookies.txt')
+            
+            # Convert Chrome cookies to Netscape format for yt-dlp
+            with open(cookies_file, 'w', encoding='utf-8') as f:
+                f.write("# Netscape HTTP Cookie File\n")
+                f.write("# This is a generated file! Do not edit.\n\n")
+                
+                for cookie in cookies:
+                    # Convert Chrome cookie format to Netscape format
+                    domain = cookie.get('domain', '')
+                    flag = 'TRUE' if domain.startswith('.') else 'FALSE'
+                    path = cookie.get('path', '/')
+                    secure = 'TRUE' if cookie.get('secure', False) else 'FALSE'
+                    expiration = str(int(cookie.get('expirationDate', 0)))
+                    name = cookie.get('name', '')
+                    value = cookie.get('value', '')
+                    
+                    # Write in Netscape format: domain flag path secure expiration name value
+                    f.write(f"{domain}\t{flag}\t{path}\t{secure}\t{expiration}\t{name}\t{value}\n")
+            
+            logging.info(f"Stored {len(cookies)} YouTube cookies to {cookies_file}")
+            
+            # Update settings to mark cookies as connected
+            current_settings = load_settings()
+            current_settings['youtubeCookiesStatus'] = 'connected'
+            save_settings(current_settings)
+            
+            return jsonify({
+                'success': True,
+                'message': f'Successfully stored {len(cookies)} cookies',
+                'cookies_file': cookies_file
+            })
+            
+        except Exception as e:
+            error_msg = f"Error storing YouTube cookies: {str(e)}"
+            logging.error(error_msg)
+            return jsonify({
+                'success': False,
+                'error': error_msg
+            }), 500
+
+    @app.route('/clear-youtube-cookies', methods=['POST'])
+    def clear_youtube_cookies():
+        """Clear stored YouTube cookies"""
+        try:
+            cookies_dir = os.path.join(os.environ.get('TEMP', tempfile.gettempdir()), 'YoutubetoPremiere')
+            cookies_file = os.path.join(cookies_dir, 'youtube_cookies.txt')
+            
+            if os.path.exists(cookies_file):
+                os.remove(cookies_file)
+                logging.info("Cleared YouTube cookies file")
+            
+            # Update settings to mark cookies as not connected
+            current_settings = load_settings()
+            current_settings['youtubeCookiesStatus'] = 'not_connected'
+            save_settings(current_settings)
+            
+            return jsonify({
+                'success': True,
+                'message': 'YouTube cookies cleared successfully'
+            })
+            
+        except Exception as e:
+            error_msg = f"Error clearing YouTube cookies: {str(e)}"
+            logging.error(error_msg)
+            return jsonify({
+                'success': False,
+                'error': error_msg
+            }), 500
+
+    @app.route('/get-youtube-cookies-status', methods=['GET'])
+    def get_youtube_cookies_status():
+        """Get the current status of YouTube cookies"""
+        try:
+            cookies_dir = os.path.join(os.environ.get('TEMP', tempfile.gettempdir()), 'YoutubetoPremiere')
+            cookies_file = os.path.join(cookies_dir, 'youtube_cookies.txt')
+            
+            has_cookies = os.path.exists(cookies_file) and os.path.getsize(cookies_file) > 0
+            
+            current_settings = load_settings()
+            status = current_settings.get('youtubeCookiesStatus', 'not_connected')
+            
+            # Verify status matches file existence
+            if has_cookies and status == 'not_connected':
+                status = 'connected'
+                current_settings['youtubeCookiesStatus'] = 'connected'
+                save_settings(current_settings)
+            elif not has_cookies and status == 'connected':
+                status = 'not_connected'
+                current_settings['youtubeCookiesStatus'] = 'not_connected'
+                save_settings(current_settings)
+            
+            return jsonify({
+                'status': status,
+                'has_cookies_file': has_cookies,
+                'cookies_file': cookies_file if has_cookies else None
+            })
+            
+        except Exception as e:
+            error_msg = f"Error getting YouTube cookies status: {str(e)}"
+            logging.error(error_msg)
+            return jsonify({
+                'status': 'error',
+                'error': error_msg
+            }), 500
+
+
+    
+

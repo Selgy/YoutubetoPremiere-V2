@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('app/*.py', '.')]
+datas = [('app/sounds', 'exec/sounds'), ('app/*.py', '.')]
 binaries = []
 hiddenimports = ['engineio.async_drivers.threading', 'flask_socketio', 'flask_cors', 'werkzeug', 'yt_dlp', 'psutil', 'requests', 'tqdm', 'curl_cffi', 'python_dotenv', 'eventlet', 'gevent_websocket', 'simple_websocket', 'video_processing', 'utils', 'init', 'routes']
 tmp_ret = collect_all('yt_dlp')

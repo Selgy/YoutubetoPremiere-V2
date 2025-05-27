@@ -14,12 +14,15 @@ const Settings = ({ onBack }: SettingsProps) => {
     secondsBefore: '15',
     secondsAfter: '15',
     licenseKey: '',
-    preferredAudioLanguage: 'original'
+    preferredAudioLanguage: 'original',
+    useYouTubeAuth: false
   });
   const [isTestPlaying, setIsTestPlaying] = useState(false);
   const [availableSounds, setAvailableSounds] = useState<string[]>([]);
   const [serverIP, setServerIP] = useState('localhost');
   const [isOpeningLogsFolder, setIsOpeningLogsFolder] = useState(false);
+  const [isOpeningSoundsFolder, setIsOpeningSoundsFolder] = useState(false);
+
 
   useEffect(() => {
     const storedIP = localStorage.getItem('serverIP');
@@ -80,6 +83,8 @@ const Settings = ({ onBack }: SettingsProps) => {
     const newSettings = { ...settings, preferredAudioLanguage: language };
     await saveSettings(newSettings);
   };
+
+
 
   const playTestSound = async () => {
     if (isTestPlaying) return;
@@ -166,6 +171,53 @@ const Settings = ({ onBack }: SettingsProps) => {
     }
   };
 
+  const openSoundsFolder = async () => {
+    if (isOpeningSoundsFolder) return;
+    
+    setIsOpeningSoundsFolder(true);
+    try {
+      console.log('Opening sounds folder...');
+      console.log('Server IP:', serverIP);
+      
+      const response = await fetch(`http://${serverIP}:3001/open-sounds-folder`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+      
+      console.log('Response status:', response.status);
+      console.log('Response ok:', response.ok);
+      
+      if (response.ok) {
+        const result = await response.json();
+        console.log('Sounds folder opened successfully:', result.path);
+        
+        // Refresh available sounds after opening the folder
+        setTimeout(() => {
+          fetch(`http://${serverIP}:3001/available-sounds`)
+            .then(response => response.json())
+            .then(data => {
+              if (data.sounds && data.sounds.length > 0) {
+                setAvailableSounds(data.sounds);
+                console.log('Refreshed available sounds:', data.sounds);
+              }
+            })
+            .catch(error => console.error('Error refreshing sounds:', error));
+        }, 1000); // Small delay to allow user to add files
+      } else {
+        const errorData = await response.json();
+        console.error('Failed to open sounds folder:', errorData.error);
+      }
+    } catch (error) {
+      console.error('Error opening sounds folder:', error);
+    } finally {
+      setIsOpeningSoundsFolder(false);
+    }
+  };
+
+
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-background-DEFAULT to-background-panel p-4 sm:p-6">
       <div className="max-w-2xl mx-auto">
@@ -242,16 +294,39 @@ const Settings = ({ onBack }: SettingsProps) => {
                   ))}
                 </select>
                 
-                <button
-                  onClick={playTestSound}
-                  disabled={isTestPlaying}
-                  className={`btn w-full flex items-center justify-center gap-2 ${isTestPlaying ? 'btn-loading' : ''}`}
-                >
-                  <span className="material-symbols-outlined">
-                    {isTestPlaying ? 'volume_up' : 'play_arrow'}
-                  </span>
-                  {isTestPlaying ? 'Playing...' : 'Test Sound'}
-                </button>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <button
+                    onClick={playTestSound}
+                    disabled={isTestPlaying}
+                    className={`btn w-full flex items-center justify-center gap-2 ${isTestPlaying ? 'btn-loading' : ''}`}
+                  >
+                    <span className="material-symbols-outlined">
+                      {isTestPlaying ? 'volume_up' : 'play_arrow'}
+                    </span>
+                    {isTestPlaying ? 'Playing...' : 'Test Sound'}
+                  </button>
+                  
+                  <button
+                    onClick={openSoundsFolder}
+                    disabled={isOpeningSoundsFolder}
+                    className={`btn w-full flex items-center justify-center gap-2 ${isOpeningSoundsFolder ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    style={{
+                      background: isOpeningSoundsFolder 
+                        ? 'linear-gradient(135deg, #6B7280 0%, #4B5563 100%)'
+                        : 'linear-gradient(135deg, #10B981 0%, #059669 100%)'
+                    }}
+                  >
+                    <span className="material-symbols-outlined">
+                      {isOpeningSoundsFolder ? 'hourglass_empty' : 'folder_open'}
+                    </span>
+                    {isOpeningSoundsFolder ? 'Opening...' : 'Open Sounds Folder'}
+                  </button>
+                </div>
+                
+                <p className="text-sm text-gray-400 mt-3 flex items-center gap-1">
+                  <span className="material-symbols-outlined text-xs">info</span>
+                  To add custom notification sounds, click "Open Sounds Folder" and place your .mp3 or .wav files there
+                </p>
               </div>
             </div>
           </div>
@@ -299,6 +374,8 @@ const Settings = ({ onBack }: SettingsProps) => {
               </div>
             </div>
           </div>
+
+
 
           {/* Support Section */}
           <div className="p-6 rounded-xl backdrop-blur-20 border border-white border-opacity-10"

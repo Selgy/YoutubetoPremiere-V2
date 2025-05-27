@@ -476,7 +476,18 @@ should_shutdown = False
 def run_server():
     global socketio  # Make socketio accessible to progress_hook
     settings = load_settings()
-    logging.info('Settings loaded: %s', settings)
+    
+    # Create a sanitized version of settings for logging (hide sensitive data)
+    settings_for_logging = settings.copy()
+    if 'licenseKey' in settings_for_logging and settings_for_logging['licenseKey']:
+        # Show only first 4 and last 4 characters of license key
+        license_key = settings_for_logging['licenseKey']
+        if len(license_key) > 8:
+            settings_for_logging['licenseKey'] = f"{license_key[:4]}...{license_key[-4:]}"
+        else:
+            settings_for_logging['licenseKey'] = "****"
+    
+    logging.info('Settings loaded: %s', settings_for_logging)
     register_routes(app, socketio, settings)
 
     # Start server without exposing IP addresses
