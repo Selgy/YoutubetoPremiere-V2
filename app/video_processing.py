@@ -698,7 +698,10 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             'download_ranges': download_range_func(None, [(clip_start, clip_end)]),  # Utiliser la fonction correcte
             'no_part': True,
             'progress_hooks': [progress_hook],
-            'verbose': True,  # Enable verbose output for debugging
+            'quiet': True,  # Disable verbose output to prevent Windows stdout/stderr issues
+            'no_warnings': True,  # Disable warnings to prevent output issues
+            'noprogress': False,  # Allow progress reporting through hooks only
+            'consoletitle': False,  # Disable console title updates
             'nocheckcertificate': True,  # Skip certificate validation which can fail in some environments
             'ignoreerrors': True,  # Continue downloading even if some errors occur
             'geo_bypass': True,  # Bypass geographic restrictions
@@ -742,48 +745,110 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         logging.info(f"Download options: {ydl_opts}")
         
         # Download with yt-dlp
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                current_download['ydl'] = ydl
-                
-                # Log the environment variables related to ffmpeg
-                logging.info(f"Environment PATH: {os.environ.get('PATH')}")
-                logging.info(f"Environment FFMPEG_PATH: {os.environ.get('FFMPEG_PATH')}")
-                
-                # Verify ffmpeg actually exists at the path
-                if not os.path.exists(ffmpeg_path):
-                    logging.error(f"FFmpeg executable not found at configured path: {ffmpeg_path}")
-                    socketio.emit('download-failed', {'message': f"FFmpeg executable not found at: {ffmpeg_path}"})
-                    return {"error": f"FFmpeg executable not found at: {ffmpeg_path}"}
-                
-                logging.info(f"Starting clip download for {video_url} using ffmpeg at {ffmpeg_path}")
-                ydl.download([video_url])
-                
-                # Check if the download was canceled
-                if is_cancelled[0]:
-                    if os.path.exists(video_file_path):
-                        os.remove(video_file_path)
-                    return {"error": "Download cancelled by user"}
-                    
-            except Exception as e:
-                error_message = f"Error downloading clip: {str(e)}"
-                logging.error(error_message)
-                logging.error(f"Exception type: {type(e).__name__}")
-                logging.error(f"Exception traceback: {traceback.format_exc()}")
-                
-                # Check if error is related to ffmpeg
-                error_str = str(e).lower()
-                if 'ffmpeg' in error_str or 'executable' in error_str:
-                    logging.error(f"FFmpeg-related error detected. Current ffmpeg path: {ffmpeg_path}")
-                    # Suggest potential solutions
-                    solutions = "Try restarting the application or using a different clip download approach."
-                    error_message += f" This appears to be related to ffmpeg. {solutions}"
-                
-                socketio.emit('download-failed', {'message': error_message})
-                return {"error": error_message}
-            finally:
-                current_download['ydl'] = None
-                current_download['cancel_callback'] = None
+        # Configure stdout/stderr to prevent Windows pipe issues
+        import contextlib
+        import io
+        
+        # Create safe stdout/stderr to prevent Windows pipe errors
+        if sys.platform == 'win32':
+            # On Windows, redirect to null device to avoid pipe issues
+            null_device = open(os.devnull, 'w', encoding='utf-8')
+            with contextlib.redirect_stdout(null_device), contextlib.redirect_stderr(null_device):
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    try:
+                        current_download['ydl'] = ydl
+                        
+                        # Log the environment variables related to ffmpeg
+                        logging.info(f"Environment PATH: {os.environ.get('PATH')}")
+                        logging.info(f"Environment FFMPEG_PATH: {os.environ.get('FFMPEG_PATH')}")
+                        
+                        # Verify ffmpeg actually exists at the path
+                        if not os.path.exists(ffmpeg_path):
+                            logging.error(f"FFmpeg executable not found at configured path: {ffmpeg_path}")
+                            socketio.emit('download-failed', {'message': f"FFmpeg executable not found at: {ffmpeg_path}"})
+                            return {"error": f"FFmpeg executable not found at: {ffmpeg_path}"}
+                        
+                        logging.info(f"Starting clip download for {video_url} using ffmpeg at {ffmpeg_path}")
+                        ydl.download([video_url])
+                        
+                        # Check if the download was canceled
+                        if is_cancelled[0]:
+                            if os.path.exists(video_file_path):
+                                os.remove(video_file_path)
+                            return {"error": "Download cancelled by user"}
+                                
+                    except Exception as e:
+                        error_message = f"Error downloading clip: {str(e)}"
+                        logging.error(error_message)
+                        logging.error(f"Exception type: {type(e).__name__}")
+                        logging.error(f"Exception traceback: {traceback.format_exc()}")
+                        
+                        # Check for Windows-specific stdout/stderr issues
+                        if "[Errno 22]" in str(e) or "Invalid argument" in str(e):
+                            error_message = "Clip download failed due to Windows output stream issue. This is a known yt-dlp issue on Windows. Please try again or restart the application."
+                            logging.error("Windows stdout/stderr pipe error detected during clip download - recommending restart")
+                        # Check if error is related to ffmpeg
+                        elif 'ffmpeg' in str(e).lower() or 'executable' in str(e).lower():
+                            logging.error(f"FFmpeg-related error detected. Current ffmpeg path: {ffmpeg_path}")
+                            # Suggest potential solutions
+                            solutions = "Try restarting the application or using a different clip download approach."
+                            error_message += f" This appears to be related to ffmpeg. {solutions}"
+                        
+                        socketio.emit('download-failed', {'message': error_message})
+                        return {"error": error_message}
+                    finally:
+                        current_download['ydl'] = None
+                        current_download['cancel_callback'] = None
+        else:
+            # On other platforms, use StringIO
+            safe_stdout = io.StringIO()
+            safe_stderr = io.StringIO()
+            with contextlib.redirect_stdout(safe_stdout), contextlib.redirect_stderr(safe_stderr):
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    try:
+                        current_download['ydl'] = ydl
+                        
+                        # Log the environment variables related to ffmpeg
+                        logging.info(f"Environment PATH: {os.environ.get('PATH')}")
+                        logging.info(f"Environment FFMPEG_PATH: {os.environ.get('FFMPEG_PATH')}")
+                        
+                        # Verify ffmpeg actually exists at the path
+                        if not os.path.exists(ffmpeg_path):
+                            logging.error(f"FFmpeg executable not found at configured path: {ffmpeg_path}")
+                            socketio.emit('download-failed', {'message': f"FFmpeg executable not found at: {ffmpeg_path}"})
+                            return {"error": f"FFmpeg executable not found at: {ffmpeg_path}"}
+                        
+                        logging.info(f"Starting clip download for {video_url} using ffmpeg at {ffmpeg_path}")
+                        ydl.download([video_url])
+                        
+                        # Check if the download was canceled
+                        if is_cancelled[0]:
+                            if os.path.exists(video_file_path):
+                                os.remove(video_file_path)
+                            return {"error": "Download cancelled by user"}
+                            
+                    except Exception as e:
+                        error_message = f"Error downloading clip: {str(e)}"
+                        logging.error(error_message)
+                        logging.error(f"Exception type: {type(e).__name__}")
+                        logging.error(f"Exception traceback: {traceback.format_exc()}")
+                        
+                        # Check for Windows-specific stdout/stderr issues
+                        if "[Errno 22]" in str(e) or "Invalid argument" in str(e):
+                            error_message = "Clip download failed due to Windows output stream issue. This is a known yt-dlp issue on Windows. Please try again or restart the application."
+                            logging.error("Windows stdout/stderr pipe error detected during clip download - recommending restart")
+                        # Check if error is related to ffmpeg
+                        elif 'ffmpeg' in str(e).lower() or 'executable' in str(e).lower():
+                            logging.error(f"FFmpeg-related error detected. Current ffmpeg path: {ffmpeg_path}")
+                            # Suggest potential solutions
+                            solutions = "Try restarting the application or using a different clip download approach."
+                            error_message += f" This appears to be related to ffmpeg. {solutions}"
+                        
+                        socketio.emit('download-failed', {'message': error_message})
+                        return {"error": error_message}
+                    finally:
+                        current_download['ydl'] = None
+                        current_download['cancel_callback'] = None
 
         # Add metadata to the video file if it exists
         if os.path.exists(video_file_path):
@@ -985,7 +1050,10 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 'ffmpeg_location': ffmpeg_path if sys.platform == 'win32' else os.path.dirname(ffmpeg_path),
                 'progress_hooks': [progress_hook],
                 'postprocessor_hooks': [lambda d: socketio.emit('progress', {'progress': '100', 'type': 'full'}) if d['status'] == 'finished' else None],
-                'verbose': True,
+                'quiet': True,  # Disable verbose output to prevent Windows stdout/stderr issues
+                'no_warnings': True,  # Disable warnings to prevent output issues
+                'noprogress': False,  # Allow progress reporting through hooks only
+                'consoletitle': False,  # Disable console title updates
                 'nocheckcertificate': True,  # Skip certificate validation which can fail in some environments
                 'ignoreerrors': True,  # Continue downloading even if some errors occur
                 'postprocessor_args': ['-threads', '4'],  # Limit threads to avoid resource issues
@@ -1028,8 +1096,28 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
 
             # Download the video
             logging.info("Starting video download...")
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.process_ie_result(info, download=True)
+            
+            # Configure stdout/stderr to prevent Windows pipe issues
+            import contextlib
+            import io
+            
+            # Create safe stdout/stderr to prevent Windows pipe errors
+            if sys.platform == 'win32':
+                # On Windows, redirect to null device to avoid pipe issues
+                null_device = open(os.devnull, 'w', encoding='utf-8')
+                with contextlib.redirect_stdout(null_device), contextlib.redirect_stderr(null_device):
+                    try:
+                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                            ydl.process_ie_result(info, download=True)
+                    finally:
+                        null_device.close()
+            else:
+                # On other platforms, use StringIO
+                safe_stdout = io.StringIO()
+                safe_stderr = io.StringIO()
+                with contextlib.redirect_stdout(safe_stdout), contextlib.redirect_stderr(safe_stderr):
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.process_ie_result(info, download=True)
 
             # Get the final path of the downloaded file
             final_path = output_path
@@ -1072,6 +1160,12 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         logging.error(error_message)
         logging.error(f"Exception type: {type(e)}")
         logging.error(f"Exception traceback: {traceback.format_exc()}")
+        
+        # Check for Windows-specific stdout/stderr issues
+        if "[Errno 22]" in str(e) or "Invalid argument" in str(e):
+            error_message = "Download failed due to Windows output stream issue. This is a known yt-dlp issue on Windows. Please try again or restart the application."
+            logging.error("Windows stdout/stderr pipe error detected - recommending restart")
+        
         socketio.emit('download-failed', {'message': error_message})
         return None
 
