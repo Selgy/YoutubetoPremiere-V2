@@ -559,10 +559,56 @@ styleSheet.textContent = `
     /* Fixed container in bottom left corner */
     .ytp-floating-container {
         position: fixed !important;
-        bottom: 20px !important;
-        left: 20px !important;
         z-index: 10000 !important;
         pointer-events: auto !important;
+        cursor: move !important;
+        user-select: none !important;
+        transition: left 0.3s ease, bottom 0.3s ease, transform 0.2s ease, opacity 0.2s ease !important;
+    }
+    
+    /* Drag handle for moving the container */
+    .ytp-drag-handle {
+        position: absolute !important;
+        top: -12px !important;
+        left: 0 !important;
+        right: 0 !important;
+        margin: 0 auto !important;
+        width: 30px !important;
+        height: 12px !important;
+        background: rgba(255, 255, 255, 0.3) !important;
+        border-radius: 6px 6px 0 0 !important;
+        cursor: grab !important;
+        transition: background 0.2s ease !important;
+        z-index: 10002 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+    
+    .ytp-drag-handle::before {
+        content: '••' !important;
+        color: rgba(255, 255, 255, 0.6) !important;
+        font-size: 8px !important;
+        line-height: 1 !important;
+        letter-spacing: 1px !important;
+        text-align: center !important;
+        display: block !important;
+        width: 100% !important;
+    }
+    
+    .ytp-drag-handle:hover {
+        background: rgba(255, 255, 255, 0.5) !important;
+    }
+    
+    .ytp-drag-handle:active {
+        cursor: grabbing !important;
+        background: rgba(255, 255, 255, 0.7) !important;
+    }
+    
+    .ytp-floating-container.dragging {
+        opacity: 0.8 !important;
+        transform: scale(1.02) !important;
+        transition: none !important;
     }
     
     .ytp-floating-container .ytp-main-container {
@@ -577,6 +623,7 @@ styleSheet.textContent = `
         padding: 4px 4px 4px 0px !important;
         border: 1px solid rgba(255, 255, 255, 0.1) !important;
         transition: padding 0.3s ease !important;
+        position: relative !important;
     }
     
     /* Adjust padding when buttons are hidden */
@@ -589,6 +636,17 @@ styleSheet.textContent = `
         margin: 0 !important;
     }
     
+    /* Adjust drag handle position when container is collapsed */
+    .ytp-floating-container.buttons-collapsed .ytp-drag-handle,
+    .ytp-main-container.buttons-collapsed ~ .ytp-drag-handle,
+    .ytp-floating-container .ytp-main-container.buttons-collapsed + .ytp-drag-handle {
+        left: 50% !important;
+        right: auto !important;
+        margin: 0 !important;
+        transform: translateX(40%) !important;
+        width: 24px !important;
+    }
+
     /* Force nos boutons à rester visibles dans notre container flottant */
     .ytp-floating-container .ytp-buttons-container,
     .ytp-floating-container .download-button,
@@ -1456,6 +1514,35 @@ function toggleButtonsVisibility() {
             toggleButton.setAttribute('aria-label', 'Afficher les boutons YouTube to Premiere');
         }
     }
+    
+    // Adjust drag handle position
+    adjustDragHandlePosition();
+}
+
+function adjustDragHandlePosition() {
+    const dragHandle = document.querySelector('.ytp-drag-handle');
+    const mainContainer = document.getElementById('ytp-main-container');
+    
+    if (!dragHandle || !mainContainer) return;
+    
+    // Wait for the transition to complete before adjusting
+    setTimeout(() => {
+        if (mainContainer.classList.contains('buttons-collapsed')) {
+            // When collapsed, center over the toggle button only
+            dragHandle.style.left = '50%';
+            dragHandle.style.right = 'auto';
+            dragHandle.style.margin = '0';
+            dragHandle.style.transform = 'translateX(-10%)';
+            dragHandle.style.width = '24px';
+        } else {
+            // When expanded, center over the entire container
+            dragHandle.style.left = '0';
+            dragHandle.style.right = '0';
+            dragHandle.style.margin = '0 auto';
+            dragHandle.style.transform = 'none';
+            dragHandle.style.width = '30px';
+        }
+    }, 100);
 }
 
 function showFirstTimeNotification() {
@@ -1476,6 +1563,156 @@ function showFirstTimeNotification() {
 function positionFloatingButtons() {
     // Position is now fixed in CSS, no need for dynamic positioning
     console.log('YTP: Using fixed bottom-left positioning');
+}
+
+// Drag functionality for floating container
+let isDragging = false;
+let dragOffset = { x: 0, y: 0 };
+let containerPosition = { x: 20, y: 20 }; // Default bottom-left position
+
+function makeDraggable(container) {
+    if (!container) return;
+    
+    // Load saved position from localStorage
+    const savedPosition = localStorage.getItem('ytp-container-position');
+    if (savedPosition) {
+        try {
+            containerPosition = JSON.parse(savedPosition);
+            updateContainerPosition(container);
+        } catch (e) {
+            console.log('YTP: Could not load saved position, using default');
+        }
+    }
+    
+    // Create drag handle
+    const dragHandle = document.createElement('div');
+    dragHandle.className = 'ytp-drag-handle';
+    dragHandle.title = 'Glissez pour déplacer • Double-clic pour remettre en bas à gauche';
+    container.appendChild(dragHandle);
+    
+    // Add drag functionality to both the handle and the container
+    [dragHandle, container].forEach(element => {
+        element.addEventListener('mousedown', startDrag);
+        element.addEventListener('touchstart', startDrag, { passive: false });
+    });
+    
+    // Double-click to reset position
+    dragHandle.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        resetContainerPosition(container);
+    });
+    
+    // Adjust initial position based on current state
+    adjustDragHandlePosition();
+}
+
+function startDrag(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Don't start drag if clicking on a button
+    if (e.target.closest('.download-button, .ytp-toggle-button')) {
+        return;
+    }
+    
+    const container = document.querySelector('#ytp-floating-container');
+    if (!container) return;
+    
+    isDragging = true;
+    container.classList.add('dragging');
+    
+    const clientX = e.type === 'touchstart' ? e.touches[0].clientX : e.clientX;
+    const clientY = e.type === 'touchstart' ? e.touches[0].clientY : e.clientY;
+    
+    const rect = container.getBoundingClientRect();
+    dragOffset.x = clientX - rect.left;
+    dragOffset.y = clientY - rect.top;
+    
+    // Add global event listeners
+    document.addEventListener('mousemove', handleDrag);
+    document.addEventListener('mouseup', stopDrag);
+    document.addEventListener('touchmove', handleDrag, { passive: false });
+    document.addEventListener('touchend', stopDrag);
+    
+    // Prevent text selection while dragging
+    document.body.style.userSelect = 'none';
+}
+
+function handleDrag(e) {
+    if (!isDragging) return;
+    
+    e.preventDefault();
+    const container = document.querySelector('#ytp-floating-container');
+    if (!container) return;
+    
+    const clientX = e.type === 'touchmove' ? e.touches[0].clientX : e.clientX;
+    const clientY = e.type === 'touchmove' ? e.touches[0].clientY : e.clientY;
+    
+    // Calculate new position
+    const newX = clientX - dragOffset.x;
+    const newY = clientY - dragOffset.y;
+    
+    // Get viewport dimensions
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const containerRect = container.getBoundingClientRect();
+    
+    // Constrain to viewport bounds
+    const constrainedX = Math.max(0, Math.min(newX, viewportWidth - containerRect.width));
+    const constrainedY = Math.max(0, Math.min(newY, viewportHeight - containerRect.height));
+    
+    // Update position (convert to bottom/left coordinates for consistency)
+    containerPosition.x = constrainedX;
+    containerPosition.y = viewportHeight - constrainedY - containerRect.height;
+    
+    updateContainerPosition(container);
+}
+
+function stopDrag() {
+    if (!isDragging) return;
+    
+    isDragging = false;
+    const container = document.querySelector('#ytp-floating-container');
+    if (container) {
+        container.classList.remove('dragging');
+    }
+    
+    // Remove global event listeners
+    document.removeEventListener('mousemove', handleDrag);
+    document.removeEventListener('mouseup', stopDrag);
+    document.removeEventListener('touchmove', handleDrag);
+    document.removeEventListener('touchend', stopDrag);
+    
+    // Restore text selection
+    document.body.style.userSelect = '';
+    
+    // Save position to localStorage
+    localStorage.setItem('ytp-container-position', JSON.stringify(containerPosition));
+    
+    console.log('YTP: Container position saved:', containerPosition);
+}
+
+function updateContainerPosition(container) {
+    if (!container) return;
+    
+    container.style.left = containerPosition.x + 'px';
+    container.style.bottom = containerPosition.y + 'px';
+    container.style.top = 'auto';
+    container.style.right = 'auto';
+}
+
+function resetContainerPosition(container) {
+    if (!container) return;
+    
+    // Reset to default position
+    containerPosition = { x: 20, y: 20 };
+    updateContainerPosition(container);
+    
+    // Save the reset position
+    localStorage.setItem('ytp-container-position', JSON.stringify(containerPosition));
+    
+    console.log('YTP: Container position reset to default');
 }
 
 function repositionButtons() {
@@ -1522,6 +1759,9 @@ function addButtons() {
         
         // Append to body for fixed positioning
         document.body.appendChild(targetContainer);
+        
+        // Make the container draggable
+        makeDraggable(targetContainer);
     }
     
     if (targetContainer) {
