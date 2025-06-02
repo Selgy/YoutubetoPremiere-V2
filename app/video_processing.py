@@ -23,6 +23,7 @@ import json
 import tempfile
 import shutil
 from yt_dlp.utils import download_range_func  # Importer la fonction correcte
+import urllib.parse as urlparse
 
 
 
@@ -742,8 +743,6 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             ydl_opts['http_headers'] = {'User-Agent': user_agent}
             logging.info("Using User-Agent from extension for clip download")
         
-        logging.info(f"Download options: {ydl_opts}")
-        
         # Download with yt-dlp
         # Configure stdout/stderr to prevent Windows pipe issues
         import contextlib
@@ -1175,7 +1174,39 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
         return None
 
     try:
-                        # Emit initial status        socketio.emit('progress', {'progress': '0', 'type': 'audio'})
+        # Clean the URL first - remove playlist and other problematic parameters
+        parsed_url = urlparse.urlparse(video_url)
+        
+        # Keep only essential parameters for YouTube URLs
+        if 'youtube.com' in parsed_url.netloc or 'youtu.be' in parsed_url.netloc:
+            query_params = urlparse.parse_qs(parsed_url.query)
+            # Keep only the video ID and essential parameters
+            cleaned_params = {}
+            if 'v' in query_params:
+                cleaned_params['v'] = query_params['v']
+            elif 't' in query_params:  # Keep time parameter if present
+                cleaned_params['t'] = query_params['t']
+            
+            # Rebuild clean URL
+            clean_query = urlparse.urlencode(cleaned_params, doseq=True)
+            clean_url = urlparse.urlunparse((
+                parsed_url.scheme,
+                parsed_url.netloc, 
+                parsed_url.path,
+                parsed_url.params,
+                clean_query,
+                parsed_url.fragment
+            ))
+            
+            # For youtu.be URLs, extract video ID from path
+            if 'youtu.be' in parsed_url.netloc and parsed_url.path:
+                video_id = parsed_url.path.lstrip('/')
+                clean_url = f"https://www.youtube.com/watch?v={video_id}"
+            
+            logging.info(f"Cleaned URL from '{video_url}' to '{clean_url}'")
+            video_url = clean_url
+        
+        # Emit initial status        socketio.emit('progress', {'progress': '0', 'type': 'audio'})
         
         # Check if download path exists or try to get default path
         if not download_path:
@@ -1242,10 +1273,21 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
             'extractor_retries': 5,
             'file_access_retries': 5,  # Retry file access operations
             'nocheckcertificate': True,  # Skip certificate validation which can fail in some environments
-            'ignoreerrors': True,  # Continue downloading even if some errors occur
+            'ignoreerrors': False,  # Don't ignore errors during extraction phase
             'geo_bypass': True,  # Bypass geographic restrictions
             'geo_bypass_country': 'US',  # Use US as bypass country
             'age_limit': None,  # Don't apply age limits
+            'quiet': False,  # Allow some output for debugging
+            'no_warnings': False,  # Show warnings to help debug issues
+            'writesubtitles': False,  # Don't download subtitles for audio
+            'writeautomaticsub': False,  # Don't download auto subtitles
+            'writedescription': False,  # Don't write description
+            'writeinfojson': False,  # Don't write info JSON
+            'writethumbnail': False,  # Don't download thumbnail
+            'playlistend': 1,  # Only download first video if URL is accidentally a playlist
+            'playliststart': 1,  # Start from first video
+            'noplaylist': True,  # Explicitly ignore playlists
+            'extract_flat': False,  # Don't use flat extraction - we need full info
             'postprocessor_args': [
                 '-metadata', f'comment={video_url}',
                 '-y',  # Overwrite output files
@@ -1285,9 +1327,34 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
                 # Extract info first to verify URL is valid and get title
+                logging.info(f"Attempting to extract info for URL: {video_url}")
                 info = ydl.extract_info(video_url, download=False)
+                
                 if not info:
-                    raise Exception("Could not extract video information")
+                    error_msg = "Could not extract video information - yt-dlp returned None"
+                    logging.error(error_msg)
+                    logging.error(f"URL used: {video_url}")
+                    logging.error(f"yt-dlp options: {ydl_opts}")
+                    raise Exception(error_msg)
+                
+                # Log extracted info for debugging
+                logging.info(f"Successfully extracted info for: {info.get('title', 'Unknown title')}")
+                logging.info(f"Video ID: {info.get('id', 'Unknown ID')}")
+                logging.info(f"Duration: {info.get('duration', 'Unknown duration')} seconds")
+                
+                # Verify this is actually a video and not a playlist or channel
+                if info.get('_type') == 'playlist':
+                    error_msg = "URL points to a playlist, not a single video. Please use a direct video URL."
+                    logging.error(error_msg)
+                    raise Exception(error_msg)
+                
+                # Check if audio formats are available
+                formats = info.get('formats', [])
+                audio_formats = [f for f in formats if f.get('acodec') != 'none']
+                if not audio_formats:
+                    error_msg = "No audio formats available for this video"
+                    logging.error(error_msg)
+                    raise Exception(error_msg)
 
                 # Create unique filename
                 title = info.get('title', 'audio')

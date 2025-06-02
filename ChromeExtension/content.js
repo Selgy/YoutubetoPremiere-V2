@@ -817,7 +817,15 @@ function updateButtonsVisibility() {
     const floatingContainer = document.querySelector('#ytp-floating-container');
     
     if (floatingContainer) {
-        if (isVideoPage()) {
+        // Check if we're in fullscreen mode
+        const isFullscreen = document.fullscreenElement || 
+                           document.webkitFullscreenElement || 
+                           document.mozFullScreenElement || 
+                           document.msFullscreenElement ||
+                           // Check if YouTube player is in fullscreen
+                           document.querySelector('.ytp-fullscreen');
+        
+        if (isVideoPage() && !isFullscreen) {
             floatingContainer.style.display = 'block';
             floatingContainer.style.visibility = 'visible';
         } else {
@@ -1594,6 +1602,34 @@ const setupObservers = () => {
         childList: true, 
         subtree: true
     });
+    
+    // Add fullscreen event listeners to hide/show buttons
+    document.addEventListener('fullscreenchange', updateButtonsVisibility);
+    document.addEventListener('webkitfullscreenchange', updateButtonsVisibility);
+    document.addEventListener('mozfullscreenchange', updateButtonsVisibility);
+    document.addEventListener('MSFullscreenChange', updateButtonsVisibility);
+    
+    // Also listen for YouTube-specific fullscreen changes
+    const ytPlayerObserver = new MutationObserver(() => {
+        updateButtonsVisibility();
+    });
+    
+    // Observe changes in the YouTube player for fullscreen class changes
+    const checkForYtPlayer = () => {
+        const ytPlayer = document.querySelector('#movie_player, .html5-video-player');
+        if (ytPlayer) {
+            ytPlayerObserver.observe(ytPlayer, { 
+                attributes: true, 
+                attributeFilter: ['class'],
+                subtree: false
+            });
+        } else {
+            // If player not found, retry in a bit
+            setTimeout(checkForYtPlayer, 1000);
+        }
+    };
+    
+    checkForYtPlayer();
 };
 
 // Initial call and observer setup
