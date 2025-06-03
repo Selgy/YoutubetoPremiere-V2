@@ -436,8 +436,8 @@ styleSheet.textContent = `
         height: 36px;
         cursor: pointer;
         position: relative;
-        margin-left: 4px;
-        margin-right: 4px;
+        margin-left: 0;
+        margin-right: 8px;
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         display: inline-flex;
         align-items: center;
@@ -449,6 +449,7 @@ styleSheet.textContent = `
         font-size: 18px;
         z-index: 1000;
         flex-shrink: 0;
+        order: -1000;
     }
 
     .ytp-toggle-button:hover {
@@ -470,9 +471,9 @@ styleSheet.textContent = `
         max-width: 500px;
         overflow: visible;
         padding: 4px;
-        margin: 0 4px;
+        margin: 0 0 0 4px;
         flex-shrink: 0 !important;
-        order: -999 !important;
+        order: 999 !important;
         position: relative !important;
         z-index: 100 !important;
     }
@@ -561,7 +562,7 @@ styleSheet.textContent = `
         background: rgba(0, 0, 0, 0.2) !important;
         backdrop-filter: blur(10px) !important;
         border-radius: 18px !important;
-        padding: 4px 4px 4px 0px !important;
+        padding: 4px 0px 4px 4px !important;
         border: 1px solid rgba(255, 255, 255, 0.1) !important;
         transition: padding 0.3s ease !important;
         position: relative !important;
@@ -606,8 +607,8 @@ styleSheet.textContent = `
     }
 
     .ytp-floating-container .ytp-main-container .ytp-toggle-button {
-        margin-left: 8px;
-        margin-right: 0;
+        margin-left: 0;
+        margin-right: 8px;
         width: 40px;
         height: 36px;
         vertical-align: middle;
@@ -1774,7 +1775,7 @@ function addButtons() {
             // Create toggle button
             const toggleButton = createToggleButton();
             
-            // Add both containers to main container - toggle button first (left side)
+            // Add toggle button FIRST (left side), then buttons container
             mainContainer.appendChild(toggleButton);
             mainContainer.appendChild(buttonsContainer);
             
