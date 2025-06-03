@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Youtube to Premiere Pro V2",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "description": "Import YouTube videos directly into Adobe Premiere Pro",
   "permissions": [
     "activeTab",
@@ -24,7 +24,9 @@
   "action": {
     "default_icon": {
       "48": "icon.png"
-    }
+    },
+    "default_popup": "popup.html",
+    "default_title": "YouTube to Premiere - Paramètres"
   },
   "background": {
     "service_worker": "background.js"

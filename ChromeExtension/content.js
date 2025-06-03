@@ -343,30 +343,6 @@ styleSheet.textContent = `
         }
     }
 
-    @keyframes failure {
-        0% { 
-            transform: scale(1); 
-            background: linear-gradient(135deg, #2e2f77 0%, #4e52ff 100%); 
-        }
-        25% { 
-            transform: translateX(-5px) scale(1.02); 
-            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-        }
-        50% { 
-            transform: translateX(5px) scale(1.02); 
-            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-            box-shadow: 0 8px 25px rgba(239, 68, 68, 0.6);
-        }
-        75% { 
-            transform: translateX(-5px) scale(1.02); 
-            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-        }
-        100% { 
-            transform: translateX(0) scale(1); 
-            background: linear-gradient(135deg, #2e2f77 0%, #4e52ff 100%); 
-        }
-    }
-
     .download-button.success {
         animation: success 1.5s ease forwards;
     }
@@ -568,47 +544,12 @@ styleSheet.textContent = `
     
     /* Drag handle for moving the container */
     .ytp-drag-handle {
-        position: absolute !important;
-        top: -12px !important;
-        left: 0 !important;
-        right: 0 !important;
-        margin: 0 auto !important;
-        width: 30px !important;
-        height: 12px !important;
-        background: rgba(255, 255, 255, 0.3) !important;
-        border-radius: 6px 6px 0 0 !important;
-        cursor: grab !important;
-        transition: background 0.2s ease !important;
-        z-index: 10002 !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
+        display: none !important;
     }
     
-    .ytp-drag-handle::before {
-        content: '••' !important;
-        color: rgba(255, 255, 255, 0.6) !important;
-        font-size: 8px !important;
-        line-height: 1 !important;
-        letter-spacing: 1px !important;
-        text-align: center !important;
-        display: block !important;
-        width: 100% !important;
-    }
-    
-    .ytp-drag-handle:hover {
-        background: rgba(255, 255, 255, 0.5) !important;
-    }
-    
-    .ytp-drag-handle:active {
-        cursor: grabbing !important;
-        background: rgba(255, 255, 255, 0.7) !important;
-    }
-    
-    .ytp-floating-container.dragging {
-        opacity: 0.8 !important;
-        transform: scale(1.02) !important;
-        transition: none !important;
+    /* Pin button for fixing position */
+    .ytp-pin-button {
+        display: none !important;
     }
     
     .ytp-floating-container .ytp-main-container {
@@ -624,6 +565,17 @@ styleSheet.textContent = `
         border: 1px solid rgba(255, 255, 255, 0.1) !important;
         transition: padding 0.3s ease !important;
         position: relative !important;
+        cursor: move !important;
+    }
+    
+    .ytp-floating-container.pinned {
+        position: absolute !important;
+    }
+    
+    .ytp-floating-container.dragging {
+        opacity: 0.8 !important;
+        transform: scale(1.02) !important;
+        transition: none !important;
     }
     
     /* Adjust padding when buttons are hidden */
@@ -634,26 +586,6 @@ styleSheet.textContent = `
     /* Center toggle button when buttons are hidden */
     .ytp-floating-container .ytp-main-container.buttons-collapsed .ytp-toggle-button {
         margin: 0 !important;
-    }
-    
-    /* Adjust drag handle position when container is collapsed */
-    .ytp-floating-container.buttons-collapsed .ytp-drag-handle,
-    .ytp-main-container.buttons-collapsed ~ .ytp-drag-handle,
-    .ytp-floating-container .ytp-main-container.buttons-collapsed + .ytp-drag-handle {
-        left: 50% !important;
-        right: auto !important;
-        margin: 0 !important;
-        transform: translateX(40%) !important;
-        width: 24px !important;
-    }
-
-    /* Force nos boutons à rester visibles dans notre container flottant */
-    .ytp-floating-container .ytp-buttons-container,
-    .ytp-floating-container .download-button,
-    .ytp-floating-container .ytp-toggle-button {
-        position: relative !important;
-        visibility: visible !important;
-        display: inline-flex !important;
     }
 
     /* Match YouTube's like/dislike button styling exactly */
@@ -810,8 +742,6 @@ styleSheet.textContent = `
         color: white;
     }
 
-
-
     /* Mobile responsiveness */
     @media (max-width: 768px) {
         .download-button {
@@ -883,13 +813,18 @@ function updateButtonsVisibility() {
                            // Check if YouTube player is in fullscreen
                            document.querySelector('.ytp-fullscreen');
         
-        if (isVideoPage() && !isFullscreen) {
-            floatingContainer.style.display = 'block';
-            floatingContainer.style.visibility = 'visible';
-        } else {
-            floatingContainer.style.display = 'none';
-            floatingContainer.style.visibility = 'hidden';
-        }
+        // Check auto-hide setting
+        chrome.storage.local.get(['ytp-auto-hide'], (result) => {
+            const autoHide = result['ytp-auto-hide'] !== false; // Default to true
+            
+            if (isVideoPage() && (!isFullscreen || !autoHide)) {
+                floatingContainer.style.display = 'block';
+                floatingContainer.style.visibility = 'visible';
+            } else {
+                floatingContainer.style.display = 'none';
+                floatingContainer.style.visibility = 'hidden';
+            }
+        });
     }
 }
 
@@ -1035,6 +970,8 @@ function initializeSocket() {
                 }
 
                 setTimeout(() => {
+                    button.classList.remove('failure');
+                    buttonStates[buttonType].isDownloading = false;
                     resetButtonState(button);
                 }, 3000);
 
@@ -1520,29 +1457,8 @@ function toggleButtonsVisibility() {
 }
 
 function adjustDragHandlePosition() {
-    const dragHandle = document.querySelector('.ytp-drag-handle');
-    const mainContainer = document.getElementById('ytp-main-container');
-    
-    if (!dragHandle || !mainContainer) return;
-    
-    // Wait for the transition to complete before adjusting
-    setTimeout(() => {
-        if (mainContainer.classList.contains('buttons-collapsed')) {
-            // When collapsed, center over the toggle button only
-            dragHandle.style.left = '50%';
-            dragHandle.style.right = 'auto';
-            dragHandle.style.margin = '0';
-            dragHandle.style.transform = 'translateX(-10%)';
-            dragHandle.style.width = '24px';
-        } else {
-            // When expanded, center over the entire container
-            dragHandle.style.left = '0';
-            dragHandle.style.right = '0';
-            dragHandle.style.margin = '0 auto';
-            dragHandle.style.transform = 'none';
-            dragHandle.style.width = '30px';
-        }
-    }, 100);
+    // No longer needed - controls are integrated
+    return;
 }
 
 function showFirstTimeNotification() {
@@ -1569,42 +1485,50 @@ function positionFloatingButtons() {
 let isDragging = false;
 let dragOffset = { x: 0, y: 0 };
 let containerPosition = { x: 20, y: 20 }; // Default bottom-left position
+let isPinned = false; // Track pin state
 
 function makeDraggable(container) {
     if (!container) return;
     
-    // Load saved position from localStorage
-    const savedPosition = localStorage.getItem('ytp-container-position');
-    if (savedPosition) {
-        try {
-            containerPosition = JSON.parse(savedPosition);
-            updateContainerPosition(container);
-        } catch (e) {
-            console.log('YTP: Could not load saved position, using default');
+    // Load saved pin state first
+    chrome.storage.local.get(['ytp-panel-pinned'], (result) => {
+        isPinned = result['ytp-panel-pinned'] === true;
+        
+        // Then load saved position
+        const savedPosition = localStorage.getItem('ytp-container-position');
+        if (savedPosition) {
+            try {
+                containerPosition = JSON.parse(savedPosition);
+            } catch (e) {
+                console.log('YTP: Could not load saved position, using default');
+                containerPosition = { x: 20, y: 20 };
+            }
         }
+        
+        // Apply the correct positioning based on pin state
+        updateContainerPositioning(container);
+        console.log('YTP: Loaded position:', containerPosition, 'isPinned:', isPinned);
+    });
+    
+    // Event listeners for dragging
+    const mainContainer = container.querySelector('.ytp-main-container');
+    
+    // Safety check - only add event listeners if mainContainer exists
+    if (mainContainer) {
+        // Make entire main container draggable
+        mainContainer.addEventListener('mousedown', startDrag);
+        mainContainer.addEventListener('touchstart', startDrag, { passive: false });
+    } else {
+        console.log('YTP: mainContainer not found, will retry adding drag listeners');
+        // Retry after a short delay
+        setTimeout(() => {
+            const retryMainContainer = container.querySelector('.ytp-main-container');
+            if (retryMainContainer) {
+                retryMainContainer.addEventListener('mousedown', startDrag);
+                retryMainContainer.addEventListener('touchstart', startDrag, { passive: false });
+            }
+        }, 100);
     }
-    
-    // Create drag handle
-    const dragHandle = document.createElement('div');
-    dragHandle.className = 'ytp-drag-handle';
-    dragHandle.title = 'Glissez pour déplacer • Double-clic pour remettre en bas à gauche';
-    container.appendChild(dragHandle);
-    
-    // Add drag functionality to both the handle and the container
-    [dragHandle, container].forEach(element => {
-        element.addEventListener('mousedown', startDrag);
-        element.addEventListener('touchstart', startDrag, { passive: false });
-    });
-    
-    // Double-click to reset position
-    dragHandle.addEventListener('dblclick', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        resetContainerPosition(container);
-    });
-    
-    // Adjust initial position based on current state
-    adjustDragHandlePosition();
 }
 
 function startDrag(e) {
@@ -1653,20 +1577,49 @@ function handleDrag(e) {
     const newX = clientX - dragOffset.x;
     const newY = clientY - dragOffset.y;
     
-    // Get viewport dimensions
+    // Get viewport and container dimensions
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
     const containerRect = container.getBoundingClientRect();
     
-    // Constrain to viewport bounds
-    const constrainedX = Math.max(0, Math.min(newX, viewportWidth - containerRect.width));
-    const constrainedY = Math.max(0, Math.min(newY, viewportHeight - containerRect.height));
-    
-    // Update position (convert to bottom/left coordinates for consistency)
-    containerPosition.x = constrainedX;
-    containerPosition.y = viewportHeight - constrainedY - containerRect.height;
-    
-    updateContainerPosition(container);
+    if (isPinned) {
+        // Absolute positioning - position relative to page
+        const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+        const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+        
+        // Convert viewport coordinates to page coordinates
+        const pageX = newX + scrollLeft;
+        const pageY = newY + scrollTop;
+        
+        // Constrain to reasonable bounds (allow some scrolling)
+        const constrainedX = Math.max(0, Math.min(pageX, viewportWidth - containerRect.width));
+        const constrainedY = Math.max(0, pageY);
+        
+        containerPosition.x = constrainedX;
+        containerPosition.y = constrainedY;
+        
+        // Apply position
+        container.style.left = containerPosition.x + 'px';
+        container.style.top = containerPosition.y + 'px';
+        container.style.bottom = 'auto';
+        container.style.right = 'auto';
+        
+    } else {
+        // Fixed positioning - position relative to viewport
+        // Constrain to viewport bounds
+        const constrainedX = Math.max(0, Math.min(newX, viewportWidth - containerRect.width));
+        const constrainedY = Math.max(0, Math.min(newY, viewportHeight - containerRect.height));
+        
+        // For fixed positioning, we use bottom instead of top
+        containerPosition.x = constrainedX;
+        containerPosition.y = viewportHeight - constrainedY - containerRect.height;
+        
+        // Apply position
+        container.style.left = containerPosition.x + 'px';
+        container.style.bottom = containerPosition.y + 'px';
+        container.style.top = 'auto';
+        container.style.right = 'auto';
+    }
 }
 
 function stopDrag() {
@@ -1696,28 +1649,51 @@ function stopDrag() {
 function updateContainerPosition(container) {
     if (!container) return;
     
-    container.style.left = containerPosition.x + 'px';
-    container.style.bottom = containerPosition.y + 'px';
-    container.style.top = 'auto';
-    container.style.right = 'auto';
+    if (isPinned) {
+        // Absolute positioning - follows page scroll
+        container.style.position = 'absolute';
+        container.style.left = containerPosition.x + 'px';
+        container.style.top = containerPosition.y + 'px';
+        container.style.bottom = 'auto';
+        container.style.right = 'auto';
+        container.classList.add('pinned');
+    } else {
+        // Fixed positioning - stays in viewport
+        container.style.position = 'fixed';
+        container.style.left = containerPosition.x + 'px';
+        container.style.bottom = containerPosition.y + 'px';
+        container.style.top = 'auto';
+        container.style.right = 'auto';
+        container.classList.remove('pinned');
+    }
 }
 
-function resetContainerPosition(container) {
+function updateContainerPositioning(container) {
     if (!container) return;
     
-    // Reset to default position
-    containerPosition = { x: 20, y: 20 };
-    updateContainerPosition(container);
+    if (isPinned) {
+        // Absolute positioning - follows page scroll
+        container.style.position = 'absolute';
+        container.classList.add('pinned');
+        
+        // For absolute positioning, containerPosition should already be in page coordinates
+        container.style.left = containerPosition.x + 'px';
+        container.style.top = containerPosition.y + 'px';
+        container.style.bottom = 'auto';
+        container.style.right = 'auto';
+    } else {
+        // Fixed positioning - stays in viewport
+        container.style.position = 'fixed';
+        container.classList.remove('pinned');
+        
+        // For fixed positioning, use bottom instead of top
+        container.style.left = containerPosition.x + 'px';
+        container.style.bottom = containerPosition.y + 'px';
+        container.style.top = 'auto';
+        container.style.right = 'auto';
+    }
     
-    // Save the reset position
-    localStorage.setItem('ytp-container-position', JSON.stringify(containerPosition));
-    
-    console.log('YTP: Container position reset to default');
-}
-
-function repositionButtons() {
-    // Fixed positioning means no repositioning needed
-    console.log('YTP: Buttons use fixed positioning, no repositioning needed');
+    console.log('YTP: Updated positioning - isPinned:', isPinned, 'position:', containerPosition);
 }
 
 function checkAvailableSpace() {
@@ -1759,9 +1735,6 @@ function addButtons() {
         
         // Append to body for fixed positioning
         document.body.appendChild(targetContainer);
-        
-        // Make the container draggable
-        makeDraggable(targetContainer);
     }
     
     if (targetContainer) {
@@ -1811,6 +1784,9 @@ function addButtons() {
             
             // Add to container
             targetContainer.appendChild(mainContainer);
+            
+            // Now make the container draggable AFTER mainContainer is added
+            makeDraggable(targetContainer);
             
             // Simple responsive check for mobile
             window.addEventListener('resize', checkAvailableSpace);
@@ -1876,7 +1852,276 @@ const setupObservers = () => {
 addButtons();
 setupObservers();
 
+// Message listener for popup communication
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === 'YTP_POPUP_MESSAGE') {
+        console.log('YTP: Received message from popup:', message);
+        
+        switch (message.action) {
+            case 'TOGGLE_PANEL':
+                handleTogglePanel(message.data.visible);
+                break;
+            case 'TOGGLE_PIN':
+                handleTogglePin(message.data.pinned);
+                break;
+            case 'UPDATE_BUTTON_SIZE':
+                handleUpdateButtonSize(message.data.size);
+                break;
+            case 'UPDATE_AUTO_HIDE':
+                handleUpdateAutoHide(message.data.autoHide);
+                break;
+            case 'RESET_POSITION':
+                handleResetPosition(message.data);
+                break;
+            case 'CENTER_POSITION':
+                handleCenterPosition();
+                break;
+            case 'RESET_ALL_SETTINGS':
+                handleResetAllSettings(message.data);
+                break;
+        }
+        
+        sendResponse({ success: true });
+        return true; // Keep message channel open for async response
+    }
+});
 
+// Functions to handle popup messages
+function handleTogglePanel(visible) {
+    const container = document.querySelector('#ytp-floating-container');
+    if (container) {
+        if (visible) {
+            container.style.display = 'block';
+            container.style.visibility = 'visible';
+        } else {
+            container.style.display = 'none';
+            container.style.visibility = 'hidden';
+        }
+        
+        // Save to storage
+        chrome.storage.local.set({ 'ytp-panel-visible': visible });
+        console.log('YTP: Panel visibility set to:', visible);
+    }
+}
+
+function handleTogglePin(pinned) {
+    const container = document.querySelector('#ytp-floating-container');
+    if (container) {
+        const rect = container.getBoundingClientRect();
+        
+        if (pinned && !isPinned) {
+            // Switching from fixed to absolute positioning
+            const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+            const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+            
+            // Convert fixed coordinates to absolute coordinates
+            containerPosition.x = rect.left + scrollLeft;
+            containerPosition.y = rect.top + scrollTop;
+            
+            console.log('YTP: Converting to absolute - new position:', containerPosition);
+            
+        } else if (!pinned && isPinned) {
+            // Switching from absolute to fixed positioning
+            const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+            const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+            
+            // Convert absolute coordinates to fixed coordinates
+            containerPosition.x = Math.max(0, containerPosition.x - scrollLeft);
+            containerPosition.y = Math.max(0, window.innerHeight - (containerPosition.y - scrollTop) - rect.height);
+            
+            console.log('YTP: Converting to fixed - new position:', containerPosition);
+        }
+        
+        isPinned = pinned;
+        updateContainerPositioning(container);
+        
+        // Save both the pin state and the new position
+        chrome.storage.local.set({ 'ytp-panel-pinned': pinned });
+        localStorage.setItem('ytp-container-position', JSON.stringify(containerPosition));
+        
+        console.log('YTP: Panel pinned set to:', pinned);
+        
+        // Notify popup of the change
+        notifyPopup('PIN_TOGGLED', { pinned: pinned });
+    }
+}
+
+function handleUpdateButtonSize(size) {
+    const mainContainer = document.getElementById('ytp-main-container');
+    if (mainContainer) {
+        // Remove all size classes
+        mainContainer.classList.remove('compact', 'mini', 'icon-only', 'micro');
+        
+        // Add appropriate class based on size
+        const sizeClasses = ['', 'compact', 'mini', 'micro'];
+        if (size > 0 && size < sizeClasses.length) {
+            mainContainer.classList.add(sizeClasses[size]);
+        }
+        
+        // Save to storage
+        chrome.storage.local.set({ 'ytp-button-size': size.toString() });
+        console.log('YTP: Button size updated to:', size);
+    }
+}
+
+function handleUpdateAutoHide(autoHide) {
+    // Store auto-hide preference
+    chrome.storage.local.set({ 'ytp-auto-hide': autoHide });
+    console.log('YTP: Auto-hide set to:', autoHide);
+    
+    // Update visibility logic (this will be used in updateButtonsVisibility function)
+    updateButtonsVisibility();
+}
+
+function handleResetPosition(position) {
+    const container = document.querySelector('#ytp-floating-container');
+    if (container) {
+        if (isPinned) {
+            // For absolute positioning, set position relative to page
+            const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+            containerPosition = {
+                x: position.x,
+                y: position.y + scrollTop
+            };
+        } else {
+            // For fixed positioning, use the position as-is
+            containerPosition = { ...position };
+        }
+        
+        updateContainerPositioning(container);
+        
+        // Save to localStorage
+        localStorage.setItem('ytp-container-position', JSON.stringify(containerPosition));
+        console.log('YTP: Position reset to:', containerPosition);
+    }
+}
+
+function handleCenterPosition() {
+    const container = document.querySelector('#ytp-floating-container');
+    if (container) {
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        const rect = container.getBoundingClientRect();
+        
+        if (isPinned) {
+            // For absolute positioning, center relative to page
+            const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+            const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+            
+            containerPosition = {
+                x: scrollLeft + (viewportWidth - rect.width) / 2,
+                y: scrollTop + (viewportHeight - rect.height) / 2
+            };
+        } else {
+            // For fixed positioning, center in viewport
+            containerPosition = {
+                x: (viewportWidth - rect.width) / 2,
+                y: (viewportHeight - rect.height) / 2
+            };
+        }
+        
+        updateContainerPositioning(container);
+        localStorage.setItem('ytp-container-position', JSON.stringify(containerPosition));
+        console.log('YTP: Position centered:', containerPosition);
+    }
+}
+
+function handleResetAllSettings(settings) {
+    // Reset panel visibility
+    if (settings['ytp-panel-visible'] !== undefined) {
+        const visible = settings['ytp-panel-visible'];
+        handleTogglePanel(visible);
+        buttonsVisible = visible;
+    }
+    
+    // Reset panel pin state
+    if (settings['ytp-panel-pinned'] !== undefined) {
+        handleTogglePin(settings['ytp-panel-pinned']);
+    }
+    
+    // Reset button size
+    if (settings['ytp-button-size'] !== undefined) {
+        handleUpdateButtonSize(parseInt(settings['ytp-button-size']));
+    }
+    
+    // Reset auto-hide
+    if (settings['ytp-auto-hide'] !== undefined) {
+        handleUpdateAutoHide(settings['ytp-auto-hide']);
+    }
+    
+    // Reset position
+    if (settings['ytp-container-position'] !== undefined) {
+        try {
+            const position = JSON.parse(settings['ytp-container-position']);
+            handleResetPosition(position);
+        } catch (e) {
+            console.log('YTP: Could not parse reset position');
+        }
+    }
+    
+    // Reset buttons visibility
+    if (settings['ytp-buttons-visible'] !== undefined) {
+        buttonsVisible = settings['ytp-buttons-visible'] === 'true';
+        localStorage.setItem('ytp-buttons-visible', buttonsVisible.toString());
+        toggleButtonsVisibility();
+    }
+    
+    console.log('YTP: All settings reset applied');
+}
+
+// Function to notify popup of changes
+function notifyPopup(action, data = {}) {
+    chrome.runtime.sendMessage({
+        type: 'YTP_CONTENT_MESSAGE',
+        action: action,
+        data: data
+    }, (response) => {
+        if (chrome.runtime.lastError) {
+            // Popup might not be open, that's okay
+            console.log('YTP: Popup not responding (probably closed)');
+        }
+    });
+}
+
+// Load settings from chrome.storage on initialization
+function loadSettingsFromStorage() {
+    chrome.storage.local.get([
+        'ytp-panel-visible',
+        'ytp-panel-pinned',
+        'ytp-button-size',
+        'ytp-auto-hide'
+    ], (result) => {
+        console.log('YTP: Loaded settings from storage:', result);
+        
+        // Apply panel visibility
+        if (result['ytp-panel-visible'] !== undefined) {
+            handleTogglePanel(result['ytp-panel-visible']);
+        }
+        
+        // Apply panel pin state
+        if (result['ytp-panel-pinned'] !== undefined) {
+            handleTogglePin(result['ytp-panel-pinned']);
+        }
+        
+        // Apply button size
+        if (result['ytp-button-size'] !== undefined) {
+            handleUpdateButtonSize(parseInt(result['ytp-button-size']));
+        }
+        
+        // Auto-hide is handled in updateButtonsVisibility
+    });
+}
+
+// Load settings when the script initializes
+setTimeout(loadSettingsFromStorage, 1000);
+
+// Update the stopDrag function to notify popup of position changes
+const originalStopDrag = stopDrag;
+stopDrag = function() {
+    originalStopDrag();
+    // Notify popup that position was updated
+    notifyPopup('POSITION_UPDATED', containerPosition);
+};
 
 // Simple navigation listener for YouTube page changes
 document.addEventListener('yt-navigate-finish', () => {
