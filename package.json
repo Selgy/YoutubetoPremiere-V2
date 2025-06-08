@@ -1,6 +1,6 @@
 {
   "name": "youtube-to-premiere",
-  "version": "2.0.0",
+  "version": "3.0.4",
   "description": "Bridge entre YouTube et Adobe Premiere Pro",
   "main": "index.js",
   "license": "MIT",
@@ -8,7 +8,7 @@
   "scripts": {
     "clean": "node tools/clean.js",
     "clean:temp": "node tools/clean.js temp",
-    "clean:build": "node tools/clean.js build", 
+    "clean:build": "node tools/clean.js build",
     "clean:cache": "node tools/clean.js cache",
     "clean:all": "node tools/clean.js all",
     "build": "node tools/build.js",
