@@ -256,7 +256,9 @@ ffmpeg_found = False
 ffmpeg_binary = 'ffmpeg.exe' if sys.platform == 'win32' else 'ffmpeg'
 for ffmpeg_dir in possible_ffmpeg_locations:
     if os.path.exists(os.path.join(ffmpeg_dir, ffmpeg_binary)):
-        os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
+        # Safely handle PATH environment variable
+        current_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = ffmpeg_dir + os.pathsep + current_path
         logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
         ffmpeg_found = True
         break
@@ -290,8 +292,8 @@ try:
         ping_interval=25000,
         max_http_buffer_size=100 * 1024 * 1024,  # 100MB
         transports=['websocket', 'polling'],
-        logger=True,
-        engineio_logger=True,
+        logger=False,
+        engineio_logger=False,
         always_connect=True,
         reconnection=True,
         reconnection_attempts=-1,  # Use -1 for unlimited reconnection attempts
@@ -502,12 +504,12 @@ def run_server():
     ))
     server_thread.start()
     
-    # Open browser on macOS if running as standalone
-    if sys.platform == 'darwin' and getattr(sys, 'frozen', False):
-        try:
-            open_url_in_browser(f'http://localhost:3001/health')
-        except:
-            pass
+    # Browser opening disabled - not needed for CEP extension
+    # if sys.platform == 'darwin' and getattr(sys, 'frozen', False):
+    #     try:
+    #         open_url_in_browser(f'http://localhost:3001/health')
+    #     except:
+    #         pass
 
     premiere_monitor_thread = threading.Thread(target=monitor_premiere_and_shutdown_wrapper)
     premiere_monitor_thread.start()

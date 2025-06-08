@@ -175,9 +175,9 @@ export async function setupVideoImportHandler(csInterface) {
                 return;
             }
 
-            // Normalize path for Windows
-            let normalizedPath = data.path.replace(/\//g, '\\');
-            console.log('Normalized path for import:', normalizedPath);
+            // Use original path as-is (no normalization needed for macOS)
+            let normalizedPath = data.path;
+            console.log('Path for import:', normalizedPath);
 
             try {
                 // Wait a bit to ensure the file is fully written

@@ -6,7 +6,7 @@ import path from "path";
 import fs from 'fs-extra';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { extendscriptConfig } from "./vite.es.config";
+// import { extendscriptConfig } from "./vite.es.config";
 
 const execAsync = promisify(exec);
 
@@ -338,9 +338,9 @@ export default defineConfig({
   },
   build: {
     sourcemap: isPackage ? cepConfig.zxp.sourceMap : cepConfig.build?.sourceMap,
-    watch: process.env.NO_WATCH === 'true' ? null : {
+    watch: process.env.NODE_ENV === 'development' && process.env.NO_WATCH !== 'true' ? {
       include: "src/jsx/**",
-    },
+    } : null,
     rollupOptions: {
       input,
       output: {
@@ -371,15 +371,15 @@ export default defineConfig({
   },
 });
 
-// rollup es3 build
-const outPathExtendscript = path.join("dist", "cep", "jsx", "index.js");
-extendscriptConfig(
-  `src/jsx/index.ts`,
-  outPathExtendscript,
-  cepConfig,
-  extensions,
-  isProduction,
-  isPackage
-);
+// rollup es3 build - temporarily disabled for Vite 6 compatibility
+// const outPathExtendscript = path.join("dist", "cep", "jsx", "index.js");
+// extendscriptConfig(
+//   `src/jsx/index.ts`,
+//   outPathExtendscript,
+//   cepConfig,
+//   extensions,
+//   isProduction,
+//   isPackage
+// );
 
 const currentVersion = process.env.APP_VERSION || '2.1.6';

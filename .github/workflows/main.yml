@@ -6,6 +6,7 @@ on:
       - Pre-released
     tags:
       - 'v*'
+  workflow_dispatch:  # Permet le déclenchement manuel
 
 permissions:
   contents: write
@@ -265,7 +266,7 @@ jobs:
           
           # Build package without signing for now
           PACKAGE_IDENTIFIER="com.selgy.youtubetopremiere"
-          PACKAGE_VERSION="3.0.1"
+          PACKAGE_VERSION="${{ needs.prepare.outputs.version }}"
           PKG_ROOT="./pkgroot"
           OUTPUT_PKG="YoutubetoPremiere.pkg"
           SCRIPTS_DIR="./scripts"
@@ -349,7 +350,8 @@ jobs:
       - name: Download FFmpeg
         run: |
           mkdir ffmpeg
-          curl -L https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full.7z -o ffmpeg.7z
+          # Utiliser un miroir plus fiable si le premier échoue
+          curl -L https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full.7z -o ffmpeg.7z || curl -L https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip -o ffmpeg.zip
 
       - name: Extract FFmpeg
         run: |

@@ -426,6 +426,31 @@ async function startPythonServer() {
                 console.log(`Copying executable from ${sourceExecutable} to safe location: ${safeExecutablePath}`);
                 fs.copyFileSync(sourceExecutable, safeExecutablePath);
                 
+                // Copy the _internal directory that PyInstaller needs
+                const sourceInternalDir = path.join(extensionRoot, 'exec', '_internal');
+                const destInternalDir = path.join(appSupportDir, '_internal');
+                
+                if (fs.existsSync(sourceInternalDir)) {
+                    console.log(`Copying _internal directory to safe location: ${destInternalDir}`);
+                    // Use recursive copy for the entire _internal directory
+                    const copyRecursiveSync = (src, dest) => {
+                        if (fs.statSync(src).isDirectory()) {
+                            if (!fs.existsSync(dest)) {
+                                fs.mkdirSync(dest, { recursive: true });
+                            }
+                            fs.readdirSync(src).forEach(file => {
+                                copyRecursiveSync(path.join(src, file), path.join(dest, file));
+                            });
+                        } else {
+                            fs.copyFileSync(src, dest);
+                        }
+                    };
+                    copyRecursiveSync(sourceInternalDir, destInternalDir);
+                    console.log('Successfully copied _internal directory');
+                } else {
+                    console.warn('_internal directory not found in source location');
+                }
+                
                 // Fix permissions on the safe executable and contents
                 const fixPermissionsCmd = `chmod +x "${safeExecutablePath}" && xattr -d com.apple.quarantine "${safeExecutablePath}" 2>/dev/null || true`;
                 const { error } = await new Promise(resolve => {
@@ -486,7 +511,9 @@ async function startPythonServer() {
                 Python_BACKTRACE: '1', 
                 EXTENSION_ROOT: extensionRoot,
                 PYTHONIOENCODING: 'utf-8',
-                PYTHONUNBUFFERED: '1'
+                PYTHONUNBUFFERED: '1',
+                // Ensure PATH is always available
+                PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin'
             };
             
             if (process.platform === 'darwin') {
@@ -514,13 +541,14 @@ async function startPythonServer() {
                     windowsHide: false // Show window for debugging
                 });
             } else if (process.platform === 'darwin') {
-                // macOS-specific command using AppleScript
-                const appleScriptCommand = `tell application "Finder" to launch application "${PythonExecutablePath}"`;
-                const cmd = `osascript -e '${appleScriptCommand}' -e 'delay 1'`;
+                // macOS-specific command - direct execution
+                const cmd = `"${PythonExecutablePath}" --verbose`;
                 
                 console.log('Executing macOS command:', cmd);
                 PythonServerProcess = exec(cmd, {
-                    env: serverEnv
+                    cwd: path.dirname(PythonExecutablePath),
+                    env: serverEnv,
+                    detached: true
                 });
             }
             

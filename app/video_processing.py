@@ -1122,36 +1122,142 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             final_path = output_path
             logging.info(f"Expected final path: {final_path}")
 
+            # Check for downloaded files - first try exact path, then look for variants
+            actual_file = None
+            
             if os.path.exists(final_path):
-                logging.info(f"File exists at: {final_path}")
+                actual_file = final_path
+                logging.info(f"File exists at expected path: {final_path}")
+            else:
+                # Look for separate video/audio files that need merging
+                base_name = os.path.splitext(final_path)[0]
+                base_dir = os.path.dirname(final_path)
+                
+                # Common yt-dlp separate file patterns
+                video_patterns = [f"{base_name}.f*.mp4", f"{base_name}.mp4.f*"]
+                audio_patterns = [f"{base_name}.f*.m4a", f"{base_name}.m4a.f*", 
+                                f"{base_name}.f*.mp3", f"{base_name}.mp3.f*"]
+                
+                import glob
+                video_files = []
+                audio_files = []
+                
+                # Find video and audio files
+                for pattern in video_patterns:
+                    video_files.extend(glob.glob(pattern))
+                for pattern in audio_patterns:
+                    audio_files.extend(glob.glob(pattern))
+                
+                logging.info(f"Found video files: {video_files}")
+                logging.info(f"Found audio files: {audio_files}")
+                
+                if video_files and audio_files:
+                    # Merge video and audio files
+                    video_file = video_files[0]  # Use first found
+                    audio_file = audio_files[0]  # Use first found
+                    
+                    logging.info(f"Merging {video_file} and {audio_file} into {final_path}")
+                    
+                    merge_command = [
+                        ffmpeg_path,
+                        '-i', video_file,
+                        '-i', audio_file,
+                        '-c:v', 'copy',
+                        '-c:a', 'aac',
+                        '-y',  # Overwrite
+                        final_path
+                    ]
+                    
+                    try:
+                        subprocess.run(merge_command, check=True, capture_output=True, text=True)
+                        logging.info(f"Successfully merged files into: {final_path}")
+                        
+                        # Clean up separate files
+                        try:
+                            os.remove(video_file)
+                            os.remove(audio_file)
+                            logging.info("Cleaned up temporary separate files")
+                        except Exception as e:
+                            logging.warning(f"Could not clean up temporary files: {e}")
+                        
+                        actual_file = final_path
+                        
+                    except subprocess.CalledProcessError as e:
+                        logging.error(f"Error merging files: {e}")
+                        if e.stderr:
+                            logging.error(f"FFmpeg stderr: {e.stderr}")
+                        # Don't fail completely - maybe one of the files is usable
+                        if os.path.exists(video_file):
+                            # Use video file if it exists and seems complete
+                            actual_file = video_file
+                            logging.info(f"Using video file as fallback: {video_file}")
+                
+                # If still no file, look for any files with similar names
+                if not actual_file:
+                    all_files = os.listdir(base_dir) if os.path.exists(base_dir) else []
+                    base_filename = os.path.basename(base_name)
+                    
+                    # Look for files that start with our base filename
+                    candidates = [f for f in all_files if f.startswith(base_filename) and f.endswith(('.mp4', '.mkv', '.webm'))]
+                    
+                    if candidates:
+                        # Use the most recently modified file
+                        candidates_full = [os.path.join(base_dir, f) for f in candidates]
+                        candidates_full.sort(key=os.path.getmtime, reverse=True)
+                        actual_file = candidates_full[0]
+                        logging.info(f"Using most recent candidate file: {actual_file}")
+                        
+                        # Move it to the expected location if different
+                        if actual_file != final_path:
+                            try:
+                                os.rename(actual_file, final_path)
+                                actual_file = final_path
+                                logging.info(f"Moved file to expected location: {final_path}")
+                            except Exception as e:
+                                logging.warning(f"Could not move file to expected location: {e}")
+
+            if actual_file and os.path.exists(actual_file):
+                logging.info(f"Using file: {actual_file}")
+                
                 # Add URL to metadata
                 metadata_command = [
                     ffmpeg_path,  # Use the full path here
-                    '-i', final_path,
+                    '-i', actual_file,
                     '-metadata', f'comment={video_url}',
                     '-codec', 'copy',
-                    f'{final_path}_with_metadata.mp4'
+                    f'{actual_file}_with_metadata.mp4'
                 ]
                 logging.info(f"Running FFmpeg command: {' '.join(metadata_command)}")
 
                 try:
                     subprocess.run(metadata_command, check=True)
-                    os.replace(f'{final_path}_with_metadata.mp4', final_path)
+                    os.replace(f'{actual_file}_with_metadata.mp4', actual_file)
                     
-                    logging.info(f"Video downloaded and processed: {final_path}")
-                    socketio.emit('import_video', {'path': final_path})
+                    logging.info(f"Video downloaded and processed: {actual_file}")
+                    socketio.emit('import_video', {'path': actual_file})
                     # Emit both formats to ensure compatibility
-                    socketio.emit('download-complete', {'url': video_url, 'path': final_path})  # Hyphenated format for Chrome extension
+                    socketio.emit('download-complete', {'url': video_url, 'path': actual_file})  # Hyphenated format for Chrome extension
                     socketio.emit('download_complete')  # Underscore format for other clients
                     
-                    return final_path
+                    return actual_file
                 except subprocess.CalledProcessError as e:
                     logging.error(f"Error adding metadata: {e}")
                     logging.error(f"FFmpeg stderr: {e.stderr if hasattr(e, 'stderr') else 'No stderr'}")
-                    socketio.emit('download-failed', {'message': 'Failed to add metadata.'})
-                    return None
+                    # Still return the file even if metadata failed
+                    logging.info(f"Returning file without metadata: {actual_file}")
+                    socketio.emit('import_video', {'path': actual_file})
+                    socketio.emit('download-complete', {'url': video_url, 'path': actual_file})
+                    socketio.emit('download_complete')
+                    return actual_file
             else:
-                logging.error(f"File not found at expected path: {final_path}")
+                logging.error(f"No suitable file found. Expected: {final_path}")
+                # List all files in directory for debugging
+                try:
+                    all_files = os.listdir(os.path.dirname(final_path))
+                    logging.error(f"Files in download directory: {all_files}")
+                except Exception as e:
+                    logging.error(f"Could not list directory contents: {e}")
+                
                 raise Exception(f"Downloaded file not found at {final_path}")
 
     except Exception as e:

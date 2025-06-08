@@ -1,39 +1,77 @@
-# Sensitive configuration files
-config_google.json
-.env
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.Python
+build/
+develop-eggs/
+dist-python/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+venv/
+ENV/
+env/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build outputs
+dist/
+build/
+native-output/
+build-native/
+*.spec
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.cursor/
+*.swp
+*.swo
 
 # Logs
 *.log
 logs/
 
-# Dependencies
-node_modules/
-venv/
-__pycache__/
-
-# Build outputs
-dist/
-build/
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# IDE files
-.vscode/
-.idea/
-
 # Temporary files
+tmp/
+temp/
 *.tmp
-*.temp
 
-node_modules
-dist
-.DS_Store
-node_modules
-app/ffmpeg.exe
-build/
-.venv
-.vscode
-app/__pycache__
-node_modules
+# Adobe CEP
+.debug
+*.zxp
+
+# FFmpeg binaries
+ffmpeg
+ffmpeg.exe
+
+# Certificates
+*.p12
+*.cert
