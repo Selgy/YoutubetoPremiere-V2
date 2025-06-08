@@ -146,9 +146,8 @@ jobs:
         --hidden-import=pymiere \
         --hidden-import=psutil \
         --hidden-import=tkinter \
-        --add-data "./notification_sound.mp3:." \
-        --icon "./icon.icns" \
-        YoutubetoPremiere.py
+        --add-data "app/sounds/notification_sound.mp3:." \
+        app/YoutubetoPremiere.py
         ls -la ./dist/
         
     - name: Verify Executable Contents
@@ -395,10 +394,9 @@ jobs:
         --hidden-import=tkinter `
         --hidden-import=subprocess `
         --add-binary "./ffmpeg_win/bin/ffmpeg.exe;./ffmpeg_win/bin/" `
-        --add-data "./icon.png;." `
-        --add-data "./notification_sound.mp3;." `
-        --icon "./icon.ico" `
-        YoutubetoPremiere.py
+        --add-data "ChromeExtension/icon.png;." `
+        --add-data "app/sounds/notification_sound.mp3;." `
+        app/YoutubetoPremiere.py
     
     - name: Install NSIS
       run: |
