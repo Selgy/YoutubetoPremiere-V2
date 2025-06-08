@@ -139,7 +139,6 @@ jobs:
         --hidden-import=pygame \
         --hidden-import=PIL \
         --hidden-import=flask \
-        --add-binary "./_include/yt-dlp:./" \
         --hidden-import=flask_cors \
         --hidden-import=flask_socketio \
         --hidden-import=yt_dlp \
@@ -384,7 +383,6 @@ jobs:
         --hidden-import=logging `
         --hidden-import=flask_cors `
         --hidden-import=flask `
-        --add-binary "_Include\yt-dlp.exe;_Include/" `
         --hidden-import=flask_socketio `
         --hidden-import=json `
         --hidden-import=threading `
