@@ -174,25 +174,63 @@ jobs:
 
       - name: Sign all binaries
         run: |
-          # Clean up and sign Python framework (remove problematic symlinks)
+          # Diagnose and clean Python framework symlinks
+          echo "=== DIAGNOSING PYTHON FRAMEWORK ==="
           if [ -d "./dist/YoutubetoPremiere/_internal/Python.framework" ]; then
-            echo "Cleaning up Python framework symlinks..."
-            # Remove problematic symlinks that cause notarization issues
-            if [ -L "./dist/YoutubetoPremiere/_internal/Python.framework/Python" ]; then
-              echo "Removing Python framework root symlink"
-              rm -f "./dist/YoutubetoPremiere/_internal/Python.framework/Python"
-            fi
-            if [ -L "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/Current/Python" ]; then
-              echo "Removing Current version symlink"
-              rm -f "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/Current/Python"
+            echo "Python framework directory exists"
+            echo "Framework structure:"
+            ls -la "./dist/YoutubetoPremiere/_internal/Python.framework/"
+            echo "Versions directory:"
+            ls -la "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/" || echo "Versions directory not found"
+            
+            # Check for symlinks
+            echo "=== CHECKING FOR SYMLINKS ==="
+            
+            if [ -e "./dist/YoutubetoPremiere/_internal/Python.framework/Python" ]; then
+              echo "Python framework root file exists:"
+              ls -la "./dist/YoutubetoPremiere/_internal/Python.framework/Python"
+              if [ -L "./dist/YoutubetoPremiere/_internal/Python.framework/Python" ]; then
+                echo "✅ Root Python is a symlink - REMOVING"
+                rm -f "./dist/YoutubetoPremiere/_internal/Python.framework/Python"
+              else
+                echo "❌ Root Python is a regular file - NOT removing"
+              fi
+            else
+              echo "❌ Root Python file does not exist"
             fi
             
-            # Sign only the actual Python executable
-            if [ -f "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/3.10/Python" ]; then
-              echo "Signing Python executable..."
-              codesign --timestamp --options runtime --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/3.10/Python"
+            if [ -e "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/Current" ]; then
+              echo "Current version exists:"
+              ls -la "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/Current"
+              if [ -L "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/Current" ]; then
+                echo "✅ Current is a symlink - REMOVING"
+                rm -f "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/Current"
+              else
+                echo "❌ Current is a directory - NOT removing"
+              fi
             fi
-            echo "Python framework cleaned and signed"
+            
+            if [ -e "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/Current/Python" ]; then
+              echo "Current Python exists:"
+              ls -la "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/Current/Python"
+              if [ -L "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/Current/Python" ]; then
+                echo "✅ Current/Python is a symlink - REMOVING"
+                rm -f "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/Current/Python"
+              fi
+            fi
+            
+            # Sign the real Python executable
+            if [ -f "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/3.10/Python" ]; then
+              echo "✅ Signing real Python executable..."
+              codesign --timestamp --options runtime --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/3.10/Python"
+            else
+              echo "❌ Real Python executable not found!"
+            fi
+            
+            echo "=== FRAMEWORK AFTER CLEANUP ==="
+            ls -la "./dist/YoutubetoPremiere/_internal/Python.framework/"
+          else
+            echo "❌ Python framework directory not found"
           fi
           
           # Sign all other executables and libraries
