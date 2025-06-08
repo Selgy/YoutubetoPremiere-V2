@@ -174,16 +174,15 @@ jobs:
 
       - name: Sign all binaries
         run: |
-          # Sign Python framework first (needs special handling)
+          # Sign Python framework executables (avoid framework bundle signing)
           if [ -d "./dist/YoutubetoPremiere/_internal/Python.framework" ]; then
-            echo "Signing Python framework..."
-            # Sign the actual Python executable in Versions/3.10/
+            echo "Signing Python framework executables..."
+            # Sign only the actual Python executable, skip the framework bundle
             if [ -f "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/3.10/Python" ]; then
+              echo "Signing Python executable..."
               codesign --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/3.10/Python"
             fi
-            
-            # Skip the symbolic links and sign the framework as a whole
-            codesign --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere/_internal/Python.framework"
+            echo "Skipping framework bundle signature to avoid ambiguity"
           fi
           
           # Sign all other executables and libraries
