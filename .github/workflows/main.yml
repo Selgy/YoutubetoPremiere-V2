@@ -177,11 +177,12 @@ jobs:
           # Sign Python framework first (needs special handling)
           if [ -d "./dist/YoutubetoPremiere/_internal/Python.framework" ]; then
             echo "Signing Python framework..."
-            # Sign the nested Python executable
-            codesign --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/3.10/Python"
-            codesign --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/Current/Python"
-            codesign --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere/_internal/Python.framework/Python"
-            # Sign the framework directory
+            # Sign the actual Python executable in Versions/3.10/
+            if [ -f "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/3.10/Python" ]; then
+              codesign --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/3.10/Python"
+            fi
+            
+            # Skip the symbolic links and sign the framework as a whole
             codesign --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere/_internal/Python.framework"
           fi
           
