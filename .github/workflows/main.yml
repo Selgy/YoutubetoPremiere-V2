@@ -47,21 +47,28 @@ jobs:
                 KEYCHAIN_PATH=$RUNNER_TEMP/SelgykeyAPP.keychain-db
         
                 # import certificate and provisioning profile from secrets
-                echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
-                echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode -o $PP_PATH
+                echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode > $CERTIFICATE_PATH
+                echo "Certificate decoded, size: $(wc -c < $CERTIFICATE_PATH) bytes"
+                
+                if [ ! -z "$BUILD_PROVISION_PROFILE_BASE64" ]; then
+                  echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode > $PP_PATH
+                fi
         
                 # create temporary keychain
                 security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
                 security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
                 security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
         
-                # import certificate to keychain
+                # import certificate to keychain with debugging
+                echo "Importing certificate with password length: ${#P12_PASSWORD}"
                 security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
                 security list-keychain -d user -s $KEYCHAIN_PATH
         
-                # Apply provisioning profile
-                mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-                cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
+                # Apply provisioning profile if it exists
+                if [ ! -z "$BUILD_PROVISION_PROFILE_BASE64" ]; then
+                  mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+                  cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
+                fi
         
                 # Find certificate in custom keychain
                 echo "Finding certificate in SelgykeyAPP keychain:"
@@ -197,12 +204,16 @@ jobs:
           KEYCHAIN_PATH=$RUNNER_TEMP/Selgykey.keychain-db
 
           # Decode and import installer certificate from secrets
-          echo -n "$INSTALLER_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
+          echo -n "$INSTALLER_CERTIFICATE_BASE64" | base64 --decode > $CERTIFICATE_PATH
+          echo "Installer certificate decoded, size: $(wc -c < $CERTIFICATE_PATH) bytes"
 
           # Create temporary keychain for installer certificate
           security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          
+          # Import with debugging
+          echo "Importing installer certificate with password length: ${#P12_PASSWORD}"
           security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
 
           # Set the keychain for codesigning
