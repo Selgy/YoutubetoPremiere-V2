@@ -276,15 +276,18 @@ jobs:
             --scripts "$SCRIPTS_DIR" \
             "$OUTPUT_PKG"
           
-          # Try to find any identity for signing
-          IDENTITY=$(security find-identity -v $KEYCHAIN_PATH | grep -v "valid identities found" | head -n 1 | awk -F'"' '{print $2}')
+          # Try to find Developer ID Installer identity specifically for signing packages
+          INSTALLER_IDENTITY=$(security find-identity -v $KEYCHAIN_PATH | grep "Developer ID Installer" | head -n 1 | awk -F'"' '{print $2}')
           
-          if [ -n "$IDENTITY" ]; then
-            echo "Found identity: $IDENTITY"
-            productsign --sign "$IDENTITY" "$OUTPUT_PKG" "signed_$OUTPUT_PKG"
+          if [ -n "$INSTALLER_IDENTITY" ]; then
+            echo "Found installer identity: $INSTALLER_IDENTITY"
+            productsign --sign "$INSTALLER_IDENTITY" "$OUTPUT_PKG" "signed_$OUTPUT_PKG"
             pkgutil --check-signature "signed_$OUTPUT_PKG"
           else
-            echo "No valid identity found. Creating unsigned package for testing."
+            echo "No Developer ID Installer identity found. Cannot sign packages."
+            echo "Available identities:"
+            security find-identity -v $KEYCHAIN_PATH
+            echo "Creating unsigned package for testing."
             cp "$OUTPUT_PKG" "signed_$OUTPUT_PKG"
           fi
 
