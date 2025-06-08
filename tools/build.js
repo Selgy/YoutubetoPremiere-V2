@@ -46,8 +46,47 @@ class Builder {
         cwd: process.cwd()
       });
       this.log('Application Python construite avec succès');
+      
+      // Copy executable to dist folder
+      await this.copyPythonExecutable();
     } catch (error) {
       this.log(`Erreur lors de la construction Python: ${error.message}`, 'error');
+      throw error;
+    }
+  }
+
+  async copyPythonExecutable() {
+    this.log('📁 Copie de l\'exécutable Python vers dist...');
+    
+    try {
+      const sourcePath = path.join(this.config.build.python.distpath, this.config.build.python.name);
+      const destPath = path.join(this.config.paths.dist, this.config.build.python.name);
+      
+      // Ensure destination directory exists
+      if (!fs.existsSync(this.config.paths.dist)) {
+        fs.mkdirSync(this.config.paths.dist, { recursive: true });
+      }
+      
+      // Copy the executable directory
+      if (fs.existsSync(sourcePath)) {
+        if (fs.existsSync(destPath)) {
+          fs.rmSync(destPath, { recursive: true, force: true });
+        }
+        
+        const copyCommand = this.platform === 'win32'
+          ? `xcopy "${sourcePath}" "${destPath}" /E /I /Y`
+          : `cp -r "${sourcePath}" "${destPath}"`;
+        
+        execSync(copyCommand, { 
+          stdio: this.verbose ? 'inherit' : 'pipe'
+        });
+        
+        this.log('Exécutable Python copié avec succès');
+      } else {
+        this.log(`Source path not found: ${sourcePath}`, 'warn');
+      }
+    } catch (error) {
+      this.log(`Erreur lors de la copie de l'exécutable: ${error.message}`, 'error');
       throw error;
     }
   }
