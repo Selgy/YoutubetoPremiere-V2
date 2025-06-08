@@ -2,10 +2,8 @@ name: Build and Package Pre-Release
 
 on:
   push:
-    branches:
-      - Pre-released
     tags:
-      - 'v*'
+      - 'v*'  # Ne se déclenche QUE sur les tags, pas sur les branches
   workflow_dispatch:  # Permet le déclenchement manuel
 
 permissions:
@@ -71,7 +69,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
           cache: 'yarn'
 
       - name: Install Node.js dependencies
@@ -330,7 +328,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
           cache: 'yarn'
 
       - name: Install Node.js dependencies
