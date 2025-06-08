@@ -174,15 +174,25 @@ jobs:
 
       - name: Sign all binaries
         run: |
-          # Sign Python framework executables (avoid framework bundle signing)
+          # Clean up and sign Python framework (remove problematic symlinks)
           if [ -d "./dist/YoutubetoPremiere/_internal/Python.framework" ]; then
-            echo "Signing Python framework executables..."
-            # Sign only the actual Python executable, skip the framework bundle
+            echo "Cleaning up Python framework symlinks..."
+            # Remove problematic symlinks that cause notarization issues
+            if [ -L "./dist/YoutubetoPremiere/_internal/Python.framework/Python" ]; then
+              echo "Removing Python framework root symlink"
+              rm -f "./dist/YoutubetoPremiere/_internal/Python.framework/Python"
+            fi
+            if [ -L "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/Current/Python" ]; then
+              echo "Removing Current version symlink"
+              rm -f "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/Current/Python"
+            fi
+            
+            # Sign only the actual Python executable
             if [ -f "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/3.10/Python" ]; then
               echo "Signing Python executable..."
-              codesign --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/3.10/Python"
+              codesign --timestamp --options runtime --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/3.10/Python"
             fi
-            echo "Skipping framework bundle signature to avoid ambiguity"
+            echo "Python framework cleaned and signed"
           fi
           
           # Sign all other executables and libraries
