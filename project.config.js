@@ -3,7 +3,7 @@ module.exports = {
   // Configuration du projet
   project: {
     name: 'YoutubetoPremiere',
-    version: '3.0.9',
+    version: '3.0.2',
     description: 'Bridge entre YouTube et Adobe Premiere Pro'
   },
 
@@ -24,7 +24,7 @@ module.exports = {
   // Configuration CEP
   cep: {
     id: 'com.youtube.premiere',
-    version: '3.0.9',
+    version: '3.0.2',
     host: 'PPRO',
     minVersion: '13.0',
     maxVersion: '99.9'
