@@ -56,9 +56,10 @@ class Builder {
     this.log('🎨 Construction de l\'extension CEP...');
     
     try {
-      const buildCommand = this.platform === 'win32' ? 'npm run build:cep' : 'yarn build:cep';
+      const buildCommand = 'cross-env ZXP_PACKAGE=true vite build';
       execSync(buildCommand, { 
-        stdio: this.verbose ? 'inherit' : 'pipe'
+        stdio: this.verbose ? 'inherit' : 'pipe',
+        env: { ...process.env, ZXP_PACKAGE: 'true' }
       });
       this.log('Extension CEP construite avec succès');
     } catch (error) {
@@ -71,8 +72,20 @@ class Builder {
     this.log('🌐 Construction de l\'extension Chrome...');
     
     try {
-      const buildCommand = this.platform === 'win32' ? 'npm run build:chrome' : 'yarn build:chrome';
-      execSync(buildCommand, { 
+      const sourcePath = path.join(process.cwd(), 'ChromeExtension');
+      const destPath = path.join(this.config.paths.dist, 'chrome');
+      
+      // Ensure destination directory exists
+      if (!fs.existsSync(destPath)) {
+        fs.mkdirSync(destPath, { recursive: true });
+      }
+      
+      // Copy Chrome extension files
+      const copyCommand = this.platform === 'win32' 
+        ? `xcopy "${sourcePath}" "${destPath}" /E /I /Y`
+        : `cp -r "${sourcePath}/." "${destPath}/"`;
+      
+      execSync(copyCommand, { 
         stdio: this.verbose ? 'inherit' : 'pipe'
       });
       this.log('Extension Chrome construite avec succès');
