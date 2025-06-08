@@ -174,15 +174,27 @@ jobs:
 
       - name: Sign all binaries
         run: |
-          find ./dist -type f -perm +111 -exec codesign --timestamp --options runtime --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" {} \;
+          # Sign Python framework first (needs special handling)
+          if [ -d "./dist/YoutubetoPremiere/_internal/Python.framework" ]; then
+            echo "Signing Python framework..."
+            # Sign the nested Python executable
+            codesign --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/3.10/Python"
+            codesign --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere/_internal/Python.framework/Versions/Current/Python"
+            codesign --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere/_internal/Python.framework/Python"
+            # Sign the framework directory
+            codesign --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere/_internal/Python.framework"
+          fi
+          
+          # Sign all other executables and libraries
+          find ./dist -type f \( -name "*.dylib" -o -name "*.so" -o -perm +111 \) -not -path "*/Python.framework/*" -exec codesign --timestamp --options runtime --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" {} \;
           
       - name: Sign the Application
         run: |
+          # Sign the main executable
+          codesign --timestamp --options runtime --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere/YoutubetoPremiere"
+          
           # Sign the main application directory
           codesign --deep --timestamp --options runtime --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere"
-          
-          # Sign the main executable
-          codesign --deep --timestamp --options runtime --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere/YoutubetoPremiere"
 
       - name: "Notarize app bundle"
         env:
