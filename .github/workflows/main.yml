@@ -36,7 +36,7 @@ jobs:
 
     - name: Debug Secrets
       env:
-              BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+              BUILD_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE }}
               P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
               BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
               KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
@@ -66,7 +66,7 @@ jobs:
 
     - name: Create and Configure Keychain
       env:
-              BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+              BUILD_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE }}
               P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
               BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
               KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
