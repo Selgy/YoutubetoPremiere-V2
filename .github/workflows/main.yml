@@ -2,8 +2,9 @@ name: Build and Package
 
 on:
   push:
-    branches:
-      - Pre-released
+    tags:
+      - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -340,6 +341,7 @@ jobs:
         
     - name: Upload executables to asset
       id: upload-release-asset
+      if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       env:
             GITHUB_TOKEN: ${{ secrets.GH_SECRET }}
@@ -461,6 +463,13 @@ jobs:
       with:
         script: |
           const { owner, repo } = context.repo
+          
+          // Check if this is a tag or branch
+          if (!context.ref.startsWith('refs/tags/')) {
+            console.log(`Not a tag (${context.ref}), skipping release creation`)
+            return null
+          }
+          
           const tagName = context.ref.replace('refs/tags/', '')
           console.log(`Looking for release with tag: ${tagName}`)
           
@@ -492,6 +501,7 @@ jobs:
     
     - name: Upload executables to asset
       id: upload-release-asset
+      if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       env:
           GITHUB_TOKEN: ${{ secrets.GH_SECRET }}
