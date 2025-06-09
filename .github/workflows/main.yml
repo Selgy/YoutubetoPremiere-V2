@@ -189,7 +189,7 @@ jobs:
         MACOS_NOTARIZATION_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       run: |
         echo "Create keychain profile"
-        xcrun notarytool store-credentials "notarytool-profile" --apple-id "$MACOS_NOTARIZATION_APPLE_ID" --team-id "$MACOS_NOTARIZATION_TEAM_ID" --password "$MACOS_NOTARIZATION_PWD"
+        xcrun notarytool store-credentials "notarytool-profile" --apple-id "${{ secrets.APPLE_ID }}" --team-id "${{ secrets.APPLE_TEAM_ID }}" --password "${{ secrets.APP_SPECIFIC_PASSWORD }}"
 
         echo "Creating temp notarization archive"
         ditto -c -k --keepParent "./dist/YoutubetoPremiere" "notarization.zip"
@@ -277,9 +277,8 @@ jobs:
                 PROD_MACOS_NOTARIZATION_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
                 PROD_MACOS_NOTARIZATION_PWD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
       run: |
-                  # Store the notarization credentials
-                  echo "Create keychain profile for notarization"
-                  xcrun notarytool store-credentials "notarytool-profile" --apple-id "${{ secrets.APPLE_ID }}" --team-id "${{ secrets.APPLE_TEAM_ID }}" --password "${{ secrets.APP_SPECIFIC_PASSWORD }}"
+                  # Use existing keychain profile (already created in previous step)
+                  echo "Using existing keychain profile for PKG notarization"
                   
                   # Create a ZIP file of the .pkg for notarization
                   echo "Creating temp notarization archive for PKG"
@@ -290,7 +289,21 @@ jobs:
                   NOTARIZATION_OUTPUT=$(xcrun notarytool submit "notarization_pkg.zip" --keychain-profile "notarytool-profile" --wait --output-format json)
                   NOTARIZATION_ID=$(echo "$NOTARIZATION_OUTPUT" | jq -r '.id')
                   echo "Notarization ID for PKG: $NOTARIZATION_ID"
-                      
+                  
+                  if [[ $NOTARIZATION_ID == "null" ]]; then
+                      echo "PKG Notarization submission failed."
+                      echo "Output: $NOTARIZATION_OUTPUT"
+                      exit 1
+                  fi
+
+                  # Check PKG Notarization Status
+                  echo "Checking PKG Notarization Status for $NOTARIZATION_ID"
+                  xcrun notarytool info $NOTARIZATION_ID --keychain-profile "notarytool-profile"
+
+                  # Fetch and display the PKG notarization log
+                  echo "Fetching PKG notarization log for $NOTARIZATION_ID..."
+                  xcrun notarytool log $NOTARIZATION_ID --keychain-profile "notarytool-profile"
+
     - name: Get the release
       id: get_release
       uses: actions/github-script@v5
