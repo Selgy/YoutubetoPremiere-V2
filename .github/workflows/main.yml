@@ -220,7 +220,7 @@ jobs:
       run: |
         mkdir pkgroot
         cp -R "./dist/YoutubetoPremiere" "./pkgroot/"
-        cp -R "./com.selgy.youtubetopremiere" "./pkgroot/com.selgy.youtubetopremiere"
+        cp -R "./dist/cep" "./pkgroot/com.selgy.youtubetopremiere"
     
     - name: Create and Sign PKG
       env:

@@ -6,7 +6,7 @@ set -e
 # Get the installation directory from the first argument
 INSTALL_DIR="$3"
 APP_DIR="$INSTALL_DIR/YoutubetoPremiere"
-EXTENSION_DIR="$INSTALL_DIR/YoutubetoPremiere/com.selgy.youtubetopremiere"
+EXTENSION_DIR="$INSTALL_DIR/com.selgy.youtubetopremiere"
 
 echo "Running postinstall script..."
 echo "Installation directory: $INSTALL_DIR"

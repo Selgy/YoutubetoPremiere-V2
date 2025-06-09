@@ -1,7 +1,0 @@
-# CEP Extension Directory
-
-Ce dossier contiendra les fichiers de l'extension Adobe CEP lors du build.
-Les fichiers seront copiés depuis dist/cep/ pendant le processus de construction.
-
-This directory will contain the Adobe CEP extension files during build.
-Files will be copied from dist/cep/ during the build process. 
