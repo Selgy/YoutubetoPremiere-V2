@@ -310,12 +310,33 @@ jobs:
       with:
         script: |
           const { owner, repo } = context.repo
+          const tagName = context.ref.replace('refs/tags/', '')
+          console.log(`Looking for release with tag: ${tagName}`)
+          
           const releases = await github.rest.repos.listReleases({ owner, repo })
-          const preRelease = releases.data.find(release => release.prerelease && release.tag_name === 'V1.1')
-          return preRelease.upload_url
+          let release = releases.data.find(r => r.tag_name === tagName)
+          
+          if (!release) {
+            console.log(`Release not found for tag ${tagName}, creating one...`)
+            const createResponse = await github.rest.repos.createRelease({
+              owner,
+              repo,
+              tag_name: tagName,
+              name: `YouTube to Premiere Pro ${tagName}`,
+              body: `Automated release for version ${tagName}`,
+              draft: false,
+              prerelease: true
+            })
+            release = createResponse.data
+          }
+          
+                    console.log(`Using release: ${release.name} (${release.tag_name})`)
+          return release.upload_url
 
     - name: Rename PKG file
-      run: mv signed_YoutubetoPremiere.pkg YoutubetoPremiere_Mac_arm64.pkg
+      run: |
+        VERSION=$(echo $GITHUB_REF | sed 's/refs\/tags\///')
+        mv signed_YoutubetoPremiere.pkg YoutubetoPremiere_Mac_arm64_${VERSION}.pkg
         
     - name: Upload executables to asset
       id: upload-release-asset
@@ -323,11 +344,10 @@ jobs:
       env:
             GITHUB_TOKEN: ${{ secrets.GH_SECRET }}
       with:
-            draft: ${{ github.ref == 'refs/heads/master' }}
-            prerelease: ${{ github.ref != 'refs/heads/master' }}
-            tag_name: V1.1
+            draft: false
+            prerelease: true
             files: |
-              YoutubetoPremiere_Mac_arm64.pkg
+              YoutubetoPremiere_Mac_arm64_*.pkg
 
   win-build:
     runs-on: windows-latest
@@ -440,10 +460,29 @@ jobs:
       uses: actions/github-script@v5
       with:
         script: |
-          const { owner, repo } = context.repo;
-          const releases = await github.rest.repos.listReleases({ owner, repo });
-          const preRelease = releases.data.find(release => release.prerelease && release.tag_name === 'V1.1');
-          return preRelease ? preRelease.upload_url : null;
+          const { owner, repo } = context.repo
+          const tagName = context.ref.replace('refs/tags/', '')
+          console.log(`Looking for release with tag: ${tagName}`)
+          
+          const releases = await github.rest.repos.listReleases({ owner, repo })
+          let release = releases.data.find(r => r.tag_name === tagName)
+          
+          if (!release) {
+            console.log(`Release not found for tag ${tagName}, creating one...`)
+            const createResponse = await github.rest.repos.createRelease({
+              owner,
+              repo,
+              tag_name: tagName,
+              name: `YouTube to Premiere Pro ${tagName}`,
+              body: `Automated release for version ${tagName}`,
+              draft: false,
+              prerelease: true
+            })
+            release = createResponse.data
+          }
+          
+          console.log(`Using release: ${release.name} (${release.tag_name})`)
+          return release.upload_url
         github-token: ${{ secrets.GITHUB_TOKEN }}
         debug: false
         user-agent: actions/github-script
@@ -457,8 +496,7 @@ jobs:
       env:
           GITHUB_TOKEN: ${{ secrets.GH_SECRET }}
       with:
-          draft: ${{ github.ref == 'refs/heads/master' }}
-          prerelease: ${{ github.ref != 'refs/heads/master' }}
-          tag_name: V1.1
+          draft: false
+          prerelease: true
           files: |
               YoutubetoPremiereInstaller.exe 
