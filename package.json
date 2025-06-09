@@ -1,6 +1,6 @@
 {
   "name": "youtube-to-premiere",
-  "version": "3.0.7",
+  "version": "3.0.8",
   "description": "Bridge entre YouTube et Adobe Premiere Pro",
   "main": "index.js",
   "license": "MIT",
