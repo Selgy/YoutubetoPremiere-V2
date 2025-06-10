@@ -1,5 +1,6 @@
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
+!include "LogicLib.nsh"
 
 ; Version is passed from the workflow as a command line parameter
 ; If VERSION is not defined via command line, use a default
@@ -39,10 +40,14 @@ Section "Install"
   CreateDirectory "$INSTDIR\CEP"
   
   # Try to copy CEP files, but don't fail if they don't exist
-  File /nonfatal /r /x "exec" "dist\cep\*.*" "$INSTDIR\CEP\"
-  
-  # Try to copy .debug file if it exists
-  File /nonfatal /oname="$INSTDIR\CEP\.debug" "dist\cep\.debug"
+  IfFileExists "dist\cep\*.*" copy_cep skip_cep
+  copy_cep:
+    SetOutPath "$INSTDIR\CEP"
+    File /r /x "exec" "dist\cep\*.*"
+    Goto done_cep
+  skip_cep:
+    DetailPrint "CEP extension not found, skipping..."
+  done_cep:
   
   # Create shortcut to the main executable
   CreateDirectory "$SMPROGRAMS\YouTube to Premiere Pro"
