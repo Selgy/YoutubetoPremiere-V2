@@ -37,50 +37,12 @@ Function .onInit
     ; Force installation to Adobe CEP extensions folder
     StrCpy $INSTDIR "$PROGRAMFILES64\Common Files\Adobe\CEP\extensions\com.selgy.youtubetopremiere"
     DetailPrint "Installation directory set to: $INSTDIR"
-    
-    ; Check if source files exist
-    IfFileExists "dist\cep\*.*" 0 no_cep_files
-        DetailPrint "CEP source files found in dist\cep\"
-        Goto cep_files_ok
-    no_cep_files:
-        DetailPrint "WARNING: No CEP source files found in dist\cep\"
-    cep_files_ok:
 FunctionEnd
 
 Section "Install YouTube to Premiere Pro" SEC01
   DetailPrint "Installing YouTube to Premiere Pro..."
   DetailPrint "Working directory: $EXEDIR"
   DetailPrint "Installation target: $INSTDIR"
-  
-  # List contents of dist\cep directory for debugging
-  DetailPrint "Checking contents of source directory..."
-  IfFileExists "dist\cep\manifest.xml" 0 no_manifest
-    DetailPrint "✓ Found manifest.xml"
-    Goto check_other_files
-  no_manifest:
-    DetailPrint "✗ manifest.xml not found"
-  check_other_files:
-  
-  IfFileExists "dist\cep\*.html" 0 no_html
-    DetailPrint "✓ Found HTML files"
-    Goto check_js
-  no_html:
-    DetailPrint "✗ No HTML files found"
-  check_js:
-  
-  IfFileExists "dist\cep\js\*.*" 0 no_js
-    DetailPrint "✓ Found JS directory"
-    Goto check_exec_source
-  no_js:
-    DetailPrint "✗ No JS directory found"
-  check_exec_source:
-  
-  IfFileExists "dist\cep\exec\*.*" 0 no_exec_source
-    DetailPrint "✓ Found exec directory in CEP"
-    Goto warn_user
-  no_exec_source:
-    DetailPrint "✗ No exec directory found in CEP"
-  warn_user:
   
   # Warn user about potentially running processes
   MessageBox MB_OKCANCEL|MB_ICONINFORMATION "Please close YouTube to Premiere Pro application if it's currently running before continuing installation. Click OK to proceed." IDOK cleanup_install IDCANCEL abort_install
@@ -106,22 +68,6 @@ Section "Install YouTube to Premiere Pro" SEC01
     DetailPrint "Found CEP extension files - copying all except exec..."
     File /r /x "exec" "dist\cep\*.*"
     DetailPrint "CEP extension core files copied"
-    
-    ; Verify what was actually copied
-    IfFileExists "$INSTDIR\manifest.xml" 0 no_copied_manifest
-      DetailPrint "✓ Verified: manifest.xml copied successfully"
-      Goto check_copied_html
-    no_copied_manifest:
-      DetailPrint "✗ ERROR: manifest.xml was not copied!"
-    check_copied_html:
-    
-    IfFileExists "$INSTDIR\*.html" 0 no_copied_html
-      DetailPrint "✓ Verified: HTML files copied successfully"
-      Goto manifest_ok
-    no_copied_html:
-      DetailPrint "✗ ERROR: HTML files were not copied!"
-    manifest_ok:
-    
   skip_manifest:
   
   # Then ensure exec folder exists and copy Python executable
@@ -146,22 +92,6 @@ Section "Install YouTube to Premiere Pro" SEC01
     no_fallback:
       DetailPrint "ERROR: No Python executable found in fallback location either!"
   done_exec:
-  
-  ; Final verification
-  DetailPrint "Final verification of installation..."
-  IfFileExists "$INSTDIR\manifest.xml" 0 missing_manifest_final
-    DetailPrint "✓ FINAL CHECK: manifest.xml present"
-    Goto check_exec_final
-  missing_manifest_final:
-    DetailPrint "✗ FINAL CHECK: manifest.xml MISSING!"
-  check_exec_final:
-  
-  IfFileExists "$INSTDIR\exec\*.*" 0 missing_exec_final
-    DetailPrint "✓ FINAL CHECK: exec directory present"
-    Goto install_complete
-  missing_exec_final:
-    DetailPrint "✗ FINAL CHECK: exec directory MISSING!"
-  install_complete:
   
   DetailPrint "Installation completed"
 SectionEnd
