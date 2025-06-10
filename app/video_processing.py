@@ -957,6 +957,10 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             'nocheckcertificate': True,  # Skip certificate validation
             'extractor_retries': 5,  # Retry extraction up to 5 times
             'retry_sleep': lambda n: 5 * (n + 1),  # Exponential backoff
+            'sleep_interval_requests': 1,  # Add delay between requests
+            'sleep_interval_subtitles': 0.5,  # Add delay for subtitle requests
+            'max_sleep_interval': 5,  # Maximum sleep interval
+            'socket_timeout': 60,  # Socket timeout in seconds
         }
         
         # Debug available formats first
@@ -1019,10 +1023,30 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             else:
                 logging.warning("No cookies available for YouTube authentication")
         
-        # Add user agent if provided for info extraction
+        # Add user agent and headers for info extraction
         if user_agent:
-            initial_ydl_opts['http_headers'] = {'User-Agent': user_agent}
-            logging.info("Using User-Agent from extension for info extraction")
+            initial_ydl_opts['http_headers'] = {
+                'User-Agent': user_agent,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1'
+            }
+            logging.info("Using User-Agent and headers from extension for info extraction")
+        else:
+            # Use a more realistic user agent as fallback for info extraction
+            initial_ydl_opts['http_headers'] = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1'
+            }
+            logging.info("Using fallback User-Agent and headers for info extraction")
         
         # Extract video info first with authentication
         with yt_dlp.YoutubeDL(initial_ydl_opts) as ydl:
@@ -1071,6 +1095,10 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 'extractor_retries': 5,  # Retry extraction up to 5 times
                 'retry_sleep': lambda n: 5 * (n + 1),  # Exponential backoff
                 'age_limit': None,  # Don't apply age limits
+                'sleep_interval_requests': 1,  # Add delay between requests
+                'sleep_interval_subtitles': 0.5,  # Add delay for subtitle requests
+                'max_sleep_interval': 5,  # Maximum sleep interval
+                'socket_timeout': 60,  # Socket timeout in seconds
                 'outtmpl': {
                     'default': os.path.join(download_path, os.path.splitext(unique_filename)[0] + '.%(ext)s')
                 },
@@ -1102,10 +1130,30 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 else:
                     logging.warning("No cookies available for YouTube authentication")
             
-            # Add user agent if provided
+            # Add user agent and additional headers if provided
             if user_agent:
-                ydl_opts['http_headers'] = {'User-Agent': user_agent}
-                logging.info("Using User-Agent from extension for download")
+                ydl_opts['http_headers'] = {
+                    'User-Agent': user_agent,
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-us,en;q=0.5',
+                    'Accept-Encoding': 'gzip, deflate',
+                    'DNT': '1',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1'
+                }
+                logging.info("Using User-Agent and headers from extension for download")
+            else:
+                # Use a more realistic user agent as fallback
+                ydl_opts['http_headers'] = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-us,en;q=0.5',
+                    'Accept-Encoding': 'gzip, deflate',
+                    'DNT': '1',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1'
+                }
+                logging.info("Using fallback User-Agent and headers for download")
 
             # Download the video
             logging.info("Starting video download...")
@@ -1672,14 +1720,14 @@ def debug_formats_and_create_optimal_format_string(video_url, max_height, prefer
                 is_suitable = height and height <= max_height
                 if is_suitable:
                     avc1_suitable.append(fmt)
-                logging.info(f"  AVC1 {height}p - {fmt['format_id']} - {fmt['vcodec']} - {fmt['ext']} - {'✅ SUITABLE' if is_suitable else '❌ TOO HIGH'}")
+                logging.info(f"  AVC1 {height}p - {fmt['format_id']} - {fmt['vcodec']} - {fmt['ext']} - {'SUITABLE' if is_suitable else 'TOO HIGH'}")
             
             # Log the best AVC1 format that will be selected
             if avc1_suitable:
                 best_avc1 = avc1_suitable[0]
-                logging.info(f"🎯 BEST AVC1 FORMAT: {best_avc1['height']}p ({best_avc1['format_id']}) - {best_avc1['vcodec']}")
+                logging.info(f"BEST AVC1 FORMAT: {best_avc1['height']}p ({best_avc1['format_id']}) - {best_avc1['vcodec']}")
             else:
-                logging.error(f"❌ NO SUITABLE AVC1 FORMATS FOUND for max height {max_height}p!")
+                logging.error(f"NO SUITABLE AVC1 FORMATS FOUND for max height {max_height}p!")
                 logging.error("Available AVC1 heights: " + str([f['height'] for f in avc1_video_formats if f['height']]))
             
             # Other video formats (fallback info)
