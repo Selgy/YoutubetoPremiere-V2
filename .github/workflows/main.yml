@@ -13,6 +13,7 @@ permissions:
 jobs:
   mac-build-apple-silicon:
     runs-on: macos-14
+    needs: [windows-build]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
