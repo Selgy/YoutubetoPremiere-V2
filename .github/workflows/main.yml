@@ -162,7 +162,16 @@ jobs:
           echo "Signing the application..."
           codesign --deep --timestamp --options runtime --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere"
 
-
+      - name: Sign all binaries in dist
+        run: |
+          echo "Signing all binaries and frameworks in dist directory..."
+          # Find and sign all executables and libraries
+          find ./dist -type f \( -name "*.dylib" -o -name "*.so" -o -perm +111 \) -exec codesign --timestamp --options runtime --force --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" {} \; 2>/dev/null || true
+          
+          # Sign any frameworks
+          find ./dist -type d -name "*.framework" -exec codesign --deep --timestamp --options runtime --force --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" {} \; 2>/dev/null || true
+          
+          echo "All binaries signed"
 
       - name: Create PKG installer
         run: |
