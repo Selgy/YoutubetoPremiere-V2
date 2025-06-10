@@ -602,57 +602,8 @@ async function startPythonServer() {
             setTimeout(checkServerHealth, 5000);
         } catch (spawnError) {
             console.error(`Error spawning Python process: ${spawnError.message}`);
-            // On Mac, try with a direct Python call if the script fails
-            if (process.platform === 'darwin') {
-                try {
-                    const { exec } = window.cep_node.require('child_process');
-                    const os = window.cep_node.require('os');
-                    console.log('Trying direct Python execution as fallback...');
-                    
-                    // Get Python binary
-                    const pythonPath = await new Promise((resolve) => {
-                        exec('which python3 || which python', (error, stdout) => {
-                            resolve(stdout.trim());
-                        });
-                    });
-                    
-                    if (!pythonPath) {
-                        throw new Error('Could not find Python interpreter');
-                    }
-                    
-                    console.log(`Found Python at: ${pythonPath}`);
-                    
-                    // Find the main Python file
-                    const appSupportDir = path.join(os.homedir(), 'Library/Application Support/YoutubetoPremiere');
-                    const pythonFile = path.join(appSupportDir, 'app', 'YoutubetoPremiere.py');
-                    
-                    if (!fs.existsSync(pythonFile)) {
-                        throw new Error(`Python file not found at ${pythonFile}`);
-                    }
-                    
-                    console.log(`Using Python file: ${pythonFile}`);
-                    
-                    // Build environment variables
-                    const envVars = [
-                        `PYTHONPATH="${appSupportDir}/app"`,
-                        `EXTENSION_ROOT="${extensionRoot}"`,
-                        'PYTHONIOENCODING="utf-8"',
-                        'PYTHONUNBUFFERED="1"'
-                    ].join(' ');
-                    
-                    // Run Python directly
-                    PythonServerProcess = exec(`${envVars} "${pythonPath}" "${pythonFile}" --verbose`, {
-                        cwd: path.dirname(pythonFile),
-                    });
-                    
-                    console.log('Direct Python execution started');
-                } catch (execError) {
-                    console.error(`Direct Python execution failed: ${execError.message}`);
-                    throw execError;
-                }
-            } else {
-                throw spawnError;
-            }
+            // Don't try system Python fallback - the bundled executable should be self-contained
+            throw spawnError;
         }
 
         // Set up event listeners only after everything is initialized
