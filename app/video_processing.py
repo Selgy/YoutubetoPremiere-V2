@@ -550,13 +550,9 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             # Process regular video download (default case)
             result = download_video(
                 video_url=video_url,
-                resolution=resolution,
-                download_path=download_path,
-                download_mp3=download_mp3,
-                ffmpeg_path=ffmpeg_path,
                 socketio=socketio,
                 settings=settings,
-                current_download=current_download,
+                download_type='full',
                 cookies=cookies,
                 user_agent=user_agent
             )
