@@ -66,14 +66,14 @@ def register_routes(app, socketio, settings):
 
     @app.route('/get-version', methods=['GET'])
     def get_version():
-        return jsonify(version='3.0.1')
+        return jsonify(version='3.0.3')
 
     @app.route('/check-updates', methods=['GET'])
     def check_updates():
         """Check for available updates from GitHub releases"""
         try:
             # Current version
-            current_version = '3.0.1'
+            current_version = '3.0.3'
             
             # Detect OS
             system = platform.system().lower()
@@ -113,16 +113,31 @@ def register_routes(app, socketio, settings):
                     except:
                         is_newer = latest_version != current_version
                     
-                    # Generate download URLs based on OS
+                    # Extract actual download URLs from GitHub release assets
                     download_urls = {}
-                    base_url = f"https://github.com/Selgy/YoutubetoPremiere-V2/releases/download/v{latest_version}"
+                    assets = release_data.get('assets', [])
                     
-                    download_urls['windows'] = f"{base_url}/YoutubetoPremiere_Win_{latest_version}.exe"
-                    download_urls['mac_arm64'] = f"{base_url}/YoutubetoPremiere_Mac_arm64_{latest_version}.pkg"
-                    download_urls['mac_intel'] = f"{base_url}/YoutubetoPremiere_Mac_intel_{latest_version}.pkg"
+                    for asset in assets:
+                        asset_name = asset.get('name', '')
+                        browser_download_url = asset.get('browser_download_url', '')
+                        
+                        if 'Windows' in asset_name and asset_name.endswith('.exe'):
+                            download_urls['windows'] = browser_download_url
+                        elif 'macOS' in asset_name and asset_name.endswith('.pkg'):
+                            # For now, use the same file for both Intel and ARM Macs
+                            download_urls['mac_arm64'] = browser_download_url
+                            download_urls['mac_intel'] = browser_download_url
                     
                     # Get the appropriate download URL for current OS
                     download_url = download_urls.get(os_type)
+                    
+                    # Fallback: if no assets found, construct URLs from expected naming pattern
+                    if not download_urls:
+                        base_url = f"https://github.com/Selgy/YoutubetoPremiere-V2/releases/download/v{latest_version}"
+                        download_urls['windows'] = f"{base_url}/YouTubetoPremiere-Windows.exe"
+                        download_urls['mac_arm64'] = f"{base_url}/YouTubetoPremiere-macOS.pkg"
+                        download_urls['mac_intel'] = f"{base_url}/YouTubetoPremiere-macOS.pkg"
+                        download_url = download_urls.get(os_type)
                     
                     return jsonify({
                         'current_version': current_version,
