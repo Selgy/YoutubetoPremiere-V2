@@ -661,13 +661,15 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         preferred_language = settings.get('preferredAudioLanguage', 'original')
         logging.info(f"Using preferred audio language for clip: {preferred_language}")
         
-        # Format string for the desired quality - FORCE AVC1 CODEC with language preference
+        # Format string for the desired quality - STRICT AVC1 CODEC with language preference
         sanitized_resolution = sanitize_resolution(resolution)
         if preferred_language != 'original':
-            format_str = f'bestvideo[height<={sanitized_resolution}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a][language~="{preferred_language}"]/bestvideo[height<={sanitized_resolution}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/best[vcodec^=avc1][ext=mp4]/best'
+            # STRICT AVC1 only with language preference - no fallback to non-AVC1
+            format_str = f'bestvideo[vcodec^=avc1][height<={sanitized_resolution}][height>=720][ext=mp4]+bestaudio[ext=m4a][language~="{preferred_language}"]/bestvideo[vcodec^=avc1][height<={sanitized_resolution}][height>=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1][height<={sanitized_resolution}][ext=mp4]+bestaudio[ext=m4a]'
         else:
-            format_str = f'bestvideo[height<={sanitized_resolution}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/best[vcodec^=avc1][ext=mp4]/best'
-        logging.info(f"Using format string with AVC1 codec and language preference: {format_str}")
+            # STRICT AVC1 only, prefer 720p+ if available
+            format_str = f'bestvideo[vcodec^=avc1][height<={sanitized_resolution}][height>=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1][height<={sanitized_resolution}][ext=mp4]+bestaudio[ext=m4a]'
+        logging.info(f"Using STRICT AVC1 format string for clips ({sanitized_resolution}p): {format_str}")
         
         # CORRECTION: Utiliser download_ranges au lieu de download_sections
         logging.info(f"Using download ranges: start={clip_start}, end={clip_end}")
@@ -944,14 +946,19 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         preferred_language = settings.get('preferredAudioLanguage', 'original')
         logging.info(f"Using preferred audio language: {preferred_language}")
         
-        # Configure yt-dlp options with AVC1 codec and audio language preference
-        if preferred_language != 'original':
-            # Use language-specific format selector
-            format_string = f'bestvideo[vcodec^=avc1][height<={int(resolution.replace("p", ""))}][ext=mp4]+bestaudio[ext=m4a][language~="{preferred_language}"]/bestvideo[vcodec^=avc1][height<={int(resolution.replace("p", ""))}][ext=mp4]+bestaudio[ext=m4a]/best[vcodec^=avc1][ext=mp4]/best[ext=mp4]'
-        else:
-            format_string = f'bestvideo[vcodec^=avc1][height<={int(resolution.replace("p", ""))}][ext=mp4]+bestaudio[ext=m4a]/best[vcodec^=avc1][ext=mp4]/best[ext=mp4]'
+        # Debug available formats first
+        max_height = int(resolution.replace("p", ""))
+        debug_formats_and_create_optimal_format_string(video_url, max_height, preferred_language, initial_ydl_opts)
         
-        logging.info(f"Using format string with AVC1 codec and language preference: {format_string}")
+        # Configure yt-dlp options with IMPROVED AVC1 codec preference - NO FALLBACK to non-AVC1
+        if preferred_language != 'original':
+            # STRICT AVC1 only with language preference
+            format_string = f'bestvideo[vcodec^=avc1][height<={max_height}][height>=720][ext=mp4]+bestaudio[ext=m4a][language~="{preferred_language}"]/bestvideo[vcodec^=avc1][height<={max_height}][height>=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1][height<={max_height}][ext=mp4]+bestaudio[ext=m4a]'
+        else:
+            # STRICT AVC1 only, prefer 720p+ if available
+            format_string = f'bestvideo[vcodec^=avc1][height<={max_height}][height>=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1][height<={max_height}][ext=mp4]+bestaudio[ext=m4a]'
+        
+        logging.info(f"Using STRICT AVC1 format string for {max_height}p: {format_string}")
 
         # Check if download path exists or try to get default path
         if not download_path:
@@ -1589,6 +1596,105 @@ def get_audio_format_selector(preferred_language='original'):
     format_selector = f'bestvideo+bestaudio[language~="{lang_conditions}"]/bestvideo+bestaudio/best'
     
     return format_selector
+
+def debug_formats_and_create_optimal_format_string(video_url, max_height, preferred_language, ydl_opts):
+    """
+    Debug available formats and log detailed information to help understand 
+    why 360p might be selected instead of higher quality AVC1.
+    """
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+            if not info:
+                logging.error("Could not extract video info for format debugging")
+                return
+            
+            formats = info.get('formats', [])
+            
+            # Filter and analyze AVC1 video formats
+            avc1_video_formats = []
+            other_video_formats = []
+            audio_formats = []
+            
+            for fmt in formats:
+                format_note = fmt.get('format_note', 'unknown')
+                vcodec = fmt.get('vcodec', 'none')
+                acodec = fmt.get('acodec', 'none')
+                height = fmt.get('height')
+                width = fmt.get('width')
+                ext = fmt.get('ext')
+                filesize = fmt.get('filesize')
+                
+                if vcodec != 'none' and acodec == 'none':  # Video only
+                    format_info = {
+                        'format_id': fmt.get('format_id'),
+                        'height': height,
+                        'width': width,
+                        'vcodec': vcodec,
+                        'ext': ext,
+                        'format_note': format_note,
+                        'filesize': filesize,
+                        'tbr': fmt.get('tbr'),  # Total bitrate
+                        'vbr': fmt.get('vbr'),  # Video bitrate
+                    }
+                    
+                    if vcodec and vcodec.startswith('avc1'):
+                        avc1_video_formats.append(format_info)
+                    else:
+                        other_video_formats.append(format_info)
+                        
+                elif acodec != 'none' and vcodec == 'none':  # Audio only
+                    audio_formats.append({
+                        'format_id': fmt.get('format_id'),
+                        'acodec': acodec,
+                        'ext': ext,
+                        'language': fmt.get('language'),
+                        'abr': fmt.get('abr'),  # Audio bitrate
+                    })
+            
+            # Log detailed format information
+            logging.info("=== FORMAT DEBUGGING ===")
+            logging.info(f"Requested max height: {max_height}p")
+            logging.info(f"Preferred language: {preferred_language}")
+            
+            # AVC1 formats analysis
+            logging.info(f"Available AVC1 video formats: {len(avc1_video_formats)}")
+            avc1_suitable = []
+            for fmt in sorted(avc1_video_formats, key=lambda x: x['height'] or 0, reverse=True):
+                height = fmt['height']
+                is_suitable = height and height <= max_height
+                if is_suitable:
+                    avc1_suitable.append(fmt)
+                logging.info(f"  AVC1 {height}p - {fmt['format_id']} - {fmt['vcodec']} - {fmt['ext']} - {'✅ SUITABLE' if is_suitable else '❌ TOO HIGH'}")
+            
+            # Log the best AVC1 format that will be selected
+            if avc1_suitable:
+                best_avc1 = avc1_suitable[0]
+                logging.info(f"🎯 BEST AVC1 FORMAT: {best_avc1['height']}p ({best_avc1['format_id']}) - {best_avc1['vcodec']}")
+            else:
+                logging.error(f"❌ NO SUITABLE AVC1 FORMATS FOUND for max height {max_height}p!")
+                logging.error("Available AVC1 heights: " + str([f['height'] for f in avc1_video_formats if f['height']]))
+            
+            # Other video formats (fallback info)
+            logging.info(f"Other video formats (non-AVC1): {len(other_video_formats)}")
+            for fmt in sorted(other_video_formats, key=lambda x: x['height'] or 0, reverse=True)[:5]:  # Show top 5
+                height = fmt['height']
+                logging.info(f"  Other {height}p - {fmt['format_id']} - {fmt['vcodec']} - {fmt['ext']}")
+            
+            # Audio formats
+            audio_suitable = [f for f in audio_formats if f['ext'] == 'm4a']
+            logging.info(f"Available m4a audio formats: {len(audio_suitable)}")
+            
+            # Language-specific audio if requested
+            if preferred_language != 'original':
+                lang_audio = [f for f in audio_suitable if f.get('language') == preferred_language]
+                logging.info(f"Audio formats for language '{preferred_language}': {len(lang_audio)}")
+            
+            logging.info("=== END FORMAT DEBUGGING ===")
+            
+    except Exception as e:
+        logging.error(f"Error in format debugging: {str(e)}")
+
 
 def get_audio_language_options(video_url):
     """
