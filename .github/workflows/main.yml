@@ -38,14 +38,12 @@ jobs:
 
     - name: Install dependencies
       run: |
-          pip install -r requirements.txt
-          pip install python-dotenv  # Install dotenv module
+        pip install -r requirements.txt
+        pip install python-dotenv  # Install dotenv module
 
     - name: Install Node.js dependencies
-      run: yarn install --frozen-lockfile
-
-    - name: Build CEP Extension
-      run: yarn build:cep
+      run: |
+        yarn install --frozen-lockfile
 
     - name: Debug Secrets
       env:
@@ -161,6 +159,24 @@ jobs:
         --add-data "app/sounds/notification_sound.mp3:." \
         app/YoutubetoPremiere.py
         ls -la ./dist/
+
+    - name: Build CEP Extension
+      run: |
+        echo "Building CEP extension..."
+        echo "Node version: $(node --version)"
+        echo "Yarn version: $(yarn --version)"
+        echo "Installing cross-env if not present..."
+        yarn add cross-env --dev
+        echo "Building with verbose output..."
+        yarn build:cep
+        echo "CEP build completed, checking dist directory..."
+        ls -la ./dist/
+        if [ -d "./dist/cep" ]; then
+          echo "CEP directory found!"
+          ls -la ./dist/cep/
+        else
+          echo "CEP directory NOT found!"
+        fi
         
     - name: Verify Executable Contents
       run: |
@@ -232,7 +248,17 @@ jobs:
       run: |
         mkdir pkgroot
         cp -R "./dist/YoutubetoPremiere" "./pkgroot/"
-        cp -R "./dist/cep" "./pkgroot/com.selgy.youtubetopremiere"
+        
+        # Verify CEP extension exists before copying
+        if [ -d "./dist/cep" ]; then
+          echo "CEP extension found, copying..."
+          cp -R "./dist/cep" "./pkgroot/com.selgy.youtubetopremiere"
+        else
+          echo "CEP extension not found in ./dist/cep"
+          echo "Available files in ./dist/:"
+          ls -la ./dist/
+          exit 1
+        fi
     
     - name: Create and Sign PKG
       env:
