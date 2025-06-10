@@ -287,9 +287,11 @@ jobs:
           # Get version from package.json for NSIS
           $version = (Get-Content package.json | ConvertFrom-Json).version
           echo "Version: $version"
-          # Set environment variable for NSIS (not command line parameter)
-          $env:VERSION = $version
-          makensis installer.nsi
+          # Pass version to NSIS as a define parameter
+          makensis /DVERSION=$version installer.nsi
+          # Check what file was actually created
+          echo "Files in current directory:"
+          Get-ChildItem *.exe | ForEach-Object { echo $_.Name }
           # Rename to standard name for upload
           $sourceFile = "YoutubetoPremiere-$version-Setup.exe"
           $targetFile = "YouTubetoPremiere-Setup.exe"
@@ -297,7 +299,20 @@ jobs:
             Rename-Item $sourceFile $targetFile
             echo "Renamed $sourceFile to $targetFile"
           } else {
-            echo "Warning: $sourceFile not found"
+            echo "Warning: $sourceFile not found, checking for alternative names..."
+            # Check for alternative file names
+            $foundFiles = Get-ChildItem "YoutubetoPremiere*.exe"
+            if ($foundFiles) {
+              echo "Found files:"
+              $foundFiles | ForEach-Object { echo "  $($_.Name)" }
+              # Use the first found file
+              $firstFile = $foundFiles[0].Name
+              Rename-Item $firstFile $targetFile
+              echo "Renamed $firstFile to $targetFile"
+            } else {
+              echo "Error: No installer files found!"
+              exit 1
+            }
           }
         shell: powershell
 

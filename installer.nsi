@@ -1,8 +1,11 @@
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
 
-; Version is passed from the workflow
-!define VERSION "${VERSION}"
+; Version is passed from the workflow as a command line parameter
+; If VERSION is not defined via command line, use a default
+!ifndef VERSION
+  !define VERSION "1.0.0"
+!endif
 
 Name "YouTube to Premiere Pro"
 OutFile "YoutubetoPremiere-${VERSION}-Setup.exe"
