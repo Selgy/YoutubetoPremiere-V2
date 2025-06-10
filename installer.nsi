@@ -1,7 +1,6 @@
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"
-!include "nsProcess.nsh"
 
 ; Version is passed from the workflow as a command line parameter
 ; If VERSION is not defined via command line, use a default
@@ -39,22 +38,11 @@ FunctionEnd
 Section "Install YouTube to Premiere Pro" SEC01
   DetailPrint "Installing YouTube to Premiere Pro..."
   
-  # Check if YouTube to Premiere Pro is running and stop it
-  DetailPrint "Checking for running processes..."
-  nsProcess::_FindProcess "YoutubetoPremiere.exe"
-  Pop $R0
-  ${If} $R0 == 0
-    MessageBox MB_OKCANCEL|MB_ICONSTOP "YouTube to Premiere Pro is currently running. Click OK to close it automatically, or Cancel to abort installation." IDOK kill_process IDCANCEL abort_install
-    kill_process:
-      DetailPrint "Stopping YouTube to Premiere Pro process..."
-      nsProcess::_KillProcess "YoutubetoPremiere.exe"
-      Pop $R0
-      Sleep 2000
-      Goto cleanup_install
-    abort_install:
-      DetailPrint "Installation aborted by user"
-      Abort
-  ${EndIf}
+  # Warn user about potentially running processes
+  MessageBox MB_OKCANCEL|MB_ICONINFORMATION "Please close YouTube to Premiere Pro application if it's currently running before continuing installation. Click OK to proceed." IDOK cleanup_install IDCANCEL abort_install
+  abort_install:
+    DetailPrint "Installation aborted by user"
+    Abort
   
   cleanup_install:
   # Remove any existing installation first  
