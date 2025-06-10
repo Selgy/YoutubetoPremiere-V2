@@ -161,7 +161,10 @@ jobs:
       - name: Sign PKG installer
         run: |
           echo "Signing PKG installer..."
-          codesign --timestamp --options runtime --force --verify --verbose --sign "Developer ID Installer: mickael ducatez (9H8DB46V75)" YouTubetoPremiere.pkg
+          # Use productsign instead of codesign for PKG files
+          productsign --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" YouTubetoPremiere.pkg YouTubetoPremiere-signed.pkg
+          mv YouTubetoPremiere-signed.pkg YouTubetoPremiere.pkg
+          echo "PKG installer signed successfully"
 
       - name: Notarize PKG
         env:
