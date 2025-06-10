@@ -10,7 +10,7 @@
 
 Name "YouTube to Premiere Pro"
 OutFile "YoutubetoPremiere-${VERSION}-Setup.exe"
-InstallDir "$PROGRAMFILES\YoutubetoPremiere"
+!define MUI_ICON "icon.ico"
 
 ; Request application privileges for Windows Vista and higher
 RequestExecutionLevel admin
@@ -19,8 +19,9 @@ RequestExecutionLevel admin
 !define MUI_ABORTWARNING
 
 !insertmacro MUI_PAGE_WELCOME
-!insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
+!define MUI_FINISHPAGE_SHOWREADME "https://chromewebstore.google.com/detail/youtube-to-premiere-pro-v/fnhpeiohcfobchjffmgfdeobphhmaibb"
+!define MUI_FINISHPAGE_SHOWREADME_TEXT "Open Chrome Extension Page"
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -28,57 +29,56 @@ RequestExecutionLevel admin
 
 !insertmacro MUI_LANGUAGE "English"
 
-Section "Install"
-  SetOutPath "$INSTDIR"
+Function .onInit
+    ; Force installation to Adobe CEP extensions folder
+    StrCpy $INSTDIR "$PROGRAMFILES64\Common Files\Adobe\CEP\extensions\com.selgy.youtubetopremiere"
+FunctionEnd
+
+Section "Install YouTube to Premiere Pro" SEC01
+  DetailPrint "Installing YouTube to Premiere Pro..."
   
-  # Copy the Python application directory
+  # Install Python executable in exec subfolder
+  SetOutPath "$INSTDIR\exec"
   DetailPrint "Installing Python application..."
   File /r "dist\YoutubetoPremiere\*.*"
   
-  # Copy the CEP extension (optional, with error handling)
+  # Install CEP extension files in main directory
+  SetOutPath "$INSTDIR"
   DetailPrint "Installing CEP extension..."
-  CreateDirectory "$INSTDIR\CEP"
-  
-  # Try to copy CEP files, but don't fail if they don't exist
   IfFileExists "dist\cep\*.*" copy_cep skip_cep
   copy_cep:
-    SetOutPath "$INSTDIR\CEP"
     File /r /x "exec" "dist\cep\*.*"
     Goto done_cep
   skip_cep:
     DetailPrint "CEP extension not found, skipping..."
   done_cep:
   
-  # Create shortcut to the main executable
-  CreateDirectory "$SMPROGRAMS\YouTube to Premiere Pro"
-  CreateShortcut "$SMPROGRAMS\YouTube to Premiere Pro\YouTube to Premiere Pro.lnk" "$INSTDIR\YoutubetoPremiere.exe"
-  CreateShortcut "$DESKTOP\YouTube to Premiere Pro.lnk" "$INSTDIR\YoutubetoPremiere.exe"
-  
-  # Create uninstaller
-  WriteUninstaller "$INSTDIR\uninstall.exe"
-  
-  # Add uninstall information to Add/Remove Programs
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "DisplayName" "YouTube to Premiere Pro"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "UninstallString" '"$INSTDIR\uninstall.exe"'
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "DisplayIcon" '"$INSTDIR\YoutubetoPremiere.exe"'
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "Publisher" "YoutubetoPremiere"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "DisplayVersion" "${VERSION}"
-  
-  # Get install size
-  ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
-  IntFmt $0 "0x%08X" $0
-  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere" "EstimatedSize" "$0"
+  DetailPrint "Installation completed successfully"
+SectionEnd
+
+Section "Enable Debugging for Adobe CEP"
+  DetailPrint "Enabling CEP debugging mode..."
+  WriteRegStr HKCU "Software\Adobe\CSXS.6" "PlayerDebugMode" "1"
+  WriteRegStr HKCU "Software\Adobe\CSXS.7" "PlayerDebugMode" "1"
+  WriteRegStr HKCU "Software\Adobe\CSXS.8" "PlayerDebugMode" "1"
+  WriteRegStr HKCU "Software\Adobe\CSXS.9" "PlayerDebugMode" "1"
+  WriteRegStr HKCU "Software\Adobe\CSXS.10" "PlayerDebugMode" "1"
+  WriteRegStr HKCU "Software\Adobe\CSXS.11" "PlayerDebugMode" "1"
+  WriteRegStr HKCU "Software\Adobe\CSXS.12" "PlayerDebugMode" "1"
 SectionEnd
 
 Section "Uninstall"
-  # Remove application files
+  # Remove all extension files
+  Delete "$INSTDIR\exec\YoutubetoPremiere.exe"
+  RMDir /r "$INSTDIR\exec"
   RMDir /r "$INSTDIR"
   
-  # Remove shortcuts
-  Delete "$SMPROGRAMS\YouTube to Premiere Pro\*.*"
-  RMDir "$SMPROGRAMS\YouTube to Premiere Pro"
-  Delete "$DESKTOP\YouTube to Premiere Pro.lnk"
-  
-  # Remove registry entries
-  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere"
+  # Remove CEP debugging registry entries
+  DeleteRegValue HKCU "Software\Adobe\CSXS.6" "PlayerDebugMode"
+  DeleteRegValue HKCU "Software\Adobe\CSXS.7" "PlayerDebugMode"
+  DeleteRegValue HKCU "Software\Adobe\CSXS.8" "PlayerDebugMode"
+  DeleteRegValue HKCU "Software\Adobe\CSXS.9" "PlayerDebugMode"
+  DeleteRegValue HKCU "Software\Adobe\CSXS.10" "PlayerDebugMode"
+  DeleteRegValue HKCU "Software\Adobe\CSXS.11" "PlayerDebugMode"
+  DeleteRegValue HKCU "Software\Adobe\CSXS.12" "PlayerDebugMode"
 SectionEnd 
