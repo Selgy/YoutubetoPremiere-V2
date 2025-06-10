@@ -922,25 +922,76 @@ def get_unique_filename(base_path, filename, extension):
     
     return f"{filename}_{counter}.{extension}"
 
-def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_path, socketio, settings, current_download, cookies=None, user_agent=None):
-    check_result = check_ffmpeg(settings, socketio)
-    if not check_result['success']:
-        return None
-
+def download_video(video_url, socketio, settings, download_type='full', cookies=None, user_agent=None, start_time=None, end_time=None):
+    """Download a video from YouTube using yt-dlp with anti-403 measures"""
+    current_download = {'ydl': None}
+    is_cancelled = [False]
+    
     try:
-        import yt_dlp
+        # Load settings - including ffmpeg path
+        ffmpeg_path = get_ffmpeg_path()
+        if not ffmpeg_path:
+            error_msg = "FFmpeg not found. Please ensure FFmpeg is properly installed."
+            logging.error(error_msg)
+            socketio.emit('download-failed', {'message': error_msg})
+            return None
+        
+        logging.info(f"Using ffmpeg from: {ffmpeg_path}")
 
-        def progress_hook(d):
-            if d['status'] == 'downloading':
-                try:
-                    if '_percent_str' in d:
-                        percentage = d['_percent_str'].strip()
-                        percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
-                        percentage = percentage.replace(' ', '').replace('%', '')
-                        logging.info(f'Progress: {percentage}%')
-                        socketio.emit('progress', {'progress': percentage, 'type': 'full'})
-                except Exception as e:
-                    logging.error(f"Error in progress hook: {e}")
+        # Get current settings
+        resolution = settings.get('resolution', '1080')
+        download_path = settings.get('downloadPath', '')
+        download_mp3 = settings.get('downloadMP3', False)
+        seconds_before = int(settings.get('secondsBefore', 15))
+        seconds_after = int(settings.get('secondsAfter', 15))
+
+        if download_type == 'clip' and (start_time is None or end_time is None):
+            error_msg = "Start time and end time are required for clip downloads"
+            logging.error(error_msg)
+            socketio.emit('download-failed', {'message': error_msg})
+            return None
+
+        if download_type == 'clip':
+            logging.info("Handling as clip download")
+            return download_clip(video_url, socketio, settings, start_time, end_time, cookies, user_agent)
+        elif download_mp3:
+            logging.info("Handling as audio download")
+            return download_audio(video_url, socketio, settings, cookies, user_agent)
+        else:
+            logging.info("Handling as regular full download")
+
+        # Find ffmpeg
+        ffmpeg_path = get_ffmpeg_path()
+        if not ffmpeg_path:
+            error_msg = "FFmpeg not found. Please ensure FFmpeg is properly installed."
+            logging.error(error_msg)
+            socketio.emit('download-failed', {'message': error_msg})
+            return None
+
+        # Validate ffmpeg
+        try:
+            result = subprocess.run([ffmpeg_path, '-version'], capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                logging.info(f"FFmpeg validation successful: {ffmpeg_path}")
+            else:
+                logging.warning(f"FFmpeg validation failed, but continuing: {ffmpeg_path}")
+        except Exception as e:
+            # If we can't run ffmpeg -version, check if file exists and has reasonable size
+            if os.path.exists(ffmpeg_path):
+                file_size = os.path.getsize(ffmpeg_path)
+                if file_size > 1024 * 1024:  # At least 1MB
+                    logging.info(f"Assuming ffmpeg is valid based on file size ({file_size} bytes): {ffmpeg_path}")
+                else:
+                    logging.error(f"FFmpeg file too small ({file_size} bytes): {ffmpeg_path}")
+                    socketio.emit('download-failed', {'message': f'Invalid FFmpeg file: {ffmpeg_path}'})
+                    return None
+            else:
+                logging.error(f"FFmpeg file not found: {ffmpeg_path}")
+                socketio.emit('download-failed', {'message': f'FFmpeg not found: {ffmpeg_path}'})
+                return None
+
+        logging.info(f"Processing full request for {video_url}")
+        logging.info(f"Settings: resolution={resolution}, download_path={download_path}, download_mp3={download_mp3}")
 
         # Get preferred audio language from settings
         preferred_language = settings.get('preferredAudioLanguage', 'original')
@@ -955,14 +1006,42 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             'geo_bypass': True,  # Bypass geographic restrictions
             'geo_bypass_country': 'US',  # Use US as bypass country
             'nocheckcertificate': True,  # Skip certificate validation
-            'extractor_retries': 5,  # Retry extraction up to 5 times
-            'retry_sleep': lambda n: 5 * (n + 1),  # Exponential backoff
-            'sleep_interval_requests': 1,  # Add delay between requests
-            'sleep_interval_subtitles': 0.5,  # Add delay for subtitle requests
-            'max_sleep_interval': 5,  # Maximum sleep interval
-            'socket_timeout': 60,  # Socket timeout in seconds
+            'extractor_retries': 10,  # Increased from 5 to 10
+            'retry_sleep': lambda n: min(5 * (n + 1), 30),  # Exponential backoff with max 30s
+            'sleep_interval_requests': 2,  # Increased delay between requests
+            'sleep_interval_subtitles': 1,  # Increased delay for subtitle requests
+            'max_sleep_interval': 10,  # Increased maximum sleep interval
+            'socket_timeout': 90,  # Increased socket timeout
+            'http_chunk_size': 10485760,  # 10MB chunk size
+            # Force IPv4 to avoid IPv6 blocking issues
+            'force_ipv4': True,
+            # Additional anti-403 measures
+            'fragment_retries': 15,  # Increased fragment retries
+            'file_access_retries': 10,  # Increased file access retries
+            'ignoreerrors': False,  # Don't ignore critical errors
         }
         
+        # Enhanced HTTP headers to appear more like a real browser
+        enhanced_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0'
+        }
+        
+        if user_agent:
+            enhanced_headers['User-Agent'] = user_agent
+            
+        initial_ydl_opts['http_headers'] = enhanced_headers
+
         # Debug available formats first
         max_height = int(resolution.replace("p", ""))
         debug_formats_and_create_optimal_format_string(video_url, max_height, preferred_language, initial_ydl_opts)
@@ -1023,30 +1102,8 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             else:
                 logging.warning("No cookies available for YouTube authentication")
         
-        # Add user agent and headers for info extraction
-        if user_agent:
-            initial_ydl_opts['http_headers'] = {
-                'User-Agent': user_agent,
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-us,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1'
-            }
-            logging.info("Using User-Agent and headers from extension for info extraction")
-        else:
-            # Use a more realistic user agent as fallback for info extraction
-            initial_ydl_opts['http_headers'] = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-us,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1'
-            }
-            logging.info("Using fallback User-Agent and headers for info extraction")
+        # Add user agent and headers for info extraction - already set above in enhanced_headers
+        logging.info("Using enhanced User-Agent and headers for info extraction")
         
         # Extract video info first with authentication
         with yt_dlp.YoutubeDL(initial_ydl_opts) as ydl:
@@ -1074,7 +1131,23 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             output_path = os.path.join(download_path, unique_filename)
             logging.info(f"Setting output path to: {output_path}")
 
-            # Configure download options with improved file handling
+            # Progress hook to track download progress and send updates
+            def progress_hook(d):
+                if is_cancelled[0]:
+                    return
+                    
+                if d['status'] == 'downloading':
+                    try:
+                        if '_percent_str' in d:
+                            percentage = d['_percent_str'].strip()
+                            percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
+                            percentage = percentage.replace(' ', '').replace('%', '')
+                            logging.info(f'Full video Progress: {percentage}%')
+                            socketio.emit('progress', {'progress': percentage, 'type': 'full'})
+                    except Exception as e:
+                        logging.error(f"Error in full video progress hook: {e}")
+
+            # Configure download options with enhanced anti-403 measures
             ydl_opts = {
                 'format': format_string,
                 'merge_output_format': 'mp4',
@@ -1089,25 +1162,35 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 'nocheckcertificate': True,  # Skip certificate validation which can fail in some environments
                 'ignoreerrors': False,  # Don't ignore critical errors that could cause file issues
                 'postprocessor_args': ['-threads', '4'],  # Limit threads to avoid resource issues
-                'external_downloader_args': ['-timeout', '60'],  # Add timeout to prevent hanging
+                'external_downloader_args': ['-timeout', '120'],  # Increased timeout
                 'geo_bypass': True,  # Bypass geographic restrictions
                 'geo_bypass_country': 'US',  # Use US as bypass country
-                'extractor_retries': 5,  # Retry extraction up to 5 times
-                'retry_sleep': lambda n: 5 * (n + 1),  # Exponential backoff
+                'extractor_retries': 10,  # Increased from 5 to 10
+                'retry_sleep': lambda n: min(5 * (n + 1), 30),  # Exponential backoff with max 30s
                 'age_limit': None,  # Don't apply age limits
-                'sleep_interval_requests': 1,  # Add delay between requests
-                'sleep_interval_subtitles': 0.5,  # Add delay for subtitle requests
-                'max_sleep_interval': 5,  # Maximum sleep interval
-                'socket_timeout': 60,  # Socket timeout in seconds
+                'sleep_interval_requests': 2,  # Increased delay between requests  
+                'sleep_interval_subtitles': 1,  # Increased delay for subtitle requests
+                'max_sleep_interval': 10,  # Increased maximum sleep interval
+                'socket_timeout': 90,  # Increased socket timeout
+                'http_chunk_size': 10485760,  # 10MB chunk size for better stability
+                # Force IPv4 to avoid IPv6 blocking issues
+                'force_ipv4': True,
+                # Enhanced anti-403 options
+                'fragment_retries': 15,  # Increased fragment retries
+                'file_access_retries': 10,  # Increased file access retries  
+                'concurrent_fragment_downloads': 1,  # Prevent concurrent issues that might trigger 403
+                'keepvideo': False,  # Don't keep separate video files after merging
                 'outtmpl': {
                     'default': os.path.join(download_path, os.path.splitext(unique_filename)[0] + '.%(ext)s')
                 },
-                # Improved file handling options
-                'keepvideo': False,  # Don't keep separate video files after merging
-                'fragment_retries': 10,  # Retry fragment downloads
-                'file_access_retries': 5,  # Retry file access operations
-                'concurrent_fragment_downloads': 1,  # Prevent concurrent issues
+                # Add sleep intervals to avoid rate limiting
+                'sleep_interval': 1,  # Sleep 1 second between downloads
+                'max_sleep_interval': 5,  # Max 5 seconds sleep
+                'sleep_requests': 1.5,  # Sleep 1.5 seconds between requests
             }
+            
+            # Copy enhanced headers to download options
+            ydl_opts['http_headers'] = enhanced_headers.copy()
             
             # Check for manual cookies file first (more reliable for age-restricted content)
             if manual_cookies_file and os.path.exists(manual_cookies_file):
@@ -1130,30 +1213,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 else:
                     logging.warning("No cookies available for YouTube authentication")
             
-            # Add user agent and additional headers if provided
-            if user_agent:
-                ydl_opts['http_headers'] = {
-                    'User-Agent': user_agent,
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'Accept-Language': 'en-us,en;q=0.5',
-                    'Accept-Encoding': 'gzip, deflate',
-                    'DNT': '1',
-                    'Connection': 'keep-alive',
-                    'Upgrade-Insecure-Requests': '1'
-                }
-                logging.info("Using User-Agent and headers from extension for download")
-            else:
-                # Use a more realistic user agent as fallback
-                ydl_opts['http_headers'] = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'Accept-Language': 'en-us,en;q=0.5',
-                    'Accept-Encoding': 'gzip, deflate',
-                    'DNT': '1',
-                    'Connection': 'keep-alive',
-                    'Upgrade-Insecure-Requests': '1'
-                }
-                logging.info("Using fallback User-Agent and headers for download")
+            logging.info("Using enhanced User-Agent and headers for download")
 
             # Download the video
             logging.info("Starting video download...")
@@ -1245,82 +1305,46 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                         actual_file = final_path
                         
                     except subprocess.CalledProcessError as e:
-                        logging.error(f"Error merging files: {e}")
-                        if e.stderr:
-                            logging.error(f"FFmpeg stderr: {e.stderr}")
-                        # Don't fail completely - maybe one of the files is usable
-                        if os.path.exists(video_file):
-                            # Use video file if it exists and seems complete
-                            actual_file = video_file
-                            logging.info(f"Using video file as fallback: {video_file}")
-                
-                # If still no file, look for any files with similar names
-                if not actual_file:
-                    all_files = os.listdir(base_dir) if os.path.exists(base_dir) else []
-                    base_filename = os.path.basename(base_name)
-                    
-                    # Look for files that start with our base filename
-                    candidates = [f for f in all_files if f.startswith(base_filename) and f.endswith(('.mp4', '.mkv', '.webm'))]
-                    
-                    if candidates:
-                        # Use the most recently modified file
-                        candidates_full = [os.path.join(base_dir, f) for f in candidates]
-                        candidates_full.sort(key=os.path.getmtime, reverse=True)
-                        actual_file = candidates_full[0]
-                        logging.info(f"Using most recent candidate file: {actual_file}")
-                        
-                        # Move it to the expected location if different
+                        logging.error(f"Failed to merge video and audio: {e}")
+                        logging.error(f"Merge stderr: {e.stderr}")
+                        socketio.emit('download-failed', {'message': f'Failed to merge video and audio: {e}'})
+                        return None
+                else:
+                    # Look for any .mp4 files with similar names
+                    pattern = os.path.join(base_dir, f"{sanitized_title}*.mp4")
+                    matching_files = glob.glob(pattern)
+                    if matching_files:
+                        actual_file = matching_files[0]
+                        logging.info(f"Found alternative file: {actual_file}")
+                        # Rename to expected path if different
                         if actual_file != final_path:
                             try:
                                 os.rename(actual_file, final_path)
                                 actual_file = final_path
-                                logging.info(f"Moved file to expected location: {final_path}")
+                                logging.info(f"Renamed file to: {final_path}")
                             except Exception as e:
-                                logging.warning(f"Could not move file to expected location: {e}")
+                                logging.warning(f"Could not rename file: {e}")
+                    else:
+                        logging.error(f"No downloaded file found. Expected: {final_path}")
+                        socketio.emit('download-failed', {'message': 'Download completed but file not found'})
+                        return None
 
             if actual_file and os.path.exists(actual_file):
-                logging.info(f"Using file: {actual_file}")
+                logging.info(f"Video downloaded successfully: {actual_file}")
                 
-                # Add URL to metadata
-                metadata_command = [
-                    ffmpeg_path,  # Use the full path here
-                    '-i', actual_file,
-                    '-metadata', f'comment={video_url}',
-                    '-codec', 'copy',
-                    f'{actual_file}_with_metadata.mp4'
-                ]
-                logging.info(f"Running FFmpeg command: {' '.join(metadata_command)}")
-
-                try:
-                    subprocess.run(metadata_command, check=True)
-                    os.replace(f'{actual_file}_with_metadata.mp4', actual_file)
-                    
-                    logging.info(f"Video downloaded and processed: {actual_file}")
+                # Emit both completion events before returning
+                if socketio:
                     socketio.emit('import_video', {'path': actual_file})
                     # Emit both formats to ensure compatibility
                     socketio.emit('download-complete', {'url': video_url, 'path': actual_file})  # Hyphenated format for Chrome extension
                     socketio.emit('download_complete')  # Underscore format for other clients
-                    
-                    return actual_file
-                except subprocess.CalledProcessError as e:
-                    logging.error(f"Error adding metadata: {e}")
-                    logging.error(f"FFmpeg stderr: {e.stderr if hasattr(e, 'stderr') else 'No stderr'}")
-                    # Still return the file even if metadata failed
-                    logging.info(f"Returning file without metadata: {actual_file}")
-                    socketio.emit('import_video', {'path': actual_file})
-                    socketio.emit('download-complete', {'url': video_url, 'path': actual_file})
-                    socketio.emit('download_complete')
-                    return actual_file
+
+                return actual_file
             else:
-                logging.error(f"No suitable file found. Expected: {final_path}")
-                # List all files in directory for debugging
-                try:
-                    all_files = os.listdir(os.path.dirname(final_path))
-                    logging.error(f"Files in download directory: {all_files}")
-                except Exception as e:
-                    logging.error(f"Could not list directory contents: {e}")
-                
-                raise Exception(f"Downloaded file not found at {final_path}")
+                error_msg = f"File not found after download: {final_path}"
+                logging.error(error_msg)
+                socketio.emit('download-failed', {'message': error_msg})
+                return None
 
     except Exception as e:
         error_message = f"Error downloading video: {str(e)}"
@@ -1328,12 +1352,13 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         logging.error(f"Exception type: {type(e)}")
         logging.error(f"Exception traceback: {traceback.format_exc()}")
         
-        # Check for Windows-specific stdout/stderr issues
-        if "[Errno 22]" in str(e) or "Invalid argument" in str(e):
-            error_message = "Download failed due to Windows output stream issue. This is a known yt-dlp issue on Windows. Please try again or restart the application."
-            logging.error("Windows stdout/stderr pipe error detected - recommending restart")
+        # Check for specific 403 errors and provide helpful message
+        if "403" in str(e) or "Forbidden" in str(e):
+            error_message = "HTTP 403 Forbidden error detected. This is usually caused by YouTube's anti-bot protection. Try waiting a few minutes before attempting to download again, or use a VPN if the problem persists."
+            logging.error("403 Forbidden detected - likely YouTube anti-bot protection")
         
-        socketio.emit('download-failed', {'message': error_message})
+        if socketio:
+            socketio.emit('download-failed', {'message': error_message})
         return None
 
 def download_audio(video_url, download_path, ffmpeg_path, socketio, current_download=None, settings=None, cookies=None, user_agent=None):
