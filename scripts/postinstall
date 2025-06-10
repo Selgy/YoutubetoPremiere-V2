@@ -36,10 +36,24 @@ echo "CEP Source Path: $CEP_SOURCE_PATH"
 echo "Creating CEP extensions directory..."
 mkdir -p "$CEP_EXTENSIONS_DIR" && echo "✅ Directory created successfully." || { echo "❌ Failed to create $CEP_EXTENSIONS_DIR"; exit 1; }
 
-# Remove existing installation if it exists
+# Remove existing installation if it exists (thorough cleanup)
+echo "Checking for existing installation..."
 if [ -d "$TARGET_DIR" ]; then
-    echo "Existing installation found. Removing..."
+    echo "Existing installation found. Performing thorough cleanup..."
+    
+    # Kill any running processes first
+    pkill -f "YoutubetoPremiere" 2>/dev/null || true
+    
+    # Remove quarantine attributes before deletion (if any)
+    xattr -dr com.apple.quarantine "$TARGET_DIR" 2>/dev/null || true
+    
+    # Force removal of the directory
     rm -rf "$TARGET_DIR" && echo "✅ Existing directory removed." || { echo "❌ Failed to remove existing directory"; exit 1; }
+    
+    # Small delay to ensure filesystem sync
+    sleep 1
+else
+    echo "✅ No existing installation found."
 fi
 
 # Install CEP extension from the PKG

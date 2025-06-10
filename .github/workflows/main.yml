@@ -295,6 +295,18 @@ jobs:
           choco install nsis -y --force
           echo "NSIS installation completed"
 
+      - name: Download NSIS nsProcess plugin
+        run: |
+          echo "Downloading NSIS nsProcess plugin..."
+          Invoke-WebRequest -Uri "https://github.com/NSIS-Community/nsis-plugins/releases/download/nsprocess-1.6/nsprocess-1.6.zip" -OutFile "nsprocess.zip"
+          Expand-Archive -Path "nsprocess.zip" -DestinationPath "nsprocess_temp" -Force
+          Copy-Item -Path "nsprocess_temp\Plugin\*.dll" -Destination "C:\Program Files (x86)\NSIS\Plugins\x86-unicode\" -Force
+          Copy-Item -Path "nsprocess_temp\Include\*.nsh" -Destination "C:\Program Files (x86)\NSIS\Include\" -Force
+          Remove-Item "nsprocess.zip" -Force
+          Remove-Item "nsprocess_temp" -Recurse -Force
+          echo "nsProcess plugin installed"
+        shell: powershell
+
       - name: Download FFmpeg (if not cached)
         if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
         run: |

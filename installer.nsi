@@ -1,6 +1,7 @@
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"
+!include "nsProcess.nsh"
 
 ; Version is passed from the workflow as a command line parameter
 ; If VERSION is not defined via command line, use a default
@@ -36,6 +37,30 @@ FunctionEnd
 
 Section "Install YouTube to Premiere Pro" SEC01
   DetailPrint "Installing YouTube to Premiere Pro..."
+  
+  # Check if YouTube to Premiere Pro is running and stop it
+  DetailPrint "Checking for running processes..."
+  ${nsProcess::FindProcess} "YoutubetoPremiere.exe" $R0
+  ${If} $R0 == 0
+    MessageBox MB_OKCANCEL|MB_ICONSTOP "YouTube to Premiere Pro is currently running. Click OK to close it automatically, or Cancel to abort installation." IDOK kill_process IDCANCEL abort_install
+    kill_process:
+      DetailPrint "Stopping YouTube to Premiere Pro process..."
+      ${nsProcess::KillProcess} "YoutubetoPremiere.exe" $R0
+      Sleep 2000
+      Goto cleanup_install
+    abort_install:
+      DetailPrint "Installation aborted by user"
+      Abort
+  ${EndIf}
+  
+  cleanup_install:
+  # Remove any existing installation first  
+  DetailPrint "Cleaning up previous installation..."
+  RMDir /r "$INSTDIR"
+  
+  # Create directory structure
+  CreateDirectory "$INSTDIR"
+  CreateDirectory "$INSTDIR\exec"
   
   # Install Python executable in exec subfolder
   SetOutPath "$INSTDIR\exec"
