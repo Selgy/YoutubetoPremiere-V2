@@ -295,49 +295,59 @@ jobs:
           choco install nsis -y --force
           echo "NSIS installation completed"
 
-      - name: Download NSIS nsProcess plugin
+      - name: Install NSIS nsProcess plugin
         run: |
-          echo "Downloading NSIS nsProcess plugin..."
-          # Use a working download URL for nsProcess plugin
-          try {
-            Invoke-WebRequest -Uri "https://github.com/simdsoft/nsProcess/releases/download/1.6/nsProcess.zip" -OutFile "nsprocess.zip" -UseBasicParsing
-          } catch {
-            echo "Primary URL failed, trying alternative..."
-            # Alternative: compile from source or use included binaries
-            curl -L "https://nsis.sourceforge.io/mediawiki/images/1/1a/NsProcess.zip" -o nsprocess.zip
-          }
+          echo "Installing NSIS nsProcess plugin..."
           
-          if (Test-Path "nsprocess.zip") {
-            Expand-Archive -Path "nsprocess.zip" -DestinationPath "nsprocess_temp" -Force
-            
-            # Create plugin directories if they don't exist
-            New-Item -ItemType Directory -Path "C:\Program Files (x86)\NSIS\Plugins\x86-unicode" -Force | Out-Null
-            New-Item -ItemType Directory -Path "C:\Program Files (x86)\NSIS\Plugins\x86-ansi" -Force | Out-Null
-            New-Item -ItemType Directory -Path "C:\Program Files (x86)\NSIS\Include" -Force | Out-Null
-            
-            # Find and copy plugin files
-            $pluginFiles = Get-ChildItem -Path "nsprocess_temp" -Recurse -Filter "*.dll"
-            foreach ($file in $pluginFiles) {
-              if ($file.Name -eq "nsProcess.dll") {
-                Copy-Item -Path $file.FullName -Destination "C:\Program Files (x86)\NSIS\Plugins\x86-ansi\nsProcess.dll" -Force
-                Copy-Item -Path $file.FullName -Destination "C:\Program Files (x86)\NSIS\Plugins\x86-unicode\nsProcess.dll" -Force
-              } elseif ($file.Name -eq "nsProcessW.dll") {
-                Copy-Item -Path $file.FullName -Destination "C:\Program Files (x86)\NSIS\Plugins\x86-unicode\nsProcess.dll" -Force
-              }
-            }
-            
-            # Find and copy include files
-            $includeFiles = Get-ChildItem -Path "nsprocess_temp" -Recurse -Filter "*.nsh"
-            foreach ($file in $includeFiles) {
-              Copy-Item -Path $file.FullName -Destination "C:\Program Files (x86)\NSIS\Include\" -Force
-            }
-            
-            Remove-Item "nsprocess.zip" -Force
-            Remove-Item "nsprocess_temp" -Recurse -Force
-            echo "nsProcess plugin installed successfully"
-          } else {
-            echo "Warning: Failed to download nsProcess plugin. Continuing without it..."
-          }
+          # Create plugin directories if they don't exist
+          New-Item -ItemType Directory -Path "C:\Program Files (x86)\NSIS\Plugins\x86-unicode" -Force | Out-Null
+          New-Item -ItemType Directory -Path "C:\Program Files (x86)\NSIS\Plugins\x86-ansi" -Force | Out-Null
+          New-Item -ItemType Directory -Path "C:\Program Files (x86)\NSIS\Include" -Force | Out-Null
+          
+          # Create a minimal nsProcess.dll if none exists
+          # This is a workaround - we'll create the include file that provides the functionality without the DLL
+          $nsProcessNsh = @"
+          !ifndef NSPROCESS_NSH
+          !define NSPROCESS_NSH
+          
+          ; nsProcess plugin simulation using native Windows commands
+          !define nsProcess.FindProcess '!insertmacro nsProcess.FindProcess'
+          !define nsProcess.KillProcess '!insertmacro nsProcess.KillProcess'
+          
+          !macro nsProcess.FindProcess PROCESS_NAME
+            ; Use tasklist to check if process exists
+            nsExec::ExecToStack 'tasklist /FI "IMAGENAME eq `${PROCESS_NAME}`" /NH /FO CSV 2>nul | find /I "`${PROCESS_NAME}`"'
+            Pop `$0`  ; Exit code (0 if found, 1 if not found)
+            Pop `$1`  ; Output (ignored)
+            ; Convert exit code: 0 -> 0 (found), 1 -> 603 (not found)
+            `${If} `$0 == 0
+              StrCpy `$R0 0
+            `${Else}
+              StrCpy `$R0 603
+            `${EndIf}
+            Push `$R0
+          !macroend
+          
+          !macro nsProcess.KillProcess PROCESS_NAME
+            ; Use taskkill to terminate process
+            nsExec::ExecToStack 'taskkill /F /IM "`${PROCESS_NAME}`" 2>nul'
+            Pop `$0`  ; Exit code
+            ; Convert exit code: 0 -> 0 (success), others -> 601 (error)
+            `${If} `$0 == 0
+              StrCpy `$R0 0
+            `${Else}
+              StrCpy `$R0 601
+            `${EndIf}
+            Push `$R0
+          !macroend
+          
+          !endif
+          "@
+          
+          # Write the nsProcess.nsh include file
+          $nsProcessNsh | Out-File -FilePath "C:\Program Files (x86)\NSIS\Include\nsProcess.nsh" -Encoding ASCII -Force
+          
+          echo "nsProcess plugin compatibility layer installed successfully"
         shell: powershell
 
       - name: Download FFmpeg (if not cached)
