@@ -76,24 +76,35 @@ jobs:
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE }}
           P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          INSTALLER_CERTIFICATE_BASE64: ${{ secrets.SIGN_INSTALL_CERTIFICATE }}
+          P12_INSTALL_PASSWORD: ${{ secrets.P12_INSTALL_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           # create variables
           CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
+          INSTALLER_CERTIFICATE_PATH=$RUNNER_TEMP/installer_certificate.p12
           KEYCHAIN_PATH=$RUNNER_TEMP/SelgykeyAPP.keychain-db
           
-          # import certificate from secrets
+          # import application certificate from secrets
           echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode > $CERTIFICATE_PATH
-          echo "Certificate decoded, size: $(wc -c < $CERTIFICATE_PATH) bytes"
+          echo "Application certificate decoded, size: $(wc -c < $CERTIFICATE_PATH) bytes"
+          
+          # import installer certificate from secrets
+          echo -n "$INSTALLER_CERTIFICATE_BASE64" | base64 --decode > $INSTALLER_CERTIFICATE_PATH
+          echo "Installer certificate decoded, size: $(wc -c < $INSTALLER_CERTIFICATE_PATH) bytes"
           
           # create temporary keychain
           security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           
-          # import certificate to keychain
-          echo "Importing certificate..."
+          # import both certificates to keychain
+          echo "Importing application certificate..."
           security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          
+          echo "Importing installer certificate..."
+          security import $INSTALLER_CERTIFICATE_PATH -P "$P12_INSTALL_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          
           security list-keychain -d user -s $KEYCHAIN_PATH
           
           # List all identities in custom keychain
@@ -161,8 +172,8 @@ jobs:
       - name: Sign PKG installer
         run: |
           echo "Signing PKG installer..."
-          # Use productsign instead of codesign for PKG files
-          productsign --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" YouTubetoPremiere.pkg YouTubetoPremiere-signed.pkg
+          # Use productsign with the installer certificate
+          productsign --sign "Developer ID Installer: mickael ducatez (9H8DB46V75)" YouTubetoPremiere.pkg YouTubetoPremiere-signed.pkg
           mv YouTubetoPremiere-signed.pkg YouTubetoPremiere.pkg
           echo "PKG installer signed successfully"
 
