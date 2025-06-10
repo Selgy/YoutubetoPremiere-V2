@@ -1259,7 +1259,7 @@ function sendURL(downloadType, additionalData = {}) {
         .then(data => {
             if (!data.isValid) {
                 button.classList.add('failure');
-                showNotification('Clé de licence invalide ou manquante. Veuillez entrer une clé de licence valide dans les paramètres.', 'error');
+                showNotification('Clé de licence invalide ou manquante. Veuillez entrer une clé de licence valide dans les paramètres de l\'extension Premiere Pro.', 'error');
                 setTimeout(() => {
                     button.classList.remove('failure');
                 }, 1000);
