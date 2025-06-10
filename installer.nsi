@@ -34,16 +34,15 @@ Section "Install"
   DetailPrint "Installing Python application..."
   File /r "dist\YoutubetoPremiere\*.*"
   
-  # Copy the CEP extension 
+  # Copy the CEP extension (optional, with error handling)
   DetailPrint "Installing CEP extension..."
   CreateDirectory "$INSTDIR\CEP"
-  File /r /x "exec" "dist\cep\*.*" "$INSTDIR\CEP\"
   
-  # Ensure .debug file is included (hidden files might not be copied by *)
-  !if /FileExists "dist\cep\.debug"
-    DetailPrint "Installing .debug file..."
-    File /oname="$INSTDIR\CEP\.debug" "dist\cep\.debug"
-  !endif
+  # Try to copy CEP files, but don't fail if they don't exist
+  File /nonfatal /r /x "exec" "dist\cep\*.*" "$INSTDIR\CEP\"
+  
+  # Try to copy .debug file if it exists
+  File /nonfatal /oname="$INSTDIR\CEP\.debug" "dist\cep\.debug"
   
   # Create shortcut to the main executable
   CreateDirectory "$SMPROGRAMS\YouTube to Premiere Pro"

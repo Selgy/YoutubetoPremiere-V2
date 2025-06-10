@@ -297,8 +297,19 @@ jobs:
         run: |
           echo "Building CEP extension..."
           yarn build:cep
+          echo "CEP build completed"
+          echo "Checking CEP build output:"
+          if (Test-Path "./dist/cep") {
+            echo "CEP directory exists:"
+            Get-ChildItem "./dist/cep" -Recurse | Select-Object -First 10 | ForEach-Object { echo "  $($_.FullName)" }
+          } else {
+            echo "WARNING: CEP directory not found at ./dist/cep"
+            echo "Contents of ./dist:"
+            Get-ChildItem "./dist" | ForEach-Object { echo "  $($_.Name)" }
+          }
         env:
           ZXP_PACKAGE: false
+        shell: powershell
 
       - name: Copy Python executable to CEP extension
         run: |
