@@ -159,9 +159,18 @@ jobs:
           echo "Copying Python executable to CEP extension..."
           rm -rf ./dist/cep/exec
           mkdir -p ./dist/cep/exec
-          cp -R ./dist/YoutubetoPremiere/YoutubetoPremiere ./dist/cep/exec/
-          cp -R ./dist/YoutubetoPremiere/_internal ./dist/cep/exec/
+          cp -R ./dist/YoutubetoPremiere/* ./dist/cep/exec/
           echo "Python executable copied to CEP extension"
+          
+          # Verify sounds folder is included
+          echo "Verifying sounds folder inclusion:"
+          if [ -d "./dist/cep/exec/sounds" ]; then
+            echo "✅ Sounds folder found in CEP extension"
+            echo "Sounds files:"
+            ls -la ./dist/cep/exec/sounds/ | head -10
+          else
+            echo "❌ WARNING: Sounds folder not found in CEP extension"
+          fi
 
       - name: Make Executable
         run: |
@@ -468,6 +477,29 @@ jobs:
           New-Item -ItemType Directory -Path "./dist/cep/exec" -Force
           Copy-Item -Path "./dist/YoutubetoPremiere/*" -Destination "./dist/cep/exec/" -Recurse -Force
           echo "Python executable copied successfully"
+          
+          # Verify critical files
+          echo "Verifying CEP extension structure:"
+          if (Test-Path "./dist/cep/exec/YoutubetoPremiere.exe") {
+            echo "✅ YoutubetoPremiere.exe found in CEP extension"
+          } else {
+            echo "❌ ERROR: YoutubetoPremiere.exe missing in CEP extension"
+            exit 1
+          }
+          
+          if (Test-Path "./dist/cep/CSXS/manifest.xml") {
+            echo "✅ CEP manifest.xml found"
+          } else {
+            echo "❌ ERROR: CEP manifest.xml missing"
+            exit 1
+          }
+          
+          # Show CEP extension structure
+          echo "CEP extension directory structure:"
+          Get-ChildItem "./dist/cep" -Recurse | Where-Object { $_.PSIsContainer -eq $false } | Select-Object -First 15 | ForEach-Object { 
+            $relativePath = $_.FullName.Replace((Get-Location).Path + "\dist\cep\", "")
+            echo "  $relativePath"
+          }
         shell: powershell
 
 
@@ -484,16 +516,34 @@ jobs:
           echo "Current directory: $(Get-Location)"
           
           # Verify required files exist
-          echo "Verifying required files:"
-          $requiredFiles = @("installer.nsi", "dist\YoutubetoPremiere", "dist\cep")
+          echo "Verifying required files for NSIS installer:"
+          $requiredFiles = @(
+            "installer.nsi",
+            "dist\YoutubetoPremiere\YoutubetoPremiere.exe",
+            "dist\cep\CSXS\manifest.xml",
+            "dist\cep\exec\YoutubetoPremiere.exe"
+          )
+          
+          $allFilesOk = $true
           foreach ($file in $requiredFiles) {
             if (Test-Path $file) {
               echo "✅ $file exists"
             } else {
               echo "❌ $file missing"
-              exit 1
+              $allFilesOk = $false
             }
           }
+          
+          if (-not $allFilesOk) {
+            echo "❌ CRITICAL ERROR: Required files missing for installer creation"
+            echo "Current dist directory structure:"
+            if (Test-Path "dist") {
+              Get-ChildItem "dist" -Recurse | Select-Object -First 20 | ForEach-Object { echo "  $($_.FullName)" }
+            }
+            exit 1
+          }
+          
+          echo "✅ All required files verified for installer creation"
           
           # Check nsProcess plugin
           echo "Checking nsProcess plugin:"

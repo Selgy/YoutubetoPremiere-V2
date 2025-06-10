@@ -60,62 +60,55 @@ Section "Install YouTube to Premiere Pro" SEC01
   SetOutPath "$INSTDIR"
   DetailPrint "Installing CEP extension..."
   
-  # Try multiple ways to detect and copy CEP files
-  DetailPrint "Checking for CEP extension files..."
+  # Install CEP extension files - copy entire cep folder content
+  DetailPrint "Installing CEP extension files..."
   
-  # Check for manifest.xml in different locations
-  IfFileExists "dist\cep\manifest.xml" found_manifest_root 0
-  IfFileExists "dist\cep\CSXS\manifest.xml" found_manifest_csxs 0
-  IfFileExists "dist\cep\*.*" found_cep_files no_cep_files
+  IfFileExists "dist\cep\*.*" cep_files_exist no_cep_files
   
-  found_manifest_root:
-    DetailPrint "Found manifest.xml in root - copying all CEP files except exec..."
-    File /r /x "exec" "dist\cep\*.*"
-    DetailPrint "CEP extension files copied from root manifest detection"
-    Goto cep_done
-    
-  found_manifest_csxs:
-    DetailPrint "Found manifest.xml in CSXS folder - copying all CEP files except exec..."
-    File /r /x "exec" "dist\cep\*.*"
-    DetailPrint "CEP extension files copied from CSXS manifest detection"
-    Goto cep_done
-    
-  found_cep_files:
-    DetailPrint "Found dist\cep directory with files - copying all except exec..."
-    File /r /x "exec" "dist\cep\*.*"
-    DetailPrint "CEP extension files copied from directory detection"
+  cep_files_exist:
+    DetailPrint "Copying entire CEP extension to $INSTDIR..."
+    SetOutPath "$INSTDIR"
+    File /r "dist\cep\*.*"
+    DetailPrint "CEP extension files copied successfully"
     Goto cep_done
     
   no_cep_files:
-    DetailPrint "WARNING: No CEP extension files found in dist\cep\"
-    DetailPrint "Installation will continue with exec folder only"
+    DetailPrint "ERROR: No CEP extension files found in dist\cep\"
+    DetailPrint "Installation cannot continue without CEP extension files"
+    MessageBox MB_OK|MB_ICONSTOP "Installation failed: CEP extension files not found."
+    Abort
     
   cep_done:
   
-  # Then ensure exec folder exists and copy Python executable
-  CreateDirectory "$INSTDIR\exec"
-  DetailPrint "Created exec directory: $INSTDIR\exec"
+
   
-  IfFileExists "dist\cep\exec\*.*" copy_exec skip_exec
-  copy_exec:
-    DetailPrint "Copying Python executable from CEP build..."
-    SetOutPath "$INSTDIR\exec"
-    File /r "dist\cep\exec\*.*"
-    DetailPrint "Python executable copied from CEP extension"
-    Goto done_exec
-  skip_exec:
-    DetailPrint "Python executable not found in CEP extension, using fallback..."
-    IfFileExists "dist\YoutubetoPremiere\*.*" fallback_exists no_fallback
-    fallback_exists:
-      SetOutPath "$INSTDIR\exec"
-      File /r "dist\YoutubetoPremiere\*.*"
-      DetailPrint "Python executable copied from direct build"
-      Goto done_exec
-    no_fallback:
-      DetailPrint "ERROR: No Python executable found in fallback location either!"
-  done_exec:
+  # Final verification of installation
+  DetailPrint "Performing final installation verification..."
   
-  DetailPrint "Installation completed"
+  # Check for essential CEP files
+  IfFileExists "$INSTDIR\CSXS\manifest.xml" manifest_ok manifest_missing
+  manifest_ok:
+    DetailPrint "✓ CEP manifest.xml found"
+    Goto check_exec_final
+  manifest_missing:
+    DetailPrint "❌ CRITICAL ERROR: CEP manifest.xml not found - extension will not work!"
+    MessageBox MB_OK|MB_ICONSTOP "Installation verification failed: CEP manifest missing."
+    Abort
+    
+  check_exec_final:
+    IfFileExists "$INSTDIR\exec\YoutubetoPremiere.exe" final_ok final_missing
+  final_ok:
+    DetailPrint "✓ Python executable found"
+    DetailPrint "✅ Installation completed successfully!"
+    DetailPrint "Extension installed at: $INSTDIR"
+    DetailPrint "The extension should now be available in Adobe Premiere Pro"
+    Goto installation_done
+  final_missing:
+    DetailPrint "❌ CRITICAL ERROR: Python executable missing after installation!"
+    MessageBox MB_OK|MB_ICONSTOP "Installation verification failed: Python executable is missing. Please try reinstalling."
+    Abort
+    
+  installation_done:
 SectionEnd
 
 Section "Enable Debugging for Adobe CEP"
