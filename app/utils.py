@@ -53,18 +53,14 @@ def load_settings():
 
     settings['SETTINGS_FILE'] = settings_path
     
-    # Set up FFmpeg using the init module function
+    # Set up FFmpeg
     try:
-        from init import find_ffmpeg as init_find_ffmpeg
-        settings['ffmpeg_path'] = init_find_ffmpeg()
-        if settings['ffmpeg_path']:
-            # Add ffmpeg directory to PATH
-            ffmpeg_dir = os.path.dirname(settings['ffmpeg_path'])
-            os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
-            logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
-            logging.info(f"Using ffmpeg from: {settings['ffmpeg_path']}")
-        else:
-            raise Exception("FFmpeg not found in any of the expected locations")
+        settings['ffmpeg_path'] = find_ffmpeg()
+        # Add ffmpeg directory to PATH
+        ffmpeg_dir = os.path.dirname(settings['ffmpeg_path'])
+        os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
+        logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
+        logging.info(f"Using ffmpeg from: {settings['ffmpeg_path']}")
     except Exception as e:
         error_msg = f"Error setting up ffmpeg: {e}"
         logging.error(error_msg)
