@@ -176,7 +176,15 @@ jobs:
       - name: Create PKG installer
         run: |
           echo "Creating PKG installer..."
-          pkgbuild --root ./dist --identifier com.selgy.youtubetopremiere --version 1.0 --scripts ./scripts YouTubetoPremiere.pkg
+          # Create PKG with proper macOS compatibility settings
+          pkgbuild --root ./dist \
+            --identifier com.selgy.youtubetopremiere \
+            --version 1.0 \
+            --install-location /Applications \
+            --scripts ./scripts \
+            --min-os-version 10.15 \
+            YouTubetoPremiere.pkg
+          echo "PKG installer created successfully"
           
       - name: Sign PKG installer
         run: |
