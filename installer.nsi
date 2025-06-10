@@ -60,12 +60,37 @@ Section "Install YouTube to Premiere Pro" SEC01
   SetOutPath "$INSTDIR"
   DetailPrint "Installing CEP extension..."
   
-  # First copy all CEP files except exec folder
-  IfFileExists "dist\cep\manifest.xml" 0 skip_manifest
-    DetailPrint "Found CEP extension files - copying all except exec..."
+  # Try multiple ways to detect and copy CEP files
+  DetailPrint "Checking for CEP extension files..."
+  
+  # Check for manifest.xml in different locations
+  IfFileExists "dist\cep\manifest.xml" found_manifest_root 0
+  IfFileExists "dist\cep\CSXS\manifest.xml" found_manifest_csxs 0
+  IfFileExists "dist\cep\*.*" found_cep_files no_cep_files
+  
+  found_manifest_root:
+    DetailPrint "Found manifest.xml in root - copying all CEP files except exec..."
     File /r /x "exec" "dist\cep\*.*"
-    DetailPrint "CEP extension core files copied"
-  skip_manifest:
+    DetailPrint "CEP extension files copied from root manifest detection"
+    Goto cep_done
+    
+  found_manifest_csxs:
+    DetailPrint "Found manifest.xml in CSXS folder - copying all CEP files except exec..."
+    File /r /x "exec" "dist\cep\*.*"
+    DetailPrint "CEP extension files copied from CSXS manifest detection"
+    Goto cep_done
+    
+  found_cep_files:
+    DetailPrint "Found dist\cep directory with files - copying all except exec..."
+    File /r /x "exec" "dist\cep\*.*"
+    DetailPrint "CEP extension files copied from directory detection"
+    Goto cep_done
+    
+  no_cep_files:
+    DetailPrint "WARNING: No CEP extension files found in dist\cep\"
+    DetailPrint "Installation will continue with exec folder only"
+    
+  cep_done:
   
   # Then ensure exec folder exists and copy Python executable
   CreateDirectory "$INSTDIR\exec"
