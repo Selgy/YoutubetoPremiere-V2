@@ -3,146 +3,136 @@
 # Exit on any error
 set -e
 
-# Get the installation directory from the first argument
-INSTALL_DIR="$3"
-
-# Debug: Show what PKG provides
-echo "PKG Arguments: $1 $2 $3 $4"
-echo "Available in install directory:"
-ls -la "$INSTALL_DIR" 2>/dev/null || echo "Install directory not accessible"
-
-# The actual structure is likely in /Applications since we use --install-location /Applications
-if [ -d "/Applications/YoutubetoPremiere" ]; then
-    APP_DIR="/Applications/YoutubetoPremiere"
-elif [ -d "$INSTALL_DIR/YoutubetoPremiere" ]; then
-    APP_DIR="$INSTALL_DIR/YoutubetoPremiere"
-else
-    APP_DIR="$INSTALL_DIR/YoutubetoPremiere"
-fi
-
-if [ -d "/Applications/cep" ]; then
-    EXTENSION_DIR="/Applications/cep"
-elif [ -d "$INSTALL_DIR/cep" ]; then
-    EXTENSION_DIR="$INSTALL_DIR/cep"
-else
-    EXTENSION_DIR="$INSTALL_DIR/com.selgy.youtubetopremiere"
-fi
-
 echo "=== YouTube to Premiere Pro - Post Install Script ==="
-echo "Installation directory: $INSTALL_DIR"
-echo "App directory: $APP_DIR"
-echo "Extension directory: $EXTENSION_DIR"
 
-# Debug: Check what's actually installed
-echo "Checking installed files..."
-if [ -d "$APP_DIR" ]; then
-    echo "✅ App directory found:"
-    ls -la "$APP_DIR"
-else
-    echo "❌ App directory not found: $APP_DIR"
+# Get the current logged-in user (not root)
+loggedInUser=$( echo "show State:/Users/ConsoleUser" | scutil | awk '/Name :/ && ! /loginwindow/ { print $3 }' )
+echo "Detected logged-in user: $loggedInUser"
+
+# Get the UID of the logged-in user
+uid=$(id -u "$loggedInUser")
+echo "User UID: $uid"
+
+# Enable PlayerDebugMode for Adobe CEP versions 6 to 11 in user context
+echo "Enabling CEP PlayerDebugMode..."
+for csxs_version in {6..11}; do
+    launchctl asuser "$uid" sudo -u "$loggedInUser" defaults write com.adobe.CSXS."$csxs_version" PlayerDebugMode 1
+    echo "  ✅ Enabled PlayerDebugMode for CSXS.$csxs_version"
+done
+
+# Define paths
+CEP_EXTENSIONS_DIR="/Library/Application Support/Adobe/CEP/extensions"
+TARGET_DIR="$CEP_EXTENSIONS_DIR/com.selgy.youtubetopremiere"
+EXECUTABLE_PATH="/Applications/YoutubetoPremiere"
+CEP_SOURCE_PATH="/Applications/cep"
+
+echo "=== Installation Paths ==="
+echo "CEP Extensions Dir: $CEP_EXTENSIONS_DIR"
+echo "Target Dir: $TARGET_DIR"
+echo "Executable Path: $EXECUTABLE_PATH"
+echo "CEP Source Path: $CEP_SOURCE_PATH"
+
+# Create CEP extensions directory
+echo "Creating CEP extensions directory..."
+mkdir -p "$CEP_EXTENSIONS_DIR" && echo "✅ Directory created successfully." || { echo "❌ Failed to create $CEP_EXTENSIONS_DIR"; exit 1; }
+
+# Remove existing installation if it exists
+if [ -d "$TARGET_DIR" ]; then
+    echo "Existing installation found. Removing..."
+    rm -rf "$TARGET_DIR" && echo "✅ Existing directory removed." || { echo "❌ Failed to remove existing directory"; exit 1; }
 fi
 
-if [ -d "$EXTENSION_DIR" ]; then
-    echo "✅ Extension directory found:"
-    ls -la "$EXTENSION_DIR"
+# Install CEP extension from the PKG
+if [ -d "$CEP_SOURCE_PATH" ]; then
+    echo "Installing CEP extension from PKG..."
+    cp -R "$CEP_SOURCE_PATH" "$TARGET_DIR" && echo "✅ CEP extension installed successfully." || { echo "❌ Failed to install CEP extension"; exit 1; }
 else
-    echo "❌ Extension directory not found: $EXTENSION_DIR"
+    echo "❌ CEP source directory not found: $CEP_SOURCE_PATH"
+    echo "Available in /Applications:"
+    ls -la /Applications/ | grep -i youtube || echo "No YouTube-related directories found"
+    exit 1
 fi
 
-# Find the actual user who initiated the installation
-# When using sudo, SUDO_USER contains the original user
-ACTUAL_USER="${SUDO_USER:-$(logname 2>/dev/null || whoami)}"
-USER_HOME=$(eval echo "~$ACTUAL_USER")
+# Create exec directory in CEP extension
+EXEC_DIR="$TARGET_DIR/exec"
+echo "Creating exec directory: $EXEC_DIR"
+mkdir -p "$EXEC_DIR" && echo "✅ Exec directory created successfully." || { echo "❌ Failed to create $EXEC_DIR"; exit 1; }
 
-echo "Detected user: $ACTUAL_USER"
-echo "User home: $USER_HOME"
-
-# Create CEP extension directories
-echo "Creating CEP extension directories..."
-
-# System-wide directory (for all users)
-SYSTEM_CEP_DIR="/Library/Application Support/Adobe/CEP/extensions/com.selgy.youtubetopremiere"
-mkdir -p "$SYSTEM_CEP_DIR"
-
-# User-specific directory
-USER_CEP_DIR="$USER_HOME/Library/Application Support/Adobe/CEP/extensions/com.selgy.youtubetopremiere"
-mkdir -p "$USER_CEP_DIR"
-
-echo "Created directories:"
-echo "  System: $SYSTEM_CEP_DIR"
-echo "  User: $USER_CEP_DIR"
-
-# Copy extension files to CEP directories if they exist
-if [ -d "$EXTENSION_DIR" ]; then
-    echo "Copying extension files..."
-    
-    # Copy to system-wide CEP directory
-    echo "  → Copying to system CEP directory..."
-    cp -R "$EXTENSION_DIR/"* "$SYSTEM_CEP_DIR/"
-    
-    # Copy to user CEP directory
-    echo "  → Copying to user CEP directory..."
-    cp -R "$EXTENSION_DIR/"* "$USER_CEP_DIR/"
-    
-    echo "✅ Extension files copied successfully"
+# Copy executable to CEP extension
+if [ -d "$EXECUTABLE_PATH" ]; then
+    echo "Copying executable to CEP extension..."
+    cp -R "$EXECUTABLE_PATH/"* "$EXEC_DIR" && echo "✅ Executable copied successfully." || { echo "❌ Failed to copy executable"; exit 1; }
 else
-    echo "❌ Extension directory not found, skipping CEP installation"
+    echo "❌ Executable directory not found: $EXECUTABLE_PATH"
+    exit 1
 fi
 
-# Make sure the application is executable
-echo "Setting executable permissions..."
-if [ -f "$APP_DIR/YoutubetoPremiere" ]; then
-    chmod +x "$APP_DIR/YoutubetoPremiere"
+# Set proper permissions and ownership
+echo "Setting permissions and ownership..."
+
+# Change ownership to the logged-in user
+chown -R "$loggedInUser:staff" "$TARGET_DIR"
+
+# Set proper permissions
+chmod -R 755 "$TARGET_DIR"
+
+# Make sure executables are executable
+if [ -f "$EXEC_DIR/YoutubetoPremiere" ]; then
+    chmod +x "$EXEC_DIR/YoutubetoPremiere"
     echo "✅ Made YoutubetoPremiere executable"
 fi
 
-# Set permissions for CEP extension executables
-if [ -f "$USER_CEP_DIR/exec/YoutubetoPremiere" ]; then
-    chmod +x "$USER_CEP_DIR/exec/YoutubetoPremiere"
-    echo "✅ Made CEP YoutubetoPremiere executable"
+# Find and make Python executables executable
+find "$EXEC_DIR" -name "python*" -type f -exec chmod +x {} \;
+find "$EXEC_DIR" -name "*.dylib" -type f -exec chmod 755 {} \;
+
+# Remove quarantine attributes to avoid "cannot be opened" errors
+echo "Removing quarantine attributes..."
+xattr -dr com.apple.quarantine "$TARGET_DIR" 2>/dev/null || echo "No quarantine attributes to remove"
+
+echo "✅ Permissions and ownership set successfully"
+
+# Cleanup: Remove the source directories from Applications
+echo "=== Cleanup ==="
+if [ -d "/Applications/YoutubetoPremiere" ]; then
+    rm -rf "/Applications/YoutubetoPremiere" && echo "✅ Deleted /Applications/YoutubetoPremiere" || echo "⚠️ Failed to delete /Applications/YoutubetoPremiere"
 fi
 
-if [ -f "$USER_CEP_DIR/exec/ffmpeg" ]; then
-    chmod +x "$USER_CEP_DIR/exec/ffmpeg"
-    echo "✅ Made CEP ffmpeg executable"
+if [ -d "/Applications/cep" ]; then
+    rm -rf "/Applications/cep" && echo "✅ Deleted /Applications/cep" || echo "⚠️ Failed to delete /Applications/cep"
 fi
 
-# Set proper ownership and permissions
-echo "Setting ownership and permissions..."
-
-# System directory
-chown -R root:wheel "$SYSTEM_CEP_DIR"
-chmod -R 755 "$SYSTEM_CEP_DIR"
-
-# User directory - get user and group
-USER_GROUP=$(id -gn "$ACTUAL_USER" 2>/dev/null || echo "staff")
-chown -R "$ACTUAL_USER:$USER_GROUP" "$USER_CEP_DIR"
-chmod -R 755 "$USER_CEP_DIR"
-
-echo "✅ Ownership and permissions set"
+if [ -d "/Applications/com.selgy.youtubetopremiere" ]; then
+    rm -rf "/Applications/com.selgy.youtubetopremiere" && echo "✅ Deleted /Applications/com.selgy.youtubetopremiere" || echo "⚠️ Failed to delete /Applications/com.selgy.youtubetopremiere"
+fi
 
 # Final verification
 echo "=== Installation Verification ==="
-if [ -d "$USER_CEP_DIR" ]; then
-    echo "✅ CEP extension installed at: $USER_CEP_DIR"
-    echo "Contents:"
-    ls -la "$USER_CEP_DIR"
+if [ -d "$TARGET_DIR" ]; then
+    echo "✅ CEP extension installed at: $TARGET_DIR"
     
-    if [ -f "$USER_CEP_DIR/CSXS/manifest.xml" ]; then
+    if [ -f "$TARGET_DIR/CSXS/manifest.xml" ]; then
         echo "✅ Manifest file found"
     else
         echo "❌ Manifest file missing"
     fi
     
-    if [ -d "$USER_CEP_DIR/exec" ]; then
-        echo "✅ Exec directory found:"
-        ls -la "$USER_CEP_DIR/exec"
+    if [ -d "$TARGET_DIR/exec" ]; then
+        echo "✅ Exec directory found"
+        echo "Exec contents:"
+        ls -la "$TARGET_DIR/exec" | head -10
     else
         echo "❌ Exec directory missing"
     fi
+    
+    echo "CEP extension size: $(du -sh "$TARGET_DIR" | cut -f1)"
 else
     echo "❌ CEP extension installation failed"
+    exit 1
 fi
 
-echo "=== Post Install Completed ==="
+echo "=== Post Install Completed Successfully ==="
+echo "🎉 YouTube to Premiere Pro has been installed!"
+echo "👉 Please restart Adobe Premiere Pro to see the extension."
+
 exit 0 
