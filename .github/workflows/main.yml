@@ -251,6 +251,7 @@ jobs:
 
   windows-build:
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -264,9 +265,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~\AppData\Local\pip\Cache
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          key: ${{ runner.os }}-pip-v2-${{ hashFiles('requirements.txt') }}
           restore-keys: |
-            ${{ runner.os }}-pip-
+            ${{ runner.os }}-pip-v2-
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -391,33 +392,23 @@ jobs:
           echo "PyInstaller version: $(pyinstaller --version)"
           
           echo "Starting PyInstaller build..."
-          # Use timeout to prevent hanging
-          $timeout = 600  # 10 minutes timeout
-          $job = Start-Job -ScriptBlock {
-            pyinstaller --onedir --clean --console --noupx `
-              --exclude-module=PIL --exclude-module=pymiere `
-              --hidden-import=engineio.async_drivers.eventlet `
-              --hidden-import=engineio.async_drivers.threading `
-              --hidden-import=flask --hidden-import=flask_cors --hidden-import=flask_socketio `
-              --hidden-import=yt_dlp --hidden-import=psutil `
-              --add-data "app/sounds/notification_sound.mp3;." `
-              --add-binary "ffmpeg.exe;." `
-              app/YoutubetoPremiere.py
-          }
           
-          echo "Waiting for PyInstaller to complete (timeout: $timeout seconds)..."
-          if (Wait-Job $job -Timeout $timeout) {
-            $result = Receive-Job $job
-            echo "PyInstaller output:"
-            echo $result
-            Remove-Job $job
-            echo "PyInstaller build completed successfully"
-          } else {
-            echo "ERROR: PyInstaller build timed out after $timeout seconds"
-            Stop-Job $job
-            Remove-Job $job
-            exit 1
-          }
+          # Run PyInstaller directly - GitHub Actions has its own timeout mechanism
+          $startTime = Get-Date
+          pyinstaller --onedir --clean --console --noupx `
+            --exclude-module=PIL --exclude-module=pymiere `
+            --hidden-import=engineio.async_drivers.eventlet `
+            --hidden-import=engineio.async_drivers.threading `
+            --hidden-import=flask --hidden-import=flask_cors --hidden-import=flask_socketio `
+            --hidden-import=yt_dlp --hidden-import=psutil `
+            --add-data "app/sounds/notification_sound.mp3;." `
+            --add-binary "ffmpeg.exe;." `
+            app/YoutubetoPremiere.py
+          
+          $endTime = Get-Date
+          $duration = ($endTime - $startTime).TotalSeconds
+          
+          echo "PyInstaller completed in $([math]::Round($duration, 1)) seconds"
           
           # Verify build output
           if (Test-Path "dist\YoutubetoPremiere") {
@@ -429,6 +420,7 @@ jobs:
             exit 1
           }
         shell: powershell
+        timeout-minutes: 10
 
       - name: Build CEP Extension
         run: |
@@ -438,24 +430,14 @@ jobs:
           echo "Yarn version: $(yarn --version)"
           echo "Current directory: $(Get-Location)"
           
-          # Add timeout for CEP build too
-          $timeout = 300  # 5 minutes timeout
-          $job = Start-Job -ScriptBlock {
-            yarn build:cep
-          }
+          # Run CEP build directly
+          $startTime = Get-Date
+          yarn build:cep
           
-          if (Wait-Job $job -Timeout $timeout) {
-            $result = Receive-Job $job
-            echo "CEP build output:"
-            echo $result
-            Remove-Job $job
-            echo "CEP build completed successfully"
-          } else {
-            echo "ERROR: CEP build timed out after $timeout seconds"
-            Stop-Job $job
-            Remove-Job $job
-            exit 1
-          }
+          $endTime = Get-Date
+          $duration = ($endTime - $startTime).TotalSeconds
+          
+          echo "CEP build completed in $([math]::Round($duration, 1)) seconds"
           
           echo "Checking CEP build output:"
           if (Test-Path "./dist/cep") {
@@ -478,6 +460,7 @@ jobs:
         env:
           ZXP_PACKAGE: false
         shell: powershell
+        timeout-minutes: 5
 
       - name: Copy Python executable to CEP extension
         run: |
