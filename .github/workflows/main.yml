@@ -275,8 +275,8 @@ jobs:
 
       - name: Install NSIS
         run: |
-          choco install nsis -y
-          refreshenv
+          choco install nsis -y --force
+          echo "NSIS installation completed"
 
       - name: Download FFmpeg for Windows
         run: |
