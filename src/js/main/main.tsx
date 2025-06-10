@@ -210,10 +210,12 @@ const Main = () => {
   };
 
   const handleDownloadUpdate = () => {
-    if (updateAvailable && updateInfo) {
-      setShowUpdateModal(true);
-    } else if (updateInfo?.download_url) {
+    if (updateInfo?.download_url) {
       window.open(updateInfo.download_url, '_blank');
+      setShowUpdateModal(false); // Close the modal after opening download
+    } else {
+      console.error('No download URL available');
+      showNotification('URL de téléchargement non disponible', 'error');
     }
   };
 
