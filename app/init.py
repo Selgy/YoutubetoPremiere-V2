@@ -17,6 +17,13 @@ logger = logging.getLogger('YoutubetoPremiere')
 
 def get_extension_path():
     """Determine the path to the extension directory."""
+    # First, check for installed CEP extension (prioritize this for production)
+    cep_extension_path = "/Library/Application Support/Adobe/CEP/extensions/com.selgy.youtubetopremiere"
+    if os.path.exists(cep_extension_path) and os.path.exists(os.path.join(cep_extension_path, 'manifest.xml')):
+        logger.info(f"Found installed CEP extension: {cep_extension_path}")
+        return cep_extension_path
+    
+    # Fall back to development path detection
     # Get the directory where this script is located
     script_dir = os.path.dirname(os.path.abspath(__file__))
     
@@ -88,21 +95,37 @@ def find_ffmpeg():
     extension_path = get_extension_path()
     exec_dir = os.path.join(extension_path, 'exec')
     
-    # First look in our exec directory
+    # Define ffmpeg filename based on system
     if system == 'Windows':
-        ffmpeg_path = os.path.join(exec_dir, 'ffmpeg.exe')
+        ffmpeg_name = 'ffmpeg.exe'
     else:
-        ffmpeg_path = os.path.join(exec_dir, 'ffmpeg')
+        ffmpeg_name = 'ffmpeg'
     
-    # For Windows systems, use a more robust check (avoiding execution)
-    if system == 'Windows':
-        if os.path.exists(ffmpeg_path) and os.path.getsize(ffmpeg_path) > 1000000:  # File is large enough to be ffmpeg
-            logger.info(f"Using bundled ffmpeg: {ffmpeg_path}")
-            return ffmpeg_path
-    # For Unix systems, check executable permission
-    elif os.path.exists(ffmpeg_path) and os.access(ffmpeg_path, os.X_OK):
-        logger.info(f"Using bundled ffmpeg: {ffmpeg_path}")
-        return ffmpeg_path
+    # Look in multiple possible locations in order of preference
+    possible_locations = [
+        os.path.join(exec_dir, '_internal', ffmpeg_name),  # PyInstaller _internal directory
+        os.path.join(exec_dir, ffmpeg_name),               # Direct exec directory
+        os.path.join(extension_path, ffmpeg_name),         # Extension root
+    ]
+    
+    for ffmpeg_path in possible_locations:
+        logger.info(f"Checking for ffmpeg at: {ffmpeg_path}")
+        
+        if os.path.exists(ffmpeg_path):
+            # For Windows systems, use a more robust check (avoiding execution)
+            if system == 'Windows':
+                if os.path.getsize(ffmpeg_path) > 1000000:  # File is large enough to be ffmpeg
+                    logger.info(f"Found ffmpeg (Windows): {ffmpeg_path}")
+                    return ffmpeg_path
+            # For Unix systems, check executable permission
+            else:
+                if os.access(ffmpeg_path, os.X_OK):
+                    logger.info(f"Found ffmpeg (Unix): {ffmpeg_path}")
+                    return ffmpeg_path
+                else:
+                    logger.warning(f"Found ffmpeg but not executable: {ffmpeg_path}")
+    
+    logger.info("FFmpeg not found in bundled locations, checking system PATH...")
     
     # Try to find ffmpeg in PATH
     try:

@@ -164,7 +164,7 @@ def is_port_in_use(port, host='localhost'):
         except socket.error:
             return True
 
-def check_server_running(port=3001):
+def check_server_running(port=8081):
     """Check if server is already running by testing if the port is in use and if API responds"""
     # First check if port is in use
     if not is_port_in_use(port):
@@ -493,12 +493,12 @@ def run_server():
     register_routes(app, socketio, settings)
 
     # Start server without exposing IP addresses
-    logging.info(f'Starting server on all interfaces on port 3001')
+    logging.info(f'Starting server on all interfaces on port 8081')
 
     server_thread = threading.Thread(target=lambda: socketio.run(
         app, 
         host='0.0.0.0',  # Bind to all available interfaces
-        port=3001,
+        port=8081,
         debug=False,
         use_reloader=False
     ))
