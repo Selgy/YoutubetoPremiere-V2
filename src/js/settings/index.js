@@ -347,112 +347,27 @@ async function startPythonServer() {
         PythonExecutablePath = path.normalize(PythonExecutablePath);
         console.log('Corrected Python executable path:', PythonExecutablePath);
 
-        // For macOS: Handle executable permissions and quarantine automatically
+        // For macOS: Use executable directly from its original location to preserve code signature
         if (process.platform === 'darwin') {
             try {
-                // Ensure we have the os module
-                const os = window.cep_node.require('os');
                 const { exec } = window.cep_node.require('child_process');
                 
-                // Create safe directory in Application Support if it doesn't exist
-                const appSupportDir = path.join(os.homedir(), 'Library/Application Support/YoutubetoPremiere');
-                if (!fs.existsSync(appSupportDir)) {
-                    fs.mkdirSync(appSupportDir, { recursive: true });
-                }
-                
-                // Create necessary directories for Python modules and scripts
-                const pythonDir = path.join(appSupportDir, 'python');
-                const appDir = path.join(appSupportDir, 'app');
-                const soundsDir = path.join(appSupportDir, 'sounds');
-                
-                // Create directories if they don't exist
-                [pythonDir, appDir, soundsDir].forEach(dir => {
-                    if (!fs.existsSync(dir)) {
-                        fs.mkdirSync(dir, { recursive: true });
-                    }
-                });
-                
-                // Define the safe executable path
-                const safeExecutablePath = path.join(appSupportDir, 'YoutubetoPremiere');
-                
-                // Copy the Python files first
-                console.log('Copying Python app files to safe location...');
-                const appFiles = fs.readdirSync(path.join(extensionRoot, 'exec'));
-                
-                // Filter and copy Python files to the safe app directory
-                appFiles.filter(file => file.endsWith('.py')).forEach(file => {
-                    const sourcePath = path.join(extensionRoot, 'exec', file);
-                    const destPath = path.join(appDir, file);
-                    try {
-                        fs.copyFileSync(sourcePath, destPath);
-                        console.log(`Copied ${file} to safe location`);
-                    } catch (err) {
-                        console.warn(`Failed to copy ${file}: ${err.message}`);
-                    }
-                });
-                
-                // Copy sounds if they exist
-                const soundsPath = path.join(extensionRoot, 'exec', 'sounds');
-                if (fs.existsSync(soundsPath)) {
-                    try {
-                        const soundFiles = fs.readdirSync(soundsPath);
-                        soundFiles.forEach(file => {
-                            const sourcePath = path.join(soundsPath, file);
-                            const destPath = path.join(soundsDir, file);
-                            fs.copyFileSync(sourcePath, destPath);
-                        });
-                        console.log('Copied sound files to safe location');
-                    } catch (err) {
-                        console.warn(`Failed to copy sound files: ${err.message}`);
-                    }
-                }
-                
-                // Look for different executable variants 
+                // Look for different executable variants in original location
                 const universalPath = path.join(extensionRoot, 'exec', 'YoutubetoPremiere-universal');
                 const standardPath = path.join(extensionRoot, 'exec', 'YoutubetoPremiere');
                 
-                let sourceExecutable = '';
                 if (fs.existsSync(universalPath)) {
                     console.log('Found universal executable variant - using this for better compatibility');
-                    sourceExecutable = universalPath;
+                    PythonExecutablePath = universalPath;
                 } else if (fs.existsSync(standardPath)) {
-                    console.log('Using standard executable');
-                    sourceExecutable = standardPath;
+                    console.log('Using standard executable from original location');
+                    PythonExecutablePath = standardPath;
                 } else {
                     throw new Error('No executable found in exec directory');
                 }
                 
-                // Copy the executable to the safe location
-                console.log(`Copying executable from ${sourceExecutable} to safe location: ${safeExecutablePath}`);
-                fs.copyFileSync(sourceExecutable, safeExecutablePath);
-                
-                // Copy the _internal directory that PyInstaller needs
-                const sourceInternalDir = path.join(extensionRoot, 'exec', '_internal');
-                const destInternalDir = path.join(appSupportDir, '_internal');
-                
-                if (fs.existsSync(sourceInternalDir)) {
-                    console.log(`Copying _internal directory to safe location: ${destInternalDir}`);
-                    // Use recursive copy for the entire _internal directory
-                    const copyRecursiveSync = (src, dest) => {
-                        if (fs.statSync(src).isDirectory()) {
-                            if (!fs.existsSync(dest)) {
-                                fs.mkdirSync(dest, { recursive: true });
-                            }
-                            fs.readdirSync(src).forEach(file => {
-                                copyRecursiveSync(path.join(src, file), path.join(dest, file));
-                            });
-                        } else {
-                            fs.copyFileSync(src, dest);
-                        }
-                    };
-                    copyRecursiveSync(sourceInternalDir, destInternalDir);
-                    console.log('Successfully copied _internal directory');
-                } else {
-                    console.warn('_internal directory not found in source location');
-                }
-                
-                // Fix permissions on the safe executable and contents
-                const fixPermissionsCmd = `chmod +x "${safeExecutablePath}" && xattr -d com.apple.quarantine "${safeExecutablePath}" 2>/dev/null || true`;
+                // Only fix permissions on the original executable (do not copy to preserve signature)
+                const fixPermissionsCmd = `chmod +x "${PythonExecutablePath}" && xattr -dr com.apple.quarantine "${path.dirname(PythonExecutablePath)}" 2>/dev/null || true`;
                 const { error } = await new Promise(resolve => {
                     exec(fixPermissionsCmd, (error, stdout, stderr) => {
                         resolve({ error, stdout, stderr });
@@ -462,39 +377,13 @@ async function startPythonServer() {
                 if (error) {
                     console.warn(`Failed to fix permissions: ${error.message}`);
                 } else {
-                    console.log('Successfully fixed executable permissions in safe location');
-                }
-                
-                // Use the safe executable path
-                PythonExecutablePath = safeExecutablePath;
-                
-                // Create a custom YoutubetoPremiere.py file if needed
-                const mainPyPath = path.join(appDir, 'YoutubetoPremiere.py');
-                if (!fs.existsSync(mainPyPath)) {
-                    console.log('Creating main Python file');
-                    // Find the original Python file
-                    const origPyPath = path.join(extensionRoot, 'exec', 'YoutubetoPremiere.py');
-                    if (fs.existsSync(origPyPath)) {
-                        fs.copyFileSync(origPyPath, mainPyPath);
-                    } else {
-                        console.warn('Could not find original YoutubetoPremiere.py');
-                    }
+                    console.log('Successfully fixed executable permissions at original location');
                 }
                 
             } catch (err) {
                 console.error('Error preparing macOS executable:', err);
-                // Continue with original path if preparation fails
-                // Try to ensure the original executable has proper permissions
-                try {
-                    const { exec } = window.cep_node.require('child_process');
-                    const fallbackFixCmd = `chmod +x "${PythonExecutablePath}" && xattr -d com.apple.quarantine "${PythonExecutablePath}" 2>/dev/null || true`;
-                    await new Promise(resolve => {
-                        exec(fallbackFixCmd, () => resolve());
-                    });
-                    console.log('Applied permissions to original executable as fallback');
-                } catch (permErr) {
-                    console.error('Failed to fix permissions on original executable:', permErr);
-                }
+                // Fallback to the original path
+                console.log('Using fallback path due to error');
             }
         }
 
@@ -517,14 +406,10 @@ async function startPythonServer() {
             };
             
             if (process.platform === 'darwin') {
-                // Add necessary information about the app location
-                const os = window.cep_node.require('os');
-                const appSupportDir = path.join(os.homedir(), 'Library/Application Support/YoutubetoPremiere');
-                const appDir = path.join(appSupportDir, 'app');
-                
-                serverEnv.PYTHONPATH = appDir;
-                serverEnv.APP_DIR = appDir;
-                serverEnv.SOUNDS_DIR = path.join(appSupportDir, 'sounds');
+                // Set Python paths relative to the extension directory
+                serverEnv.PYTHONPATH = path.join(extensionRoot, 'exec');
+                serverEnv.APP_DIR = path.join(extensionRoot, 'exec');
+                serverEnv.SOUNDS_DIR = path.join(extensionRoot, 'exec', 'sounds');
             }
             
             // Use child_process.exec instead of spawn for better permission handling
@@ -665,22 +550,7 @@ function stopPythonServer() {
         fsWatcher.close();
     }
     
-    // Clean up macOS safe executable if needed
-    if (process.platform === 'darwin') {
-        try {
-            const os = require('os');
-            const path = require('path');
-            const fs = require('fs');
-            
-            const safeExecutablePath = path.join(os.homedir(), 'Library/Application Support/YoutubetoPremiere', 'YoutubetoPremiere');
-            if (fs.existsSync(safeExecutablePath)) {
-                console.log("Cleaning up safe executable...");
-                fs.unlinkSync(safeExecutablePath);
-            }
-        } catch (err) {
-            console.error("Error cleaning up safe executable:", err);
-        }
-    }
+    // No cleanup needed for original executable location
 }
 
 // Helper function to handle permission errors specifically
