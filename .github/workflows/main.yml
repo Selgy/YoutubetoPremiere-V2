@@ -260,39 +260,83 @@ jobs:
         with:
           python-version: '3.10.11'
 
+      - name: Cache Python dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'yarn'
 
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip setuptools wheel
-          pip install -r requirements.txt
+      - name: Cache FFmpeg
+        id: cache-ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg.exe
+          key: ${{ runner.os }}-ffmpeg-6.1-${{ hashFiles('**/package.json') }}
 
-      - name: Install Node.js dependencies
-        run: yarn install --frozen-lockfile
+      - name: Cache NSIS
+        id: cache-nsis
+        uses: actions/cache@v4
+        with:
+          path: C:\Program Files (x86)\NSIS
+          key: ${{ runner.os }}-nsis-3.x
 
-      - name: Install NSIS
+      - name: Install NSIS (if not cached)
+        if: steps.cache-nsis.outputs.cache-hit != 'true'
         run: |
+          echo "Installing NSIS..."
           choco install nsis -y --force
           echo "NSIS installation completed"
 
-      - name: Download FFmpeg for Windows
+      - name: Download FFmpeg (if not cached)
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
         run: |
           echo "Downloading FFmpeg for Windows..."
           Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile "ffmpeg.zip"
           Expand-Archive -Path "ffmpeg.zip" -DestinationPath "ffmpeg_temp" -Force
           $ffmpegExe = Get-ChildItem -Path "ffmpeg_temp" -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1 -ExpandProperty FullName
           Copy-Item -Path $ffmpegExe -Destination "ffmpeg.exe" -Force
-          echo "FFmpeg downloaded and ready"
+          Remove-Item "ffmpeg.zip" -Force
+          Remove-Item "ffmpeg_temp" -Recurse -Force
+          echo "FFmpeg downloaded and cached"
         shell: powershell
+
+      - name: Verify FFmpeg
+        run: |
+          if (Test-Path "ffmpeg.exe") {
+            echo "FFmpeg found: $(Get-Item ffmpeg.exe | Select-Object -ExpandProperty Length) bytes"
+          } else {
+            echo "ERROR: FFmpeg not found!"
+            exit 1
+          }
+        shell: powershell
+
+      - name: Install Python dependencies
+        run: |
+          echo "Installing Python dependencies..."
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt
+          pip install --upgrade pyinstaller
+          echo "Python dependencies and PyInstaller installed"
+
+      - name: Install Node.js dependencies
+        run: |
+          echo "Installing Node.js dependencies..."
+          yarn install --frozen-lockfile
+          echo "Node.js dependencies installed"
 
       - name: Build Application with PyInstaller
         run: |
-          pip install --upgrade pyinstaller
+          echo "Building Windows application with PyInstaller..."
           pyinstaller --onedir --clean --debug=all --hidden-import=engineio.async_drivers.eventlet --hidden-import=engineio.async_drivers.gevent_uwsgi --hidden-import=engineio.async_drivers.gevent --hidden-import=engineio.async_drivers.threading --hidden-import=engineio.async_drivers --hidden-import=gevent --hidden-import=websocket --hidden-import=websockets --hidden-import=wsproto --hidden-import=pygame --hidden-import=PIL --hidden-import=flask --hidden-import=flask_cors --hidden-import=flask_socketio --hidden-import=yt_dlp --hidden-import=pymiere --hidden-import=psutil --hidden-import=tkinter --add-data "app/sounds/notification_sound.mp3;." --add-binary "ffmpeg.exe;." app/YoutubetoPremiere.py
+          echo "PyInstaller build completed"
 
       - name: Build CEP Extension
         run: |
@@ -356,6 +400,15 @@ jobs:
               exit 1
             }
           }
+        shell: powershell
+
+      - name: Cleanup temporary files
+        run: |
+          echo "Cleaning up temporary files to save space..."
+          if (Test-Path "ffmpeg_temp") { Remove-Item "ffmpeg_temp" -Recurse -Force }
+          if (Test-Path "build") { Remove-Item "build" -Recurse -Force }
+          if (Test-Path "*.spec") { Remove-Item "*.spec" -Force }
+          echo "Cleanup completed"
         shell: powershell
 
       - name: Upload Windows Build Artifacts
