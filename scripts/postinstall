@@ -5,8 +5,28 @@ set -e
 
 # Get the installation directory from the first argument
 INSTALL_DIR="$3"
-APP_DIR="$INSTALL_DIR/YoutubetoPremiere"
-EXTENSION_DIR="$INSTALL_DIR/com.selgy.youtubetopremiere"
+
+# Debug: Show what PKG provides
+echo "PKG Arguments: $1 $2 $3 $4"
+echo "Available in install directory:"
+ls -la "$INSTALL_DIR" 2>/dev/null || echo "Install directory not accessible"
+
+# The actual structure is likely in /Applications since we use --install-location /Applications
+if [ -d "/Applications/YoutubetoPremiere" ]; then
+    APP_DIR="/Applications/YoutubetoPremiere"
+elif [ -d "$INSTALL_DIR/YoutubetoPremiere" ]; then
+    APP_DIR="$INSTALL_DIR/YoutubetoPremiere"
+else
+    APP_DIR="$INSTALL_DIR/YoutubetoPremiere"
+fi
+
+if [ -d "/Applications/cep" ]; then
+    EXTENSION_DIR="/Applications/cep"
+elif [ -d "$INSTALL_DIR/cep" ]; then
+    EXTENSION_DIR="$INSTALL_DIR/cep"
+else
+    EXTENSION_DIR="$INSTALL_DIR/com.selgy.youtubetopremiere"
+fi
 
 echo "=== YouTube to Premiere Pro - Post Install Script ==="
 echo "Installation directory: $INSTALL_DIR"
