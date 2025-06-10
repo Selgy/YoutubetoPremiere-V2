@@ -177,6 +177,27 @@ jobs:
         else
           echo "CEP directory NOT found!"
         fi
+
+    - name: Copy Python executable to CEP extension
+      run: |
+        echo "Copying Python executable to CEP extension..."
+        if [ -d "./dist/YoutubetoPremiere" ]; then
+          echo "Source Python app found:"
+          ls -la ./dist/YoutubetoPremiere/
+          
+          # Ensure exec directory exists
+          mkdir -p ./dist/cep/exec
+          
+          # Copy the Python executable
+          cp -R ./dist/YoutubetoPremiere/YoutubetoPremiere ./dist/cep/exec/
+          cp -R ./dist/YoutubetoPremiere/_internal ./dist/cep/exec/
+          
+          echo "Python executable copied to CEP extension:"
+          ls -la ./dist/cep/exec/
+        else
+          echo "ERROR: Python application not found in ./dist/YoutubetoPremiere"
+          exit 1
+        fi
         
     - name: Verify Executable Contents
       run: |
