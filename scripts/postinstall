@@ -24,7 +24,7 @@ done
 CEP_EXTENSIONS_DIR="/Library/Application Support/Adobe/CEP/extensions"
 TARGET_DIR="$CEP_EXTENSIONS_DIR/com.selgy.youtubetopremiere"
 EXECUTABLE_PATH="/Applications/YoutubetoPremiere"
-CEP_SOURCE_PATH="/Applications/cep"
+CEP_SOURCE_PATH="/Applications/com.selgy.youtubetopremiere"
 
 echo "=== Installation Paths ==="
 echo "CEP Extensions Dir: $CEP_EXTENSIONS_DIR"

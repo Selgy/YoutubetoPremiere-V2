@@ -173,11 +173,26 @@ jobs:
           
           echo "All binaries signed"
 
+      - name: Prepare PKG structure
+        run: |
+          echo "Preparing PKG structure..."
+          # Create proper structure for PKG
+          mkdir -p ./pkg-root/YoutubetoPremiere
+          mkdir -p ./pkg-root/com.selgy.youtubetopremiere
+          
+          # Copy Python application
+          cp -R ./dist/YoutubetoPremiere/* ./pkg-root/YoutubetoPremiere/
+          
+          # Copy CEP extension
+          cp -R ./dist/cep/* ./pkg-root/com.selgy.youtubetopremiere/
+          
+          echo "PKG structure prepared"
+
       - name: Create PKG installer
         run: |
           echo "Creating PKG installer..."
           # Create PKG with proper macOS compatibility settings
-          pkgbuild --root ./dist \
+          pkgbuild --root ./pkg-root \
             --identifier com.selgy.youtubetopremiere \
             --version 1.0 \
             --install-location /Applications \
