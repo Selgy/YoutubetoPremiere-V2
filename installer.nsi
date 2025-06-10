@@ -62,23 +62,22 @@ Section "Install YouTube to Premiere Pro" SEC01
   
   # Install CEP extension files - copy entire cep folder content
   DetailPrint "Installing CEP extension files..."
+  DetailPrint "Copying CEP extension to $INSTDIR..."
+  SetOutPath "$INSTDIR"
   
-  IfFileExists "dist\cep\*.*" cep_files_exist no_cep_files
+  # Use NSIS error handling - if files don't exist, this will fail
+  ClearErrors
+  File /r "dist\cep\*.*"
   
-  cep_files_exist:
-    DetailPrint "Copying entire CEP extension to $INSTDIR..."
-    SetOutPath "$INSTDIR"
-    File /r "dist\cep\*.*"
-    DetailPrint "CEP extension files copied successfully"
-    Goto cep_done
-    
-  no_cep_files:
-    DetailPrint "ERROR: No CEP extension files found in dist\cep\"
+  # Check if file copy was successful
+  ${If} ${Errors}
+    DetailPrint "ERROR: Failed to copy CEP extension files from dist\cep\"
     DetailPrint "Installation cannot continue without CEP extension files"
-    MessageBox MB_OK|MB_ICONSTOP "Installation failed: CEP extension files not found."
+    MessageBox MB_OK|MB_ICONSTOP "Installation failed: CEP extension files not found or could not be copied."
     Abort
-    
-  cep_done:
+  ${Else}
+    DetailPrint "CEP extension files copied successfully"
+  ${EndIf}
   
 
   
