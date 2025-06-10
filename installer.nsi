@@ -41,12 +41,14 @@ Section "Install YouTube to Premiere Pro" SEC01
   
   # Check if YouTube to Premiere Pro is running and stop it
   DetailPrint "Checking for running processes..."
-  ${nsProcess::FindProcess} "YoutubetoPremiere.exe" $R0
+  nsProcess::_FindProcess "YoutubetoPremiere.exe"
+  Pop $R0
   ${If} $R0 == 0
     MessageBox MB_OKCANCEL|MB_ICONSTOP "YouTube to Premiere Pro is currently running. Click OK to close it automatically, or Cancel to abort installation." IDOK kill_process IDCANCEL abort_install
     kill_process:
       DetailPrint "Stopping YouTube to Premiere Pro process..."
-      ${nsProcess::KillProcess} "YoutubetoPremiere.exe" $R0
+      nsProcess::_KillProcess "YoutubetoPremiere.exe"
+      Pop $R0
       Sleep 2000
       Goto cleanup_install
     abort_install:
