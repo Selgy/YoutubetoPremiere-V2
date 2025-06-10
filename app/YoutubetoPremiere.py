@@ -18,6 +18,34 @@ from init import init
 import tempfile
 from datetime import datetime
 
+# Check yt-dlp version at startup for debugging
+def check_ytdlp_version():
+    """Check and log yt-dlp version for debugging purposes"""
+    try:
+        import yt_dlp
+        version = yt_dlp.version.__version__
+        logging.info(f"yt-dlp version: {version}")
+        
+        # Also try to get version via CLI for comparison
+        try:
+            result = subprocess.run([sys.executable, '-m', 'yt_dlp', '--version'], 
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                cli_version = result.stdout.strip()
+                logging.info(f"yt-dlp CLI version: {cli_version}")
+            else:
+                logging.warning(f"Failed to get yt-dlp CLI version: {result.stderr}")
+        except Exception as e:
+            logging.warning(f"Could not check yt-dlp CLI version: {e}")
+            
+        return version
+    except ImportError as e:
+        logging.error(f"yt-dlp not found: {e}")
+        return None
+    except Exception as e:
+        logging.error(f"Error checking yt-dlp version: {e}")
+        return None
+
 
 # Determine log directory
 if sys.platform == 'win32':
@@ -220,6 +248,13 @@ def get_app_paths():
 logging.info(f'Python version: {sys.version}')
 logging.info(f'Platform: {platform.platform()}')
 logging.info(f'Process ID: {os.getpid()}')
+
+# Check yt-dlp version for debugging
+ytdlp_version = check_ytdlp_version()
+if ytdlp_version:
+    logging.info(f'yt-dlp successfully loaded: {ytdlp_version}')
+else:
+    logging.error('yt-dlp version check failed - this may cause video download issues')
 
 # Get and log all application paths (but hide sensitive user paths)
 paths = get_app_paths()

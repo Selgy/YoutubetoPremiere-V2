@@ -41,6 +41,9 @@ jobs:
           pip install -r requirements.txt
           pip install --upgrade yt-dlp
           pip install python-dotenv
+          echo "Verifying yt-dlp version after installation:"
+          pip show yt-dlp | grep "Version"
+          yt-dlp --version
 
       - name: Install Node.js dependencies
         run: |
@@ -385,6 +388,11 @@ jobs:
           pip install -r requirements.txt
           pip install --upgrade yt-dlp
           pip install --upgrade pyinstaller
+          echo "Verifying yt-dlp version after installation:"
+          pip show yt-dlp | findstr "Version"
+          yt-dlp --version
+          echo "Testing yt-dlp functionality:"
+          yt-dlp --get-title "https://www.youtube.com/watch?v=dQw4w9WgXcQ" || echo "WARNING: yt-dlp test failed"
           echo "Python dependencies and PyInstaller installed"
 
       - name: Install Node.js dependencies
@@ -410,7 +418,8 @@ jobs:
             --hidden-import=engineio.async_drivers.eventlet `
             --hidden-import=engineio.async_drivers.threading `
             --hidden-import=flask --hidden-import=flask_cors --hidden-import=flask_socketio `
-            --hidden-import=yt_dlp --hidden-import=psutil `
+            --hidden-import=yt_dlp --hidden-import=yt_dlp.extractor `
+            --hidden-import=yt_dlp.extractor.youtube --hidden-import=psutil `
             --add-data "app/sounds/notification_sound.mp3;." `
             --add-binary "ffmpeg.exe;." `
             app/YoutubetoPremiere.py
