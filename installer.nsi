@@ -31,9 +31,6 @@ RequestExecutionLevel admin
 !insertmacro MUI_LANGUAGE "English"
 
 Function .onInit
-    ; Enable detailed logging for debugging
-    LogSet on
-    
     ; Force installation to Adobe CEP extensions folder
     StrCpy $INSTDIR "$PROGRAMFILES64\Common Files\Adobe\CEP\extensions\com.selgy.youtubetopremiere"
     DetailPrint "Installation directory set to: $INSTDIR"
