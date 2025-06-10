@@ -247,7 +247,8 @@ jobs:
           echo "Copying Python executable to CEP extension..."
           if (Test-Path "./dist/cep/exec") { Remove-Item "./dist/cep/exec" -Recurse -Force }
           New-Item -ItemType Directory -Path "./dist/cep/exec" -Force
-          xcopy "./dist/YoutubetoPremiere" "./dist/cep/exec/" /E /I /H /Y
+          Copy-Item -Path "./dist/YoutubetoPremiere/*" -Destination "./dist/cep/exec/" -Recurse -Force
+          echo "Python executable copied successfully"
         shell: powershell
 
 
