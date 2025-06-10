@@ -661,15 +661,15 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         preferred_language = settings.get('preferredAudioLanguage', 'original')
         logging.info(f"Using preferred audio language for clip: {preferred_language}")
         
-        # Format string for the desired quality - STRICT AVC1 CODEC with language preference
+        # Format string for the desired quality - IMPROVED AVC1 CODEC respecting user settings
         sanitized_resolution = sanitize_resolution(resolution)
         if preferred_language != 'original':
-            # STRICT AVC1 only with language preference - no fallback to non-AVC1
-            format_str = f'bestvideo[vcodec^=avc1][height<={sanitized_resolution}][height>=720][ext=mp4]+bestaudio[ext=m4a][language~="{preferred_language}"]/bestvideo[vcodec^=avc1][height<={sanitized_resolution}][height>=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1][height<={sanitized_resolution}][ext=mp4]+bestaudio[ext=m4a]'
+            # AVC1 preference with language preference - respect user's resolution setting for clips
+            format_str = f'best[vcodec^=avc1][height<={sanitized_resolution}][ext=mp4]/bestvideo[vcodec^=avc1][height<={sanitized_resolution}][ext=mp4]+bestaudio[ext=m4a][language~="{preferred_language}"]/bestvideo[vcodec^=avc1][height<={sanitized_resolution}][ext=mp4]+bestaudio[ext=m4a]'
         else:
-            # STRICT AVC1 only, prefer 720p+ if available
-            format_str = f'bestvideo[vcodec^=avc1][height<={sanitized_resolution}][height>=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1][height<={sanitized_resolution}][ext=mp4]+bestaudio[ext=m4a]'
-        logging.info(f"Using STRICT AVC1 format string for clips ({sanitized_resolution}p): {format_str}")
+            # AVC1 preference - respect user's resolution setting for clips, try combined formats first
+            format_str = f'best[vcodec^=avc1][height<={sanitized_resolution}][ext=mp4]/bestvideo[vcodec^=avc1][height<={sanitized_resolution}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1][height<={sanitized_resolution}][ext=mp4]+bestaudio[ext=m4a]'
+        logging.info(f"Using IMPROVED AVC1 format string for clips ({sanitized_resolution}p): {format_str}")
         
         # CORRECTION: Utiliser download_ranges au lieu de download_sections
         logging.info(f"Using download ranges: start={clip_start}, end={clip_end}")
@@ -950,15 +950,15 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         max_height = int(resolution.replace("p", ""))
         debug_formats_and_create_optimal_format_string(video_url, max_height, preferred_language, initial_ydl_opts)
         
-        # Configure yt-dlp options with IMPROVED AVC1 codec preference - NO FALLBACK to non-AVC1
+        # Configure yt-dlp options with IMPROVED AVC1 codec preference respecting user settings
         if preferred_language != 'original':
-            # STRICT AVC1 only with language preference
-            format_string = f'bestvideo[vcodec^=avc1][height<={max_height}][height>=720][ext=mp4]+bestaudio[ext=m4a][language~="{preferred_language}"]/bestvideo[vcodec^=avc1][height<={max_height}][height>=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1][height<={max_height}][ext=mp4]+bestaudio[ext=m4a]'
+            # AVC1 preference with language preference - respect user's resolution setting
+            format_string = f'best[vcodec^=avc1][height<={max_height}][ext=mp4]/bestvideo[vcodec^=avc1][height<={max_height}][ext=mp4]+bestaudio[ext=m4a][language~="{preferred_language}"]/bestvideo[vcodec^=avc1][height<={max_height}][ext=mp4]+bestaudio[ext=m4a]'
         else:
-            # STRICT AVC1 only, prefer 720p+ if available
-            format_string = f'bestvideo[vcodec^=avc1][height<={max_height}][height>=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1][height<={max_height}][ext=mp4]+bestaudio[ext=m4a]'
+            # AVC1 preference - respect user's resolution setting, try combined formats first
+            format_string = f'best[vcodec^=avc1][height<={max_height}][ext=mp4]/bestvideo[vcodec^=avc1][height<={max_height}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1][height<={max_height}][ext=mp4]+bestaudio[ext=m4a]'
         
-        logging.info(f"Using STRICT AVC1 format string for {max_height}p: {format_string}")
+        logging.info(f"Using IMPROVED AVC1 format string for {max_height}p: {format_string}")
 
         # Check if download path exists or try to get default path
         if not download_path:
@@ -1048,7 +1048,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             output_path = os.path.join(download_path, unique_filename)
             logging.info(f"Setting output path to: {output_path}")
 
-            # Configure download options
+            # Configure download options with improved file handling
             ydl_opts = {
                 'format': format_string,
                 'merge_output_format': 'mp4',
@@ -1061,7 +1061,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 'noprogress': False,  # Allow progress reporting through hooks only
                 'consoletitle': False,  # Disable console title updates
                 'nocheckcertificate': True,  # Skip certificate validation which can fail in some environments
-                'ignoreerrors': True,  # Continue downloading even if some errors occur
+                'ignoreerrors': False,  # Don't ignore critical errors that could cause file issues
                 'postprocessor_args': ['-threads', '4'],  # Limit threads to avoid resource issues
                 'external_downloader_args': ['-timeout', '60'],  # Add timeout to prevent hanging
                 'geo_bypass': True,  # Bypass geographic restrictions
@@ -1071,7 +1071,12 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 'age_limit': None,  # Don't apply age limits
                 'outtmpl': {
                     'default': os.path.join(download_path, os.path.splitext(unique_filename)[0] + '.%(ext)s')
-                }
+                },
+                # Improved file handling options
+                'keepvideo': False,  # Don't keep separate video files after merging
+                'fragment_retries': 10,  # Retry fragment downloads
+                'file_access_retries': 5,  # Retry file access operations
+                'concurrent_fragment_downloads': 1,  # Prevent concurrent issues
             }
             
             # Check for manual cookies file first (more reliable for age-restricted content)
