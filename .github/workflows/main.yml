@@ -298,13 +298,46 @@ jobs:
       - name: Download NSIS nsProcess plugin
         run: |
           echo "Downloading NSIS nsProcess plugin..."
-          Invoke-WebRequest -Uri "https://github.com/NSIS-Community/nsis-plugins/releases/download/nsprocess-1.6/nsprocess-1.6.zip" -OutFile "nsprocess.zip"
-          Expand-Archive -Path "nsprocess.zip" -DestinationPath "nsprocess_temp" -Force
-          Copy-Item -Path "nsprocess_temp\Plugin\*.dll" -Destination "C:\Program Files (x86)\NSIS\Plugins\x86-unicode\" -Force
-          Copy-Item -Path "nsprocess_temp\Include\*.nsh" -Destination "C:\Program Files (x86)\NSIS\Include\" -Force
-          Remove-Item "nsprocess.zip" -Force
-          Remove-Item "nsprocess_temp" -Recurse -Force
-          echo "nsProcess plugin installed"
+          # Use a working download URL for nsProcess plugin
+          try {
+            Invoke-WebRequest -Uri "https://github.com/simdsoft/nsProcess/releases/download/1.6/nsProcess.zip" -OutFile "nsprocess.zip" -UseBasicParsing
+          } catch {
+            echo "Primary URL failed, trying alternative..."
+            # Alternative: compile from source or use included binaries
+            curl -L "https://nsis.sourceforge.io/mediawiki/images/1/1a/NsProcess.zip" -o nsprocess.zip
+          }
+          
+          if (Test-Path "nsprocess.zip") {
+            Expand-Archive -Path "nsprocess.zip" -DestinationPath "nsprocess_temp" -Force
+            
+            # Create plugin directories if they don't exist
+            New-Item -ItemType Directory -Path "C:\Program Files (x86)\NSIS\Plugins\x86-unicode" -Force | Out-Null
+            New-Item -ItemType Directory -Path "C:\Program Files (x86)\NSIS\Plugins\x86-ansi" -Force | Out-Null
+            New-Item -ItemType Directory -Path "C:\Program Files (x86)\NSIS\Include" -Force | Out-Null
+            
+            # Find and copy plugin files
+            $pluginFiles = Get-ChildItem -Path "nsprocess_temp" -Recurse -Filter "*.dll"
+            foreach ($file in $pluginFiles) {
+              if ($file.Name -eq "nsProcess.dll") {
+                Copy-Item -Path $file.FullName -Destination "C:\Program Files (x86)\NSIS\Plugins\x86-ansi\nsProcess.dll" -Force
+                Copy-Item -Path $file.FullName -Destination "C:\Program Files (x86)\NSIS\Plugins\x86-unicode\nsProcess.dll" -Force
+              } elseif ($file.Name -eq "nsProcessW.dll") {
+                Copy-Item -Path $file.FullName -Destination "C:\Program Files (x86)\NSIS\Plugins\x86-unicode\nsProcess.dll" -Force
+              }
+            }
+            
+            # Find and copy include files
+            $includeFiles = Get-ChildItem -Path "nsprocess_temp" -Recurse -Filter "*.nsh"
+            foreach ($file in $includeFiles) {
+              Copy-Item -Path $file.FullName -Destination "C:\Program Files (x86)\NSIS\Include\" -Force
+            }
+            
+            Remove-Item "nsprocess.zip" -Force
+            Remove-Item "nsprocess_temp" -Recurse -Force
+            echo "nsProcess plugin installed successfully"
+          } else {
+            echo "Warning: Failed to download nsProcess plugin. Continuing without it..."
+          }
         shell: powershell
 
       - name: Download FFmpeg (if not cached)
