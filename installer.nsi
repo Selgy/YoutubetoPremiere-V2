@@ -2,9 +2,6 @@
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"
 
-; Enable detailed logging for debugging
-LogSet on
-
 ; Version is passed from the workflow as a command line parameter
 ; If VERSION is not defined via command line, use a default
 !ifndef VERSION
@@ -34,6 +31,9 @@ RequestExecutionLevel admin
 !insertmacro MUI_LANGUAGE "English"
 
 Function .onInit
+    ; Enable detailed logging for debugging
+    LogSet on
+    
     ; Force installation to Adobe CEP extensions folder
     StrCpy $INSTDIR "$PROGRAMFILES64\Common Files\Adobe\CEP\extensions\com.selgy.youtubetopremiere"
     DetailPrint "Installation directory set to: $INSTDIR"
