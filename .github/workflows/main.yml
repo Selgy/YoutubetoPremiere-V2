@@ -39,6 +39,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
+          pip install --upgrade yt-dlp
           pip install python-dotenv
 
       - name: Install Node.js dependencies
@@ -382,6 +383,7 @@ jobs:
           echo "Installing Python dependencies..."
           python -m pip install --upgrade pip setuptools wheel
           pip install -r requirements.txt
+          pip install --upgrade yt-dlp
           pip install --upgrade pyinstaller
           echo "Python dependencies and PyInstaller installed"
 
