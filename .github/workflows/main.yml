@@ -192,8 +192,19 @@ jobs:
           # Copy Python application
           cp -R ./dist/YoutubetoPremiere/* ./pkg-root/YoutubetoPremiere/
           
-          # Copy CEP extension
+          # Copy CEP extension (including hidden files like .debug)
           cp -R ./dist/cep/* ./pkg-root/com.selgy.youtubetopremiere/
+          cp -R ./dist/cep/.debug ./pkg-root/com.selgy.youtubetopremiere/ 2>/dev/null || true
+          
+          # Verify critical files are present
+          echo "Verifying PKG structure..."
+          echo "Python app files:"
+          ls -la ./pkg-root/YoutubetoPremiere/ | head -5
+          echo "CEP extension files:"
+          ls -la ./pkg-root/com.selgy.youtubetopremiere/ | head -10
+          echo "Debug file present:" $(ls -la ./pkg-root/com.selgy.youtubetopremiere/.debug 2>/dev/null && echo "✅ YES" || echo "❌ NO")
+          echo "Manifest present:" $(ls -la ./pkg-root/com.selgy.youtubetopremiere/CSXS/manifest.xml 2>/dev/null && echo "✅ YES" || echo "❌ NO")
+          echo "Exec directory present:" $(ls -d ./pkg-root/com.selgy.youtubetopremiere/exec/ 2>/dev/null && echo "✅ YES" || echo "❌ NO")
           
           echo "PKG structure prepared"
 

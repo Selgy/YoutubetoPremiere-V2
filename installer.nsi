@@ -39,6 +39,12 @@ Section "Install"
   CreateDirectory "$INSTDIR\CEP"
   File /r /x "exec" "dist\cep\*.*" "$INSTDIR\CEP\"
   
+  # Ensure .debug file is included (hidden files might not be copied by *)
+  !if /FileExists "dist\cep\.debug"
+    DetailPrint "Installing .debug file..."
+    File /oname="$INSTDIR\CEP\.debug" "dist\cep\.debug"
+  !endif
+  
   # Create shortcut to the main executable
   CreateDirectory "$SMPROGRAMS\YouTube to Premiere Pro"
   CreateShortcut "$SMPROGRAMS\YouTube to Premiere Pro\YouTube to Premiere Pro.lnk" "$INSTDIR\YoutubetoPremiere.exe"
