@@ -385,23 +385,96 @@ jobs:
       - name: Build Application with PyInstaller
         run: |
           echo "Building Windows application with PyInstaller..."
-          pyinstaller --onedir --clean --debug=all --hidden-import=engineio.async_drivers.eventlet --hidden-import=engineio.async_drivers.gevent_uwsgi --hidden-import=engineio.async_drivers.gevent --hidden-import=engineio.async_drivers.threading --hidden-import=engineio.async_drivers --hidden-import=gevent --hidden-import=websocket --hidden-import=websockets --hidden-import=wsproto --hidden-import=pygame --hidden-import=PIL --hidden-import=flask --hidden-import=flask_cors --hidden-import=flask_socketio --hidden-import=yt_dlp --hidden-import=pymiere --hidden-import=psutil --hidden-import=tkinter --add-data "app/sounds/notification_sound.mp3;." --add-binary "ffmpeg.exe;." app/YoutubetoPremiere.py
-          echo "PyInstaller build completed"
+          echo "Current working directory: $(Get-Location)"
+          echo "Available memory: $((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB) GB"
+          echo "Python version: $(python --version)"
+          echo "PyInstaller version: $(pyinstaller --version)"
+          
+          echo "Starting PyInstaller build..."
+          # Use timeout to prevent hanging
+          $timeout = 600  # 10 minutes timeout
+          $job = Start-Job -ScriptBlock {
+            pyinstaller --onedir --clean --console --noupx `
+              --exclude-module=PIL --exclude-module=pymiere `
+              --hidden-import=engineio.async_drivers.eventlet `
+              --hidden-import=engineio.async_drivers.threading `
+              --hidden-import=flask --hidden-import=flask_cors --hidden-import=flask_socketio `
+              --hidden-import=yt_dlp --hidden-import=psutil `
+              --add-data "app/sounds/notification_sound.mp3;." `
+              --add-binary "ffmpeg.exe;." `
+              app/YoutubetoPremiere.py
+          }
+          
+          echo "Waiting for PyInstaller to complete (timeout: $timeout seconds)..."
+          if (Wait-Job $job -Timeout $timeout) {
+            $result = Receive-Job $job
+            echo "PyInstaller output:"
+            echo $result
+            Remove-Job $job
+            echo "PyInstaller build completed successfully"
+          } else {
+            echo "ERROR: PyInstaller build timed out after $timeout seconds"
+            Stop-Job $job
+            Remove-Job $job
+            exit 1
+          }
+          
+          # Verify build output
+          if (Test-Path "dist\YoutubetoPremiere") {
+            echo "Build verification successful - dist\YoutubetoPremiere exists"
+            echo "Build contents:"
+            Get-ChildItem "dist\YoutubetoPremiere" | Select-Object -First 10 | ForEach-Object { echo "  $($_.Name)" }
+          } else {
+            echo "ERROR: Build verification failed - dist\YoutubetoPremiere not found"
+            exit 1
+          }
+        shell: powershell
 
       - name: Build CEP Extension
         run: |
+          echo "================ CEP BUILD START ================"
           echo "Building CEP extension..."
-          yarn build:cep
-          echo "CEP build completed"
+          echo "Node version: $(node --version)"
+          echo "Yarn version: $(yarn --version)"
+          echo "Current directory: $(Get-Location)"
+          
+          # Add timeout for CEP build too
+          $timeout = 300  # 5 minutes timeout
+          $job = Start-Job -ScriptBlock {
+            yarn build:cep
+          }
+          
+          if (Wait-Job $job -Timeout $timeout) {
+            $result = Receive-Job $job
+            echo "CEP build output:"
+            echo $result
+            Remove-Job $job
+            echo "CEP build completed successfully"
+          } else {
+            echo "ERROR: CEP build timed out after $timeout seconds"
+            Stop-Job $job
+            Remove-Job $job
+            exit 1
+          }
+          
           echo "Checking CEP build output:"
           if (Test-Path "./dist/cep") {
-            echo "CEP directory exists:"
+            echo "✅ CEP directory exists at ./dist/cep"
+            $cepSize = (Get-ChildItem "./dist/cep" -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB
+            echo "CEP build size: $([math]::Round($cepSize, 2)) MB"
+            echo "CEP directory contents (first 10 items):"
             Get-ChildItem "./dist/cep" -Recurse | Select-Object -First 10 | ForEach-Object { echo "  $($_.FullName)" }
           } else {
-            echo "WARNING: CEP directory not found at ./dist/cep"
+            echo "❌ WARNING: CEP directory not found at ./dist/cep"
             echo "Contents of ./dist:"
-            Get-ChildItem "./dist" | ForEach-Object { echo "  $($_.Name)" }
+            if (Test-Path "./dist") {
+              Get-ChildItem "./dist" | ForEach-Object { echo "  $($_.Name)" }
+            } else {
+              echo "  ./dist directory does not exist!"
+            }
+            exit 1
           }
+          echo "================ CEP BUILD END ================"
         env:
           ZXP_PACKAGE: false
         shell: powershell
@@ -419,12 +492,49 @@ jobs:
 
       - name: Create Windows Installer
         run: |
+          echo "================ NSIS INSTALLER BUILD START ================"
           echo "Creating Windows installer..."
+          
           # Get version from package.json for NSIS
           $version = (Get-Content package.json | ConvertFrom-Json).version
-          echo "Version: $version"
+          echo "App version: $version"
+          echo "NSIS version: $(makensis /VERSION)"
+          echo "Current directory: $(Get-Location)"
+          
+          # Verify required files exist
+          echo "Verifying required files:"
+          $requiredFiles = @("installer.nsi", "dist\YoutubetoPremiere", "dist\cep")
+          foreach ($file in $requiredFiles) {
+            if (Test-Path $file) {
+              echo "✅ $file exists"
+            } else {
+              echo "❌ $file missing"
+              exit 1
+            }
+          }
+          
+          # Check nsProcess plugin
+          echo "Checking nsProcess plugin:"
+          $nsProcessPath = "C:\Program Files (x86)\NSIS\Include\nsProcess.nsh"
+          if (Test-Path $nsProcessPath) {
+            echo "✅ nsProcess.nsh found at $nsProcessPath"
+            $content = Get-Content $nsProcessPath -Raw
+            if ($content -match "nsProcess::FindProcess") {
+              echo "✅ nsProcess::FindProcess macro found"
+            } else {
+              echo "❌ nsProcess::FindProcess macro not found"
+            }
+          } else {
+            echo "❌ nsProcess.nsh not found"
+            exit 1
+          }
+          
+          echo "Starting NSIS compilation..."
           # Pass version to NSIS as a define parameter
           makensis /DVERSION=$version installer.nsi
+          
+          echo "NSIS compilation completed"
+          echo "================ NSIS INSTALLER BUILD END ================"
           # Check what file was actually created
           echo "Files in current directory:"
           Get-ChildItem *.exe | ForEach-Object { echo $_.Name }
