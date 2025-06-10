@@ -267,8 +267,9 @@ jobs:
           # Get version from package.json for NSIS
           $version = (Get-Content package.json | ConvertFrom-Json).version
           echo "Version: $version"
-          # Set environment variable for NSIS
-          makensis /DVERSION=$version installer.nsi
+          # Set environment variable for NSIS (not command line parameter)
+          $env:VERSION = $version
+          makensis installer.nsi
           # Rename to standard name for upload
           $sourceFile = "YoutubetoPremiere-$version-Setup.exe"
           $targetFile = "YouTubetoPremiere-Setup.exe"
