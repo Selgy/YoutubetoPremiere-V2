@@ -51,23 +51,33 @@ Section "Install YouTube to Premiere Pro" SEC01
   
   # Create directory structure
   CreateDirectory "$INSTDIR"
-  CreateDirectory "$INSTDIR\exec"
-  
-  # Install Python executable in exec subfolder
-  SetOutPath "$INSTDIR\exec"
-  DetailPrint "Installing Python application..."
-  File /r "dist\YoutubetoPremiere\*.*"
   
   # Install CEP extension files in main directory
   SetOutPath "$INSTDIR"
   DetailPrint "Installing CEP extension..."
-  IfFileExists "dist\cep\*.*" copy_cep skip_cep
-  copy_cep:
+  
+  # First copy all CEP files except exec folder
+  IfFileExists "dist\cep\manifest.xml" 0 skip_manifest
+    DetailPrint "Found CEP extension files"
     File /r /x "exec" "dist\cep\*.*"
-    Goto done_cep
-  skip_cep:
-    DetailPrint "CEP extension not found, skipping..."
-  done_cep:
+    DetailPrint "CEP extension core files copied"
+  skip_manifest:
+  
+  # Then ensure exec folder exists and copy Python executable
+  CreateDirectory "$INSTDIR\exec"
+  IfFileExists "dist\cep\exec\*.*" copy_exec skip_exec
+  copy_exec:
+    DetailPrint "Copying Python executable from CEP build..."
+    SetOutPath "$INSTDIR\exec"
+    File /r "dist\cep\exec\*.*"
+    DetailPrint "Python executable copied from CEP extension"
+    Goto done_exec
+  skip_exec:
+    DetailPrint "Python executable not found in CEP extension, using fallback..."
+    SetOutPath "$INSTDIR\exec"
+    File /r "dist\YoutubetoPremiere\*.*"
+    DetailPrint "Python executable copied from direct build"
+  done_exec:
   
   DetailPrint "Installation completed successfully"
 SectionEnd
