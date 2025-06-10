@@ -946,6 +946,19 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         preferred_language = settings.get('preferredAudioLanguage', 'original')
         logging.info(f"Using preferred audio language: {preferred_language}")
         
+        # Configure initial yt-dlp options with authentication (needed for format debugging)
+        initial_ydl_opts = {
+            'quiet': True,
+            'no_warnings': False,  # Enable warnings to see what's happening
+            'age_limit': None,  # Don't apply age limits
+            'skip_download': True,  # Only extract info
+            'geo_bypass': True,  # Bypass geographic restrictions
+            'geo_bypass_country': 'US',  # Use US as bypass country
+            'nocheckcertificate': True,  # Skip certificate validation
+            'extractor_retries': 5,  # Retry extraction up to 5 times
+            'retry_sleep': lambda n: 5 * (n + 1),  # Exponential backoff
+        }
+        
         # Debug available formats first
         max_height = int(resolution.replace("p", ""))
         debug_formats_and_create_optimal_format_string(video_url, max_height, preferred_language, initial_ydl_opts)
@@ -981,18 +994,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             socketio.emit('download-failed', {'message': error_msg})
             return None
 
-        # Configure initial yt-dlp options with authentication
-        initial_ydl_opts = {
-            'quiet': True,
-            'no_warnings': False,  # Enable warnings to see what's happening
-            'age_limit': None,  # Don't apply age limits
-            'skip_download': True,  # Only extract info
-            'geo_bypass': True,  # Bypass geographic restrictions
-            'geo_bypass_country': 'US',  # Use US as bypass country
-            'nocheckcertificate': True,  # Skip certificate validation
-            'extractor_retries': 5,  # Retry extraction up to 5 times
-            'retry_sleep': lambda n: 5 * (n + 1),  # Exponential backoff
-        }
+        # The initial_ydl_opts is already defined above, no need to update it here
         
         # Check for manual cookies file first (more reliable for age-restricted content)
         manual_cookies_file = get_youtube_cookies_file()
