@@ -130,10 +130,13 @@ jobs:
           echo "Building CEP extension..."
           yarn build:cep
           echo "CEP build completed"
+        env:
+          ZXP_PACKAGE: false
 
       - name: Copy Python executable to CEP extension
         run: |
           echo "Copying Python executable to CEP extension..."
+          rm -rf ./dist/cep/exec
           mkdir -p ./dist/cep/exec
           cp -R ./dist/YoutubetoPremiere/YoutubetoPremiere ./dist/cep/exec/
           cp -R ./dist/YoutubetoPremiere/_internal ./dist/cep/exec/
@@ -148,11 +151,7 @@ jobs:
           echo "Signing the application..."
           codesign --deep --timestamp --options runtime --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere"
 
-      - name: Build ZXP Package
-        run: |
-          echo "Building ZXP package..."
-          yarn workspace cep build:zxp
-          echo "ZXP package created"
+
 
       - name: Create PKG installer
         run: |
@@ -182,7 +181,6 @@ jobs:
           name: macos-build
           path: |
             YouTubetoPremiere.pkg
-            dist/cep/*.zxp
 
   windows-build:
     runs-on: windows-latest
@@ -218,17 +216,18 @@ jobs:
         run: |
           echo "Building CEP extension..."
           yarn build:cep
+        env:
+          ZXP_PACKAGE: false
 
       - name: Copy Python executable to CEP extension
         run: |
           echo "Copying Python executable to CEP extension..."
-          mkdir -p ./dist/cep/exec
+          if (Test-Path "./dist/cep/exec") { Remove-Item "./dist/cep/exec" -Recurse -Force }
+          New-Item -ItemType Directory -Path "./dist/cep/exec" -Force
           xcopy "./dist/YoutubetoPremiere" "./dist/cep/exec/" /E /I /H /Y
+        shell: powershell
 
-      - name: Build ZXP Package
-        run: |
-          echo "Building ZXP package..."
-          yarn workspace cep build:zxp
+
 
       - name: Create Windows Installer
         run: |
@@ -241,7 +240,6 @@ jobs:
           name: windows-build
           path: |
             YouTubetoPremiere-Setup.exe
-            dist/cep/*.zxp
 
   release:
     needs: [mac-build-apple-silicon, windows-build]

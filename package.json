@@ -14,7 +14,7 @@
     "build": "node tools/build.js",
     "build-mac": "node tools/build.js all",
     "build:python": "node tools/build.js python",
-    "build:cep": "cross-env ZXP_PACKAGE=true vite build",
+    "build:cep": "vite build",
     "build:chrome": "node -e \"const fs=require('fs-extra'); fs.copySync('./ChromeExtension', './dist/chrome'); console.log('Chrome extension copied successfully');\"",
     "build:all": "node tools/build.js all",
     "build:verbose": "node tools/build.js --verbose",
