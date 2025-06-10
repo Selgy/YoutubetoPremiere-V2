@@ -27,41 +27,19 @@ RequestExecutionLevel admin
 Section "Install"
   SetOutPath "$INSTDIR"
   
-  # Try multiple paths for YoutubetoPremiere.exe
-  !if /FileExists "dist\YoutubetoPremiere.exe"
-    DetailPrint "Found dist\YoutubetoPremiere.exe"
-    File "dist\YoutubetoPremiere.exe"
-  !else if /FileExists "dist\cep\exec\YoutubetoPremiere.exe"
-    DetailPrint "Found dist\cep\exec\YoutubetoPremiere.exe"
-    File "dist\cep\exec\YoutubetoPremiere.exe"
-  !else
-    DetailPrint "Error: YoutubetoPremiere.exe not found in expected locations"
-    MessageBox MB_OK "No YoutubetoPremiere.exe found. The installation may fail."
-  !endif
+  # Copy the Python application directory
+  DetailPrint "Installing Python application..."
+  File /r "dist\YoutubetoPremiere\*.*"
   
-  # Additional files if they exist
-  !if /FileExists "dist\YoutubetoPremiere\*.*"
-    DetailPrint "Found additional files in dist\YoutubetoPremiere"
-    File /r "dist\YoutubetoPremiere\*.*"
-  !endif
+  # Copy the CEP extension 
+  DetailPrint "Installing CEP extension..."
+  CreateDirectory "$INSTDIR\CEP"
+  File /r /x "exec" "dist\cep\*.*" "$INSTDIR\CEP\"
   
-  # Add the ZXP to the installer if it exists
-  CreateDirectory "$INSTDIR\zxp"
-  !if /FileExists "dist\zxp\YoutubetoPremiere-v${VERSION}.zxp"
-    DetailPrint "Found ZXP file"
-    File /oname="$INSTDIR\zxp\YoutubetoPremiere-${VERSION}.zxp" "dist\zxp\YoutubetoPremiere-v${VERSION}.zxp"
-  !endif
-  
-  # Handle CEP extension directory
-  !if /FileExists "dist\com.selgy.youtubetopremiere\*.*"
-    DetailPrint "Found CEP extension files"
-    CreateDirectory "$INSTDIR\com.selgy.youtubetopremiere"
-    File /r "dist\com.selgy.youtubetopremiere\*.*"
-  !endif
-  
-  # Create shortcut
+  # Create shortcut to the main executable
   CreateDirectory "$SMPROGRAMS\YouTube to Premiere Pro"
   CreateShortcut "$SMPROGRAMS\YouTube to Premiere Pro\YouTube to Premiere Pro.lnk" "$INSTDIR\YoutubetoPremiere.exe"
+  CreateShortcut "$DESKTOP\YouTube to Premiere Pro.lnk" "$INSTDIR\YoutubetoPremiere.exe"
   
   # Create uninstaller
   WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -81,15 +59,13 @@ SectionEnd
 
 Section "Uninstall"
   # Remove application files
-  RMDir /r "$INSTDIR\*.*"
+  RMDir /r "$INSTDIR"
   
   # Remove shortcuts
   Delete "$SMPROGRAMS\YouTube to Premiere Pro\*.*"
   RMDir "$SMPROGRAMS\YouTube to Premiere Pro"
+  Delete "$DESKTOP\YouTube to Premiere Pro.lnk"
   
   # Remove registry entries
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YoutubetoPremiere"
-  
-  # Remove install directory if empty
-  RMDir "$INSTDIR"
 SectionEnd 

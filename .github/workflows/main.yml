@@ -253,6 +253,11 @@ jobs:
       - name: Install Node.js dependencies
         run: yarn install --frozen-lockfile
 
+      - name: Install NSIS
+        run: |
+          choco install nsis -y
+          refreshenv
+
       - name: Build Application with PyInstaller
         run: |
           pip install --upgrade pyinstaller
