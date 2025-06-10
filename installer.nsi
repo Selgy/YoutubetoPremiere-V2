@@ -11,7 +11,8 @@
 
 Name "YouTube to Premiere Pro"
 OutFile "YoutubetoPremiere-${VERSION}-Setup.exe"
-!define MUI_ICON "icon.ico"
+; Icon temporarily disabled - will be added later
+; !define MUI_ICON "icon.ico"
 
 ; Request application privileges for Windows Vista and higher
 RequestExecutionLevel admin
