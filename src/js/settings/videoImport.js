@@ -8,9 +8,9 @@ const getServerIP = async () => {
         try {
             const response = await fetch(`http://${address}:3001/get-ip`);
             if (response.ok) {
-                const data = await response.json();
                 console.log('Successfully connected to server at:', address);
-                return data.ip;
+                localStorage.setItem('serverIP', address);
+                return address;
             }
         } catch (error) {
             console.log(`Failed to connect to ${address}:`, error);

@@ -650,7 +650,7 @@ def diagnose_windows_networking():
     try:
         # Check if port 3001 is being used
         if os.path.exists(netstat_path):
-            result = subprocess.run([netstat_path, '-an'], capture_output=True, text=True, timeout=10)
+            result = subprocess.run([netstat_path, '-an'], capture_output=True, text=True, timeout=10, encoding='utf-8', errors='replace')
             if result.returncode == 0:
                 lines = result.stdout.split('\n')
                 port_3001_lines = [line for line in lines if ':3001' in line]
@@ -669,7 +669,7 @@ def diagnose_windows_networking():
         # Check Windows Firewall status
         if os.path.exists(netsh_path):
             result = subprocess.run([netsh_path, 'advfirewall', 'show', 'allprofiles', 'state'], 
-                                  capture_output=True, text=True, timeout=10)
+                                  capture_output=True, text=True, timeout=10, encoding='utf-8', errors='replace')
             if result.returncode == 0:
                 logging.info("Windows Firewall status:")
                 for line in result.stdout.split('\n'):
@@ -684,12 +684,13 @@ def diagnose_windows_networking():
         # Test localhost connectivity
         if os.path.exists(ping_path):
             result = subprocess.run([ping_path, '-n', '1', 'localhost'], 
-                                  capture_output=True, text=True, timeout=10)
+                                  capture_output=True, text=True, timeout=10, encoding='utf-8', errors='replace')
             if result.returncode == 0:
                 logging.info("Localhost ping successful")
             else:
                 logging.warning("Localhost ping failed - this may indicate networking issues")
-                logging.warning(f"Ping error: {result.stderr}")
+                if result.stderr:
+                    logging.warning(f"Ping error: {result.stderr}")
         else:
             logging.warning(f"ping.exe not found at {ping_path}")
     except Exception as e:
@@ -699,13 +700,13 @@ def diagnose_windows_networking():
         # Check for proxy settings
         if os.path.exists(netsh_path):
             result = subprocess.run([netsh_path, 'winhttp', 'show', 'proxy'], 
-                                  capture_output=True, text=True, timeout=10)
+                                  capture_output=True, text=True, timeout=10, encoding='utf-8', errors='replace')
             if result.returncode == 0:
                 proxy_info = result.stdout.strip()
-                if 'Direct access' in proxy_info:
+                if 'Direct access' in proxy_info or 'Accès direct' in proxy_info:
                     logging.info("No proxy configured")
                 else:
-                    logging.warning(f"Proxy configured: {proxy_info}")
+                    logging.info(f"Proxy information: {proxy_info[:100]}...")  # Truncate long output
         else:
             logging.warning("Cannot check proxy settings - netsh not available")
     except Exception as e:
