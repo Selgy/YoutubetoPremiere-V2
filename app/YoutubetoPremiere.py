@@ -328,19 +328,19 @@ try:
     socketio = SocketIO(app, 
         cors_allowed_origins="*",
         async_mode='threading',
-        ping_timeout=60,  # Shorter timeout for faster failure detection
-        ping_interval=25,  # Shorter interval for better connection detection
-        max_http_buffer_size=100 * 1024 * 1024,  # 100MB
-        transports=['polling', 'websocket'],  # Allow both polling and websocket
+        ping_timeout=30,  # Reduce timeout for Windows CEP environment
+        ping_interval=10,  # More frequent pings for better connection detection
+        max_http_buffer_size=50 * 1024 * 1024,  # Reduce buffer size for CEP
+        transports=['polling'],  # Start with polling only for CEP compatibility
         logger=False,  # Disable verbose logging
         engineio_logger=False,  # Disable verbose logging
         always_connect=True,
-        allow_upgrades=True,  # Allow upgrading from polling to websocket
+        allow_upgrades=False,  # Disable upgrades for better CEP compatibility
         cookie=None,
-        # Add Windows-specific optimizations
+        # CEP-specific optimizations
         compression=False,  # Disable compression for better Windows compatibility
         jsonp=False,  # Disable JSONP polling for security
-        # Set engineio specific options for better Windows support
+        # Set engineio specific options for better Windows/CEP support
         http_compression=False,
         websocket_compression=False
     )

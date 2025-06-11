@@ -407,23 +407,49 @@ def is_premiere_running():
     return False
 
 def find_ffmpeg():
+    """Find FFmpeg executable - consistent with init.py approach"""
+    
+    # First check if FFMPEG_PATH environment variable is set
+    env_ffmpeg_path = os.environ.get('FFMPEG_PATH')
+    if env_ffmpeg_path and os.path.exists(env_ffmpeg_path):
+        logging.info(f"Found FFmpeg via environment variable: {env_ffmpeg_path}")
+        return env_ffmpeg_path
+    
     if getattr(sys, 'frozen', False):
         base_path = os.path.dirname(sys.executable)
     else:
         base_path = os.path.dirname(os.path.abspath(__file__))
     
+    # Try the same paths as init.py
     ffmpeg_paths = [
-        os.path.join(base_path, 'exec', 'ffmpeg.exe'),
-        os.path.join(base_path, 'ffmpeg.exe'),
-        os.path.join(os.path.dirname(base_path), 'exec', 'ffmpeg.exe'),
-        os.path.join(os.path.dirname(base_path), 'ffmpeg.exe')
+        os.path.join(base_path, '_internal', 'ffmpeg.exe'),  # PyInstaller _internal
+        os.path.join(base_path, 'ffmpeg.exe'),               # Same directory
+        os.path.join(base_path, 'exec', 'ffmpeg.exe'),       # exec subdirectory
+        os.path.join(os.path.dirname(base_path), 'exec', 'ffmpeg.exe'),  # Parent's exec
+        os.path.join(os.path.dirname(base_path), 'ffmpeg.exe')            # Parent directory
     ]
+    
+    # Add extension root paths if available
+    extension_root = os.environ.get('EXTENSION_ROOT')
+    if extension_root:
+        ffmpeg_paths.extend([
+            os.path.join(extension_root, 'exec', '_internal', 'ffmpeg.exe'),
+            os.path.join(extension_root, 'exec', 'ffmpeg.exe'),
+            os.path.join(extension_root, 'ffmpeg.exe'),
+        ])
     
     for path in ffmpeg_paths:
         if os.path.exists(path):
-            logging.info(f"Found FFmpeg at: {path}")
-            return path
-            
+            # Quick validation - check file size (FFmpeg should be several MB)
+            try:
+                if os.path.getsize(path) > 1000000:  # > 1MB
+                    logging.info(f"Found FFmpeg at: {path}")
+                    return path
+                else:
+                    logging.warning(f"Found ffmpeg at {path} but size is suspiciously small")
+            except Exception as e:
+                logging.warning(f"Error checking FFmpeg size at {path}: {e}")
+    
     raise Exception("FFmpeg not found in any of the expected locations")
 
 def save_download_path(download_path):
@@ -612,56 +638,76 @@ def diagnose_windows_networking():
         return
     
     import subprocess
+    import os
     logging.info("=== Windows Network Diagnostics ===")
+    
+    # Get system directories for Windows commands
+    system32_dir = os.path.join(os.environ.get('SYSTEMROOT', 'C:\\Windows'), 'System32')
+    netstat_path = os.path.join(system32_dir, 'netstat.exe')
+    ping_path = os.path.join(system32_dir, 'ping.exe')
+    netsh_path = os.path.join(system32_dir, 'netsh.exe')
     
     try:
         # Check if port 3001 is being used
-        result = subprocess.run(['netstat', '-an'], capture_output=True, text=True, shell=True)
-        if result.returncode == 0:
-            lines = result.stdout.split('\n')
-            port_3001_lines = [line for line in lines if ':3001' in line]
-            if port_3001_lines:
-                logging.info("Port 3001 usage:")
-                for line in port_3001_lines:
-                    logging.info(f"  {line.strip()}")
-            else:
-                logging.info("Port 3001 is not currently in use")
+        if os.path.exists(netstat_path):
+            result = subprocess.run([netstat_path, '-an'], capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                lines = result.stdout.split('\n')
+                port_3001_lines = [line for line in lines if ':3001' in line]
+                if port_3001_lines:
+                    logging.info("Port 3001 usage:")
+                    for line in port_3001_lines[:5]:  # Limit output
+                        logging.info(f"  {line.strip()}")
+                else:
+                    logging.info("Port 3001 is not currently in use")
+        else:
+            logging.warning(f"netstat.exe not found at {netstat_path}")
     except Exception as e:
         logging.warning(f"Could not check port usage: {e}")
     
     try:
         # Check Windows Firewall status
-        result = subprocess.run(['netsh', 'advfirewall', 'show', 'allprofiles', 'state'], 
-                              capture_output=True, text=True, shell=True)
-        if result.returncode == 0:
-            logging.info("Windows Firewall status:")
-            for line in result.stdout.split('\n'):
-                if 'State' in line:
-                    logging.info(f"  {line.strip()}")
+        if os.path.exists(netsh_path):
+            result = subprocess.run([netsh_path, 'advfirewall', 'show', 'allprofiles', 'state'], 
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                logging.info("Windows Firewall status:")
+                for line in result.stdout.split('\n'):
+                    if 'State' in line and line.strip():
+                        logging.info(f"  {line.strip()}")
+        else:
+            logging.warning(f"netsh.exe not found at {netsh_path}")
     except Exception as e:
         logging.warning(f"Could not check Windows Firewall status: {e}")
     
     try:
         # Test localhost connectivity
-        result = subprocess.run(['ping', '-n', '1', 'localhost'], 
-                              capture_output=True, text=True, shell=True)
-        if result.returncode == 0:
-            logging.info("Localhost ping successful")
+        if os.path.exists(ping_path):
+            result = subprocess.run([ping_path, '-n', '1', 'localhost'], 
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                logging.info("Localhost ping successful")
+            else:
+                logging.warning("Localhost ping failed - this may indicate networking issues")
+                logging.warning(f"Ping error: {result.stderr}")
         else:
-            logging.warning("Localhost ping failed - this may indicate networking issues")
+            logging.warning(f"ping.exe not found at {ping_path}")
     except Exception as e:
         logging.warning(f"Could not test localhost connectivity: {e}")
     
     try:
         # Check for proxy settings
-        result = subprocess.run(['netsh', 'winhttp', 'show', 'proxy'], 
-                              capture_output=True, text=True, shell=True)
-        if result.returncode == 0:
-            proxy_info = result.stdout.strip()
-            if 'Direct access' in proxy_info:
-                logging.info("No proxy configured")
-            else:
-                logging.warning(f"Proxy configured: {proxy_info}")
+        if os.path.exists(netsh_path):
+            result = subprocess.run([netsh_path, 'winhttp', 'show', 'proxy'], 
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                proxy_info = result.stdout.strip()
+                if 'Direct access' in proxy_info:
+                    logging.info("No proxy configured")
+                else:
+                    logging.warning(f"Proxy configured: {proxy_info}")
+        else:
+            logging.warning("Cannot check proxy settings - netsh not available")
     except Exception as e:
         logging.warning(f"Could not check proxy settings: {e}")
     
@@ -672,6 +718,9 @@ def create_windows_firewall_rule():
     if sys.platform != 'win32':
         return False
     
+    import os
+    import subprocess
+    
     try:
         # Get the current executable path
         if getattr(sys, 'frozen', False):
@@ -679,9 +728,17 @@ def create_windows_firewall_rule():
         else:
             exe_path = sys.executable
         
+        # Get system directory for netsh
+        system32_dir = os.path.join(os.environ.get('SYSTEMROOT', 'C:\\Windows'), 'System32')
+        netsh_path = os.path.join(system32_dir, 'netsh.exe')
+        
+        if not os.path.exists(netsh_path):
+            logging.warning(f"netsh.exe not found at {netsh_path}")
+            return False
+        
         # Try to add firewall rule for the Python executable
         cmd = [
-            'netsh', 'advfirewall', 'firewall', 'add', 'rule',
+            netsh_path, 'advfirewall', 'firewall', 'add', 'rule',
             'name=YoutubetoPremiere Server',
             f'program={exe_path}',
             'dir=in',
@@ -690,7 +747,7 @@ def create_windows_firewall_rule():
             'localport=3001'
         ]
         
-        result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode == 0:
             logging.info("Successfully created Windows Firewall rule for YoutubetoPremiere")
             return True

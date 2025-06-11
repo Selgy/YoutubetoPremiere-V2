@@ -394,15 +394,17 @@ async function startPythonServer() {
 
         console.log(`Starting Python server from: ${PythonExecutablePath}`);
         try {
-            // For macOS, create a more robust environment
-            const serverEnv = { 
-                ...process.env, 
+            // Environment variables for Python server
+            const serverEnv = {
+                ...process.env,
                 Python_BACKTRACE: '1', 
                 EXTENSION_ROOT: extensionRoot,
                 PYTHONIOENCODING: 'utf-8',
                 PYTHONUNBUFFERED: '1',
-                // Ensure PATH is always available
-                PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin'
+                // Set appropriate PATH based on platform
+                PATH: process.platform === 'win32' 
+                    ? process.env.PATH || process.env.Path || 'C:\\Windows\\system32;C:\\Windows;C:\\Windows\\System32\\Wbem'
+                    : process.env.PATH || '/usr/local/bin:/usr/bin:/bin'
             };
             
             if (process.platform === 'darwin') {
