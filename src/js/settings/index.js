@@ -402,9 +402,9 @@ async function startPythonServer() {
             }
         }, 2000);
         
-        return;
-    }
-    
+            return;
+        }
+
     // If on Windows, wait for any existing processes to clean up
     if (process.platform === 'win32') {
         const processCount = await waitForProcessCleanup();
@@ -527,8 +527,8 @@ async function startPythonServer() {
         console.log(`Starting Python server from: ${PythonExecutablePath}`);
         try {
             // Environment variables for Python server
-            const serverEnv = {
-                ...process.env,
+            const serverEnv = { 
+                ...process.env, 
                 Python_BACKTRACE: '1', 
                 EXTENSION_ROOT: extensionRoot,
                 PYTHONIOENCODING: 'utf-8',
