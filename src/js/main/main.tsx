@@ -2,8 +2,6 @@ import { useEffect, useState } from 'react';
 import './styles.css';
 import Settings from './Settings';
 import io from 'socket.io-client';
-import CSInterface from '../lib/cep/csinterface';
-import { SystemPath } from '../lib/cep/csinterface';
 
 declare const window: Window & {
   cep: any;
@@ -12,29 +10,23 @@ declare const window: Window & {
 
 // Get the local IP address from the server
 const getLocalIP = async () => {
-  const possibleAddresses = ['localhost', '127.0.0.1', '192.168.56.1'];
+  // For CEP environment, always use localhost for stability
+  const possibleAddresses = ['localhost', '127.0.0.1'];
   
   for (const address of possibleAddresses) {
     try {
-      const response = await fetch(`http://${address}:3001/get-ip`);
+      const response = await fetch(`http://${address}:3001/health`);
       if (response.ok) {
-        const data = await response.json();
         console.log('Successfully connected to server at:', address);
-        return data.ip;
+        // Always return localhost for CEP environment
+        return 'localhost';
       }
     } catch (error) {
       console.log(`Failed to connect to ${address}:`, error);
     }
   }
   
-  // If we get here, try to use the last known working IP
-  const lastKnownIP = localStorage.getItem('serverIP');
-  if (lastKnownIP) {
-    console.log('Using last known IP:', lastKnownIP);
-    return lastKnownIP;
-  }
-  
-  console.error('Could not determine server IP, falling back to localhost');
+  console.log('Could not connect to server, but defaulting to localhost for CEP');
   return 'localhost';
 };
 
@@ -51,7 +43,6 @@ const Main = () => {
   });
 
   const [lastPaths, setLastPaths] = useState<string[]>([]);
-  const [showDropdown, setShowDropdown] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isLicenseValid, setIsLicenseValid] = useState(false);
   const [licenseKey, setLicenseKey] = useState('');
@@ -64,6 +55,11 @@ const Main = () => {
   const currentVersion = '3.0.937';
   const [currentPage, setCurrentPage] = useState('main');
   const [serverIP, setServerIP] = useState('localhost');
+  
+  // Force localhost for all requests in CEP environment
+  const getServerURL = (endpoint: string) => {
+    return `http://localhost:3001${endpoint}`;
+  };
   const [isCEPEnvironment, setIsCEPEnvironment] = useState(false);
 
   useEffect(() => {
@@ -82,12 +78,12 @@ const Main = () => {
 
   useEffect(() => {
     const initializeConnection = async () => {
-      const ip = await getLocalIP();
-      if (ip !== 'localhost') {
-        localStorage.setItem('serverIP', ip);
-      }
-      setServerIP(ip);
-      console.log('Server IP set to:', ip);
+      await getLocalIP();
+      // Force localhost for CEP environment
+      const finalIP = 'localhost';
+      localStorage.setItem('serverIP', finalIP);
+      setServerIP(finalIP);
+      console.log('Server IP set to:', finalIP);
     };
     initializeConnection();
   }, []);
@@ -96,7 +92,7 @@ const Main = () => {
     const checkLicenseAndStart = async () => {
       setIsLoading(true);
       try {
-        const response = await fetch(`http://${serverIP}:3001/check-license`);
+        const response = await fetch(getServerURL('/check-license'));
         const data = await response.json();
         
         if (data.isValid) {
@@ -123,73 +119,111 @@ const Main = () => {
   useEffect(() => {
     if (!serverIP) return; // Only check if serverIP is empty/undefined
 
-    const socket = io(`http://${serverIP}:3001`, {
-      transports: ['polling'],  // Force polling only for CEP stability
-      reconnectionAttempts: 5,  // Limit reconnection attempts to avoid flooding
-      reconnectionDelay: 3000,  // Longer delay between reconnections
-      reconnectionDelayMax: 10000,
-      timeout: 20000,  // Shorter timeout to fail faster
-      forceNew: false,  // Reuse connections when possible
-      upgrade: false,   // Disable WebSocket upgrade for CEP
-      rememberUpgrade: false,
-      rejectUnauthorized: false,
-      autoConnect: true,
-      withCredentials: false,  // Disable credentials for localhost
-      query: { 
-        client_type: 'premiere',
-        cep_version: '1.0'
-      },
-      // CEP-specific transport options
-      transportOptions: {
-        polling: {
-          extraHeaders: {
-            'User-Agent': 'Adobe-CEP-Extension'
-          }
+    let connectionAttempts = 0;
+    const maxAttempts = 10;
+    let socket: any = null;
+    let useHttpFallback = false;
+    let healthCheckInterval: NodeJS.Timeout | null = null;
+
+    // Function to try WebSocket/Socket.IO connection
+    const attemptSocketConnection = () => {
+      if (useHttpFallback || connectionAttempts >= maxAttempts) {
+        console.log('Max socket connection attempts reached, switching to HTTP fallback');
+        useHttpFallback = true;
+        startHttpFallback();
+        return;
+      }
+
+      connectionAttempts++;
+      console.log(`Socket connection attempt ${connectionAttempts}/${maxAttempts}`);
+
+      socket = io(`http://localhost:3001`, {
+        transports: ['polling'],  // Force polling only for CEP stability
+        reconnection: false,  // Disable automatic reconnection
+        timeout: 10000,  // Shorter timeout
+        forceNew: true,  // Force new connection each time
+        upgrade: false,   // Disable WebSocket upgrade for CEP
+        withCredentials: false,  // Disable credentials for localhost
+        query: { 
+          client_type: 'premiere',
+          cep_version: '1.0'
         }
-      }
-    });
+      });
 
-    let retryCount = 0;
-    const maxRetries = Infinity;
+      socket.on('connect', () => {
+        console.log('Socket connected to server successfully');
+        connectionAttempts = 0; // Reset on successful connection
+        useHttpFallback = false;
+      });
 
-    socket.on('connect', () => {
-      console.log('Connected to server');
-      retryCount = 0;
-    });
-
-    socket.on('connect_error', (error) => {
-      console.error('Connection error:', error);
-      retryCount++;
-      
-      console.log(`Retrying connection (attempt ${retryCount})`);
-      setTimeout(() => {
-        socket.connect();
-      }, Math.min(1000 * Math.pow(2, retryCount % 10), 10000));
-    });
-
-    socket.on('disconnect', (reason) => {
-      console.log('Disconnected:', reason);
-      if (reason === 'io server disconnect' || reason === 'transport close') {
+      socket.on('connect_error', (error: any) => {
+        console.log(`Socket connection error (attempt ${connectionAttempts}):`, error.message);
+        socket.disconnect();
+        
+        // Try again after a delay, or switch to HTTP fallback
         setTimeout(() => {
-          console.log('Attempting to reconnect...');
-          socket.connect();
-        }, 1000);
-      }
-    });
+          if (connectionAttempts < maxAttempts) {
+            attemptSocketConnection();
+          } else {
+            console.log('Switching to HTTP fallback mode');
+            useHttpFallback = true;
+            startHttpFallback();
+          }
+        }, 2000);
+      });
 
-    socket.on('error', (error) => {
-      console.error('Socket error:', error);
-      setTimeout(() => {
-        console.log(`Retrying after error (attempt ${retryCount})`);
-        socket.connect();
-      }, Math.min(1000 * Math.pow(2, retryCount % 10), 10000));
-    });
+      socket.on('disconnect', () => {
+        console.log('Socket disconnected');
+      });
 
-    // Force initial connection
-    socket.connect();
+      socket.on('error', (error: any) => {
+        console.log('Socket error:', error.message);
+      });
+    };
+
+    // HTTP fallback function
+    const startHttpFallback = () => {
+      console.log('Starting HTTP fallback mode for main panel');
+      
+      // Simple health check polling
+      const checkServerHealth = async () => {
+        try {
+                   const controller = new AbortController();
+         const timeoutId = setTimeout(() => controller.abort(), 5000);
+         
+         const response = await fetch(getServerURL('/health'), {
+           method: 'GET',
+           signal: controller.signal
+         });
+         
+         clearTimeout(timeoutId);
+          
+          if (response.ok) {
+            // Server is accessible via HTTP
+            console.log('HTTP fallback: Server health check passed');
+          }
+        } catch (error) {
+          console.log('HTTP fallback: Server health check failed:', error);
+        }
+      };
+
+      // Start health check polling every 30 seconds
+      healthCheckInterval = setInterval(checkServerHealth, 30000);
+      
+      // Initial health check
+      checkServerHealth();
+    };
+
+    // Start with socket connection attempt
+    attemptSocketConnection();
 
     return () => {
-      socket.disconnect();
+      if (socket) {
+        socket.disconnect();
+      }
+      if (healthCheckInterval) {
+        clearInterval(healthCheckInterval);
+      }
     };
   }, [serverIP]);
 
@@ -198,7 +232,7 @@ const Main = () => {
     
     setIsCheckingUpdates(true);
     try {
-      const response = await fetch(`http://${serverIP}:3001/check-updates`);
+      const response = await fetch(getServerURL('/check-updates'));
       const data = await response.json();
       
       if (data.success) {
@@ -235,7 +269,7 @@ const Main = () => {
     setErrorMessage('');
     
     try {
-      const response = await fetch(`http://${serverIP}:3001/validate-license`, {
+      const response = await fetch(getServerURL('/validate-license'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -263,7 +297,7 @@ const Main = () => {
 
   const loadSettings = async () => {
     try {
-      const response = await fetch(`http://${serverIP}:3001/settings`);
+      const response = await fetch(getServerURL('/settings'));
       if (response.ok) {
         const serverSettings = await response.json();
         setSettings(serverSettings);
@@ -298,7 +332,7 @@ const Main = () => {
         licenseKey: settings.licenseKey
       };
 
-      const saveResponse = await fetch(`http://${serverIP}:3001/settings`, {
+              const saveResponse = await fetch(getServerURL('/settings'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -358,7 +392,7 @@ const Main = () => {
     setSettings(newSettings);
     
     try {
-      const response = await fetch(`http://${serverIP}:3001/settings`, {
+      const response = await fetch(getServerURL('/settings'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

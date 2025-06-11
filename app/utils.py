@@ -617,13 +617,46 @@ def open_sounds_folder():
             os.makedirs(sounds_dir, exist_ok=True)
             logger.info(f"Created sounds directory: {sounds_dir}")
         
+        # Convert to absolute path and normalize for Windows
+        sounds_dir = os.path.abspath(sounds_dir)
+        logger.info(f"Attempting to open sounds folder: {sounds_dir}")
+        
         # Open the directory in file explorer
         if platform.system() == 'Windows':
-            subprocess.run(['explorer', sounds_dir], check=True)
+            # Try multiple methods for Windows
+            try:
+                # Method 1: Use explorer with normalized path
+                result = subprocess.run(['explorer', sounds_dir], 
+                                      capture_output=True, text=True, timeout=10)
+                if result.returncode == 0:
+                    logger.info(f"Opened sounds folder via explorer: {sounds_dir}")
+                    return sounds_dir
+                else:
+                    logger.warning(f"Explorer failed with code {result.returncode}: {result.stderr}")
+            except Exception as e:
+                logger.warning(f"Explorer method failed: {str(e)}")
+            
+            # Method 2: Use os.startfile (Windows specific)
+            try:
+                os.startfile(sounds_dir)
+                logger.info(f"Opened sounds folder via os.startfile: {sounds_dir}")
+                return sounds_dir
+            except Exception as e:
+                logger.warning(f"os.startfile method failed: {str(e)}")
+            
+            # Method 3: Use cmd with start command
+            try:
+                subprocess.run(['cmd', '/c', 'start', '""', sounds_dir], 
+                             shell=True, timeout=10)
+                logger.info(f"Opened sounds folder via cmd start: {sounds_dir}")
+                return sounds_dir
+            except Exception as e:
+                logger.warning(f"cmd start method failed: {str(e)}")
+                
         elif platform.system() == 'Darwin':  # macOS
-            subprocess.run(['open', sounds_dir], check=True)
+            subprocess.run(['open', sounds_dir], timeout=10)
         else:  # Linux and others
-            subprocess.run(['xdg-open', sounds_dir], check=True)
+            subprocess.run(['xdg-open', sounds_dir], timeout=10)
         
         logger.info(f"Opened sounds folder: {sounds_dir}")
         return sounds_dir
