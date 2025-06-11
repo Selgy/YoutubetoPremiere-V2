@@ -202,10 +202,15 @@ def check_server_running(port=3001):
     try:
         import requests
         response = requests.get(f'http://localhost:{port}/health', timeout=1)
-        return response.status_code == 200
-    except:
+        if response.status_code == 200:
+            logging.info(f"Found existing server running on port {port}")
+            return True
+    except Exception as e:
         # If request fails, port might be used by another application
+        logging.warning(f"Port {port} is in use but health check failed: {e}")
         return False
+    
+    return False
 
 def get_app_paths():
     """Get all relevant application paths and log them for debugging"""
@@ -324,16 +329,12 @@ try:
         cors_allowed_origins="*",
         async_mode='threading',
         ping_timeout=60,
-        ping_interval=10000,  # 10 seconds instead of 25
+        ping_interval=25,  # Match Chrome extension expectation (25 seconds)
         max_http_buffer_size=100 * 1024 * 1024,  # 100MB
         transports=['polling', 'websocket'],  # Try polling first, then websocket
-        logger=False,
-        engineio_logger=False,
+        logger=True,  # Enable logging for debugging
+        engineio_logger=True,  # Enable engine.io logging for debugging
         always_connect=True,
-        reconnection=True,
-        reconnection_attempts=5,  # Limit reconnection attempts
-        reconnection_delay=1000,
-        reconnection_delay_max=10000,  # Increased max delay
         allow_upgrades=True,
         cookie=None
     )
@@ -525,17 +526,47 @@ def run_server():
     logging.info('Settings loaded: %s', settings_for_logging)
     register_routes(app, socketio, settings)
 
-    # Start server without exposing IP addresses
-    logging.info(f'Starting server on all interfaces on port 3001')
-
+    # On Windows, try binding to localhost first for better compatibility
+    # If that fails, fall back to binding to all interfaces
+    bind_host = 'localhost' if sys.platform == 'win32' else '0.0.0.0'
+    
+    # Start server
+    logging.info(f'Starting server on {bind_host} port 3001')
+    
     server_thread = threading.Thread(target=lambda: socketio.run(
         app, 
-        host='0.0.0.0',  # Bind to all available interfaces
+        host=bind_host,
         port=3001,
         debug=False,
         use_reloader=False
     ))
     server_thread.start()
+    
+    # Wait a moment for the server to fully start before continuing
+    time.sleep(2)
+    
+    # Verify the server is actually responding
+    max_retries = 10
+    for i in range(max_retries):
+        try:
+            import requests
+            response = requests.get('http://localhost:3001/health', timeout=1)
+            if response.status_code == 200:
+                logging.info("Server health check passed - server is ready")
+                break
+        except:
+            if i < max_retries - 1:
+                logging.info(f"Server not ready yet, retrying in 1 second... ({i+1}/{max_retries})")
+                time.sleep(1)
+            else:
+                logging.warning("Server health check failed after maximum retries, but continuing anyway")
+                # On Windows, provide additional troubleshooting info
+                if sys.platform == 'win32':
+                    logging.warning("If connection issues persist on Windows:")
+                    logging.warning("1. Check Windows Defender Firewall settings")
+                    logging.warning("2. Check if antivirus software is blocking the connection")
+                    logging.warning("3. Try running as administrator")
+                    logging.warning("4. Check if port 3001 is blocked by other software")
     
     # Browser opening disabled - not needed for CEP extension
     # if sys.platform == 'darwin' and getattr(sys, 'frozen', False):
