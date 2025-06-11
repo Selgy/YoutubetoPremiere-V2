@@ -448,31 +448,46 @@ def register_routes(app, socketio, settings):
     @app.route('/get-ip', methods=['GET'])
     def get_ip():
         try:
+            # Always prioritize localhost for local development and CEP extensions
+            preferred_ips = ['localhost', '127.0.0.1']
+            external_ips = []
+            
             # Try to get all possible IP addresses
             hostname = socket.gethostname()
-            possible_ips = []
             
             # Get all network interfaces
-            for interface in socket.getaddrinfo(hostname, None):
-                ip = interface[4][0]
-                # Only include IPv4 addresses that aren't localhost
-                if '.' in ip and ip != '127.0.0.1':
-                    possible_ips.append(ip)
+            try:
+                for interface in socket.getaddrinfo(hostname, None):
+                    ip = interface[4][0]
+                    # Only include IPv4 addresses
+                    if '.' in ip and ip not in preferred_ips:
+                        external_ips.append(ip)
+            except Exception as e:
+                logging.warning(f"Could not enumerate network interfaces: {e}")
             
-            # If we found any valid IPs, return the first one
-            if possible_ips:
-                # Don't log actual IP addresses for privacy
-                logging.info(f'Found {len(possible_ips)} IP address(es)')
-                return jsonify({'ip': possible_ips[0]})
+            # Build complete IP list: prioritize localhost, then external IPs
+            all_ips = preferred_ips + external_ips
             
-            # Fallback to the basic method
-            local_ip = socket.gethostbyname(hostname)
-            logging.info(f'Using fallback IP method')
-            return jsonify({'ip': local_ip})
+            # For CEP extensions, always return localhost as the primary IP
+            # since the Chrome extension and Python server run on the same machine
+            primary_ip = 'localhost'
+            
+            logging.info(f'Returning localhost as primary IP for CEP compatibility')
+            logging.info(f'Available IPs: {all_ips}')
+            
+            return jsonify({
+                'ip': primary_ip,
+                'ips': all_ips,
+                'hostname': hostname
+            })
             
         except Exception as e:
             logging.error(f'Error getting IP address: {e}')
-            return jsonify({'ip': 'localhost', 'error': str(e)})
+            return jsonify({
+                'ip': 'localhost', 
+                'ips': ['localhost', '127.0.0.1'],
+                'error': str(e)
+            })
 
     @app.route('/get-audio-languages', methods=['POST'])
     def get_audio_languages():
