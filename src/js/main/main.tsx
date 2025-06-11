@@ -109,19 +109,19 @@ const Main = () => {
       setIsLoading(false);
     };
 
-    if (serverIP !== 'localhost') {
+    if (serverIP) {
       checkLicenseAndStart();
     }
   }, [serverIP]);
 
   useEffect(() => {
-    if (serverIP !== 'localhost') {
+    if (serverIP) {
       checkForUpdates();
     }
   }, [serverIP]);
 
   useEffect(() => {
-    if (serverIP === 'localhost') return;
+    if (!serverIP) return; // Only check if serverIP is empty/undefined
 
     const socket = io(`http://${serverIP}:3001`, {
       transports: ['polling', 'websocket'],
@@ -135,7 +135,7 @@ const Main = () => {
       rejectUnauthorized: false,
       autoConnect: true,
       withCredentials: true,
-      query: { client_type: 'chrome' }
+      query: { client_type: 'premiere' } // Change from 'chrome' to 'premiere'
     });
 
     let retryCount = 0;

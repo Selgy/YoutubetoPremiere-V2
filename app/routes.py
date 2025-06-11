@@ -17,6 +17,9 @@ def register_routes(app, socketio, settings):
     connected_clients = set()
     current_download = {'process': None, 'ydl': None, 'cancel_callback': None}
     
+    # Store pending import triggers for HTTP fallback polling
+    pending_import_triggers = []
+    
     def validate_youtube_url(url):
         """Validate that the URL is from a YouTube domain"""
         if not url:
@@ -923,6 +926,54 @@ def register_routes(app, socketio, settings):
         except Exception as e:
             logging.error(f"Error checking port: {e}")
             return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/check-import-trigger', methods=['GET'])
+    def check_import_trigger():
+        """Check for pending import triggers (HTTP fallback for Premiere extension)"""
+        try:
+            if pending_import_triggers:
+                # Return the first pending trigger and remove it from the queue
+                trigger = pending_import_triggers.pop(0)
+                logging.info(f"HTTP fallback: Returning import trigger for {trigger.get('path', 'unknown')}")
+                return jsonify({'trigger': trigger})
+            else:
+                # No triggers pending
+                return jsonify({'trigger': None})
+        except Exception as e:
+            logging.error(f"Error checking import trigger: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/trigger-import', methods=['POST'])
+    def trigger_import():
+        """Trigger an import via HTTP (fallback method)"""
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({'error': 'No data provided'}), 400
+            
+            path = data.get('path')
+            if not path:
+                return jsonify({'error': 'No path provided'}), 400
+            
+            # Verify file exists
+            if not os.path.exists(path):
+                logging.error(f"File does not exist for HTTP trigger: {path}")
+                return jsonify({'error': 'File not found'}), 404
+            
+            # Add to pending triggers queue for HTTP fallback polling
+            trigger_data = {
+                'path': path,
+                'url': data.get('url', ''),
+                'timestamp': time.time()
+            }
+            pending_import_triggers.append(trigger_data)
+            
+            logging.info(f"HTTP fallback: Added import trigger for {path}")
+            return jsonify({'success': True, 'message': 'Import trigger added'})
+            
+        except Exception as e:
+            logging.error(f"Error triggering import: {e}")
+            return jsonify({'error': str(e)}), 500
 
 
     

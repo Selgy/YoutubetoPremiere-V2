@@ -2,23 +2,11 @@
 
 
 a = Analysis(
-    ['app/YoutubetoPremiere.py'],
+    ['app\\YoutubetoPremiere.py'],
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=[
-        'yt_dlp',
-        'yt_dlp.extractor',
-        'yt_dlp.downloader',
-        'yt_dlp.postprocessor',
-        'yt_dlp.extractor.youtube',
-        'yt_dlp.extractor.common',
-        'yt_dlp.utils',
-        'yt_dlp.utils.aes',
-        'yt_dlp.jsinterp',
-        'certifi',
-        'curl_cffi',
-    ],
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -53,10 +41,4 @@ coll = COLLECT(
     upx=True,
     upx_exclude=[],
     name='YoutubetoPremiere',
-)
-app = BUNDLE(
-    coll,
-    name='YoutubetoPremiere.app',
-    icon=None,
-    bundle_identifier=None,
 )
