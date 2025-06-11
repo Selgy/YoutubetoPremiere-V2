@@ -150,7 +150,17 @@ if [ -f "tools/version-update.js" ]; then
     node tools/version-update.js "$VERSION" || echo -e "${YELLOW}    ⚠️  Erreur lors de l'exécution de version-update.js${NC}"
 fi
 
-# 7. Mettre à jour les manifests CEP générés dans les configs vite
+# 7. Mettre à jour app/routes.py
+echo -e "${BLUE}  → app/routes.py${NC}"
+if [ -f "app/routes.py" ]; then
+    sed -i '' "s/return jsonify(version='[^']*')/return jsonify(version='$VERSION')/g" app/routes.py
+    sed -i '' "s/current_version = '[^']*'/current_version = '$VERSION'/g" app/routes.py
+    echo -e "${GREEN}    ✅ Version mise à jour dans app/routes.py${NC}"
+else
+    echo -e "${YELLOW}    ⚠️  app/routes.py non trouvé${NC}"
+fi
+
+# 8. Mettre à jour les manifests CEP générés dans les configs vite
 echo -e "${BLUE}  → Mise à jour des templates manifest CEP${NC}"
 # Ces fichiers sont générés dynamiquement, donc on n'a pas besoin de les modifier
 
