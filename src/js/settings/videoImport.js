@@ -221,7 +221,8 @@ export async function setupVideoImportHandler(csInterface) {
         // HTTP fallback polling for import triggers when WebSocket fails
         const pollForImportTriggers = async () => {
             try {
-                const response = await fetch(`http://${serverIP}:3001/check-import-trigger`);
+                // Always use localhost for HTTP fallback to avoid IP detection issues
+                const response = await fetch('http://localhost:3001/check-import-trigger');
                 if (response.ok) {
                     const data = await response.json();
                     if (data.trigger && data.trigger.path) {
@@ -240,19 +241,30 @@ export async function setupVideoImportHandler(csInterface) {
                         console.log('HTTP fallback: Starting import for file:', data.trigger.path);
                         const result = await importVideo(data.trigger.path);
                         console.log('HTTP fallback: Import result:', result);
+                    } else {
+                        // Log occasionally to confirm polling is working
+                        if (Math.random() < 0.01) { // 1% of polls
+                            console.log('HTTP fallback: Polling active, no triggers pending');
+                        }
                     }
+                } else {
+                    console.warn('HTTP fallback: Server responded with status:', response.status);
                 }
             } catch (error) {
-                // Silently fail - this is expected when server is not available
-                // Only log if it's not a network error
-                if (!error.message.includes('fetch') && !error.message.includes('network')) {
-                    console.error('Error polling for import triggers:', error);
+                // Log first few errors to help debug, then go silent
+                if (!pollForImportTriggers.errorCount) pollForImportTriggers.errorCount = 0;
+                if (pollForImportTriggers.errorCount < 3) {
+                    console.log('HTTP fallback polling error (will go silent after 3):', error.message);
+                    pollForImportTriggers.errorCount++;
                 }
             }
         };
 
-        // Start polling for HTTP triggers every 2 seconds
-        const pollInterval = setInterval(pollForImportTriggers, 2000);
+        // Start polling for HTTP triggers every 1 second (faster response)
+        const pollInterval = setInterval(pollForImportTriggers, 1000);
+        
+        // Start polling immediately
+        pollForImportTriggers();
 
         // Clean up polling when socket disconnects
         socket.on('disconnect', () => {
