@@ -323,17 +323,17 @@ try:
     socketio = SocketIO(app, 
         cors_allowed_origins="*",
         async_mode='threading',
-        ping_timeout=120,
-        ping_interval=25000,
+        ping_timeout=60,
+        ping_interval=10000,  # 10 seconds instead of 25
         max_http_buffer_size=100 * 1024 * 1024,  # 100MB
-        transports=['websocket', 'polling'],
+        transports=['polling', 'websocket'],  # Try polling first, then websocket
         logger=False,
         engineio_logger=False,
         always_connect=True,
         reconnection=True,
-        reconnection_attempts=-1,  # Use -1 for unlimited reconnection attempts
+        reconnection_attempts=5,  # Limit reconnection attempts
         reconnection_delay=1000,
-        reconnection_delay_max=5000,
+        reconnection_delay_max=10000,  # Increased max delay
         allow_upgrades=True,
         cookie=None
     )
@@ -447,8 +447,6 @@ def emit_to_client_type(event, data, client_type=None):
         # For backwards compatibility, emit to all if no type specified
         socketio.emit(event, data)
         app_logger.debug(f'Broadcasting {event}')
-
-@socketio.on('progress')
 
 @socketio.on('import_video')
 def handle_import_video(data):
@@ -682,6 +680,9 @@ def setup_environment():
 def main():
     """Main entry point"""
     try:
+        # Set up the environment first
+        setup_environment()
+        
         # Start the server
         run_server()
     except KeyboardInterrupt:
