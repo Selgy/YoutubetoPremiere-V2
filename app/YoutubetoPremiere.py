@@ -328,14 +328,14 @@ try:
     socketio = SocketIO(app, 
         cors_allowed_origins="*",
         async_mode='threading',
-        ping_timeout=60,
-        ping_interval=25,  # Match Chrome extension expectation (25 seconds)
+        ping_timeout=120,  # Increase timeout for Windows compatibility
+        ping_interval=60,  # Increase interval for Windows compatibility
         max_http_buffer_size=100 * 1024 * 1024,  # 100MB
-        transports=['polling', 'websocket'],  # Try polling first, then websocket
-        logger=True,  # Enable logging for debugging
-        engineio_logger=True,  # Enable engine.io logging for debugging
+        transports=['polling'],  # Use only polling to avoid WebSocket blocking
+        logger=False,  # Disable verbose logging now that it's working
+        engineio_logger=False,  # Disable verbose logging
         always_connect=True,
-        allow_upgrades=True,
+        allow_upgrades=False,  # Disable upgrades to prevent WebSocket switching
         cookie=None
     )
 
