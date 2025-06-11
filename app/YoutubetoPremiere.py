@@ -328,21 +328,26 @@ try:
     socketio = SocketIO(app, 
         cors_allowed_origins="*",
         async_mode='threading',
-        ping_timeout=30,  # Reduce timeout for Windows CEP environment
-        ping_interval=10,  # More frequent pings for better connection detection
-        max_http_buffer_size=50 * 1024 * 1024,  # Reduce buffer size for CEP
-        transports=['polling'],  # Start with polling only for CEP compatibility
+        ping_timeout=60,  # Increased timeout for Windows CEP
+        ping_interval=25,  # Increased interval for better Windows compatibility
+        max_http_buffer_size=50 * 1024 * 1024,  # 50MB
+        transports=['polling'],  # Polling only for better CEP compatibility
         logger=False,  # Disable verbose logging
         engineio_logger=False,  # Disable verbose logging
         always_connect=True,
-        allow_upgrades=False,  # Disable upgrades for better CEP compatibility
+        allow_upgrades=False,  # Disable upgrades for consistency
         cookie=None,
-        # CEP-specific optimizations
-        compression=False,  # Disable compression for better Windows compatibility
-        jsonp=False,  # Disable JSONP polling for security
-        # Set engineio specific options for better Windows/CEP support
-        http_compression=False,
-        websocket_compression=False
+        # Windows CEP optimizations
+        compression=False,  # Disable compression for Windows compatibility
+        jsonp=False,  # Disable JSONP for security
+        manage_session=False,  # Let client manage sessions
+        # Handle multiple connections gracefully
+        client_manager=None,  # Use default manager
+        # Increase connection limits for multiple process scenario
+        max_connections=50,  # Allow more concurrent connections
+        reconnection_delay=2000,  # 2 second delay between reconnection attempts
+        reconnection_delay_max=10000,  # Max 10 second delay
+        max_reconnection_attempts=20  # Allow more reconnection attempts
     )
 
     logging.info("Flask and SocketIO initialized successfully")
@@ -824,20 +829,37 @@ def setup_environment():
             'temp_dir': None
         }
 
-def main():
-    """Main entry point"""
+def check_server_already_running():
+    """Check if server is already running on port 3001"""
     try:
-        # Set up the environment first
-        setup_environment()
+        import socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        result = sock.connect_ex(('localhost', 3001))
+        sock.close()
         
-        # Start the server
+        if result == 0:
+            logging.info("Found existing server running on port 3001")
+            return True
+        return False
+    except Exception as e:
+        logging.warning(f"Error checking if server is running: {e}")
+        return False
+
+def main():
+    """Main function"""
+    try:
+        # Check if another server is already running
+        if check_server_already_running():
+            logging.info("Server already running on port 3001. Exiting.")
+            sys.exit(0)
+        
+        setup_environment()
         run_server()
     except KeyboardInterrupt:
-        logging.info("Server stopped by user")
-        print("\nServer stopped by user")
+        logging.info("Received shutdown signal")
     except Exception as e:
-        logging.error(f"Error starting server: {str(e)}")
-        print(f"Error starting server: {str(e)}")
+        logging.error(f"Fatal error in main: {e}")
         sys.exit(1)
 
 # Main entry point
