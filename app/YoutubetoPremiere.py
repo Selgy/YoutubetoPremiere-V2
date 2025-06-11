@@ -334,37 +334,31 @@ try:
     socketio = SocketIO(app, 
         cors_allowed_origins="*",
         async_mode='threading',
-        ping_timeout=120,  # Longer timeout for stability
-        ping_interval=30,  # Balanced interval
-        max_http_buffer_size=50 * 1024 * 1024,  # 50MB
-        transports=['websocket', 'polling'],  # Both transports for better CEP compatibility
+        ping_timeout=60,  # Shorter timeout for CEP
+        ping_interval=25,  # Shorter interval for CEP
+        max_http_buffer_size=10 * 1024 * 1024,  # 10MB for CEP compatibility
+        transports=['polling'],  # Force polling only for CEP stability
         logger=False,  # Disable verbose logging
         engineio_logger=False,  # Disable verbose logging
         always_connect=False,  # Let client control connection timing
-        allow_upgrades=True,  # Allow WebSocket upgrades from polling
+        allow_upgrades=False,  # Disable WebSocket upgrades for CEP
         cookie=None,
         # Windows CEP optimizations
         compression=False,  # Disable compression for Windows compatibility
         jsonp=False,  # Disable JSONP for security
-        manage_session=True,  # Better session management
+        manage_session=False,  # Simpler session management for CEP
         # Handle multiple connections gracefully
         client_manager=None,  # Use default manager
-        # Connection limits
-        max_connections=100,  # Allow more concurrent connections
-        reconnection_delay=1000,  # 1 second delay between reconnection attempts
-        reconnection_delay_max=5000,  # Max 5 second delay
-        max_reconnection_attempts=10,  # Reasonable reconnection attempts
+        # Connection limits adjusted for CEP
+        max_connections=50,  # Fewer concurrent connections for CEP
+        # Remove reconnection settings (client handles this)
         # Additional CEP compatibility settings
-        upgrade_timeout=30,  # Time to wait for transport upgrade
         # Reduce connection overhead
-        close_timeout=10,  # Quicker connection cleanup
-        heartbeat_timeout=30,  # Heartbeat for connection health
-        heartbeat_interval=10,  # Regular heartbeat checks
+        close_timeout=5,  # Quicker connection cleanup for CEP
         # Namespace settings
         namespace='/',  # Use default namespace
-        # Session cookie settings for CEP
-        session_cookie_name='youtubetopremiere.sid',
-        session_cookie_path='/',
+        # Disable session cookies for CEP simplicity
+        session_cookie_name=None,
         session_cookie_httponly=False,  # Allow JS access in CEP
         session_cookie_secure=False,  # HTTP only for localhost
         session_cookie_samesite=None  # No SameSite for CEP compatibility

@@ -42,43 +42,38 @@ export async function setupVideoImportHandler(csInterface) {
         }
 
         socket = io(`http://${serverIP}:3001`, {
-            transports: ['websocket', 'polling'],  // Prefer WebSocket, fallback to polling
-            upgrade: true,  // Allow upgrading from polling to websocket
-            rememberUpgrade: true,  // Remember successful upgrades
+            transports: ['polling'],  // Force polling only for CEP stability
+            upgrade: false,  // Disable WebSocket upgrade for CEP stability
+            rememberUpgrade: false,
             reconnection: true,
-            reconnectionAttempts: 10,  // Reasonable limit instead of infinity
-            reconnectionDelay: 2000,  // Start with 2 second delay
-            reconnectionDelayMax: 10000,  // Max 10 second delay
-            timeout: 30000,  // 30 second timeout
+            reconnectionAttempts: 5,  // Limit attempts to avoid connection flooding
+            reconnectionDelay: 3000,  // Longer delay between reconnections
+            reconnectionDelayMax: 15000,  // Max 15 second delay
+            timeout: 20000,  // Shorter timeout for faster failure detection
             forceNew: false,  // Reuse existing connections when possible
             autoConnect: true,
             withCredentials: false,  // Disable credentials for localhost
             rejectUnauthorized: false,
             query: { 
                 client_type: 'premiere',
-                version: '3.0.1'
+                version: '3.0.1',
+                transport: 'polling'
             },
-            // Additional optimizations for CEP environment
-            pingTimeout: 120000,  // 2 minute ping timeout
-            pingInterval: 30000,   // 30 second ping interval  
-            jsonp: false,          // Disable JSONP for better security
+            // Optimizations for CEP environment
+            pingTimeout: 60000,   // 1 minute ping timeout
+            pingInterval: 25000,  // 25 second ping interval  
+            jsonp: false,         // Disable JSONP for better security
             closeOnBeforeunload: true,  // Clean close on page unload
             // Optimize for Windows CEP
-            compression: false,    // Disable compression for reliability
+            compression: false,   // Disable compression for reliability
             perMessageDeflate: false,  // Disable per-message compression
             maxHttpBufferSize: 1e6,    // 1MB buffer size
-            // Cookie settings optimized for CEP
-            sessionCookie: false,
             // Transport-specific settings
             transportOptions: {
                 polling: {
                     extraHeaders: {
-                        'User-Agent': 'Adobe-CEP-Extension'
-                    }
-                },
-                websocket: {
-                    extraHeaders: {
-                        'User-Agent': 'Adobe-CEP-Extension'
+                        'User-Agent': 'Adobe-CEP-Extension',
+                        'Accept': 'application/json'
                     }
                 }
             }

@@ -61,7 +61,7 @@ const Main = () => {
   const [updateInfo, setUpdateInfo] = useState<any>(null);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const currentVersion = '3.0.936';
+  const currentVersion = '3.0.935';
   const [currentPage, setCurrentPage] = useState('main');
   const [serverIP, setServerIP] = useState('localhost');
   const [isCEPEnvironment, setIsCEPEnvironment] = useState(false);
@@ -124,18 +124,29 @@ const Main = () => {
     if (!serverIP) return; // Only check if serverIP is empty/undefined
 
     const socket = io(`http://${serverIP}:3001`, {
-      transports: ['polling', 'websocket'],
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      timeout: 60000,
-      forceNew: true,
-      upgrade: true,
-      rememberUpgrade: true,
+      transports: ['polling'],  // Force polling only for CEP stability
+      reconnectionAttempts: 5,  // Limit reconnection attempts to avoid flooding
+      reconnectionDelay: 3000,  // Longer delay between reconnections
+      reconnectionDelayMax: 10000,
+      timeout: 20000,  // Shorter timeout to fail faster
+      forceNew: false,  // Reuse connections when possible
+      upgrade: false,   // Disable WebSocket upgrade for CEP
+      rememberUpgrade: false,
       rejectUnauthorized: false,
       autoConnect: true,
-      withCredentials: true,
-      query: { client_type: 'premiere' } // Change from 'chrome' to 'premiere'
+      withCredentials: false,  // Disable credentials for localhost
+      query: { 
+        client_type: 'premiere',
+        cep_version: '1.0'
+      },
+      // CEP-specific transport options
+      transportOptions: {
+        polling: {
+          extraHeaders: {
+            'User-Agent': 'Adobe-CEP-Extension'
+          }
+        }
+      }
     });
 
     let retryCount = 0;
