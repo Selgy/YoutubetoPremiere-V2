@@ -488,12 +488,26 @@ def get_temp_dir():
     
     # First try to use a subdirectory in the same directory as the script
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    temp_dir = os.path.join(script_dir, "temp")
     
-    # If that's not writable, use system temp directory
-    if not os.access(script_dir, os.W_OK):
-        system_temp = tempfile.gettempdir()
-        temp_dir = os.path.join(system_temp, "YoutubetoPremiere")
+    # Check if script directory is writable BEFORE trying to create temp directory
+    if os.access(script_dir, os.W_OK):
+        temp_dir = os.path.join(script_dir, "temp")
+        try:
+            # Try to create the directory to test if we can actually write
+            os.makedirs(temp_dir, exist_ok=True)
+            # Test write access by creating a temporary file
+            test_file = os.path.join(temp_dir, 'test_write.tmp')
+            with open(test_file, 'w') as f:
+                f.write('test')
+            os.remove(test_file)
+            return temp_dir
+        except (OSError, PermissionError):
+            # If we can't create or write, fall through to system temp
+            pass
+    
+    # Use system temp directory
+    system_temp = tempfile.gettempdir()
+    temp_dir = os.path.join(system_temp, "YoutubetoPremiere")
     
     # Create the directory if it doesn't exist
     os.makedirs(temp_dir, exist_ok=True)
