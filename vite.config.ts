@@ -382,4 +382,4 @@ export default defineConfig({
 //   isPackage
 // );
 
-const currentVersion = process.env.APP_VERSION || '3.0.922';
+const currentVersion = process.env.APP_VERSION || '3.0.923';
