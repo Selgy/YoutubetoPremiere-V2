@@ -878,14 +878,49 @@ function initializeSocket() {
 
         socket.on('connect', () => {
             console.log('Connected to server');
+            showNotification('Connected to YoutubetoPremiere server', 'success', 3000);
         });
 
         socket.on('disconnect', () => {
             console.log('Disconnected from server');
+            showNotification('Disconnected from server', 'warning', 3000);
         });
 
         socket.on('error', (error) => {
             console.error('Socket error:', error);
+            showNotification('Server connection error', 'error', 5000);
+        });
+
+        // Listen for download progress updates
+        socket.on('progress', (data) => {
+            console.log('Download progress:', data);
+            updateButtonProgress(data.type, data.progress);
+        });
+
+        // Listen for download completion
+        socket.on('download-complete', (data) => {
+            console.log('Download complete:', data);
+            showNotification(`${data.type || 'Download'} completed successfully!`, 'success');
+            resetButtonState(data.type);
+        });
+
+        // Listen for download failures
+        socket.on('download-failed', (data) => {
+            console.log('Download failed:', data);
+            showNotification(`Download failed: ${data.message}`, 'error');
+            resetButtonState(data.type);
+        });
+
+        // Listen for import completion
+        socket.on('import_complete', (data) => {
+            console.log('Import complete:', data);
+            showNotification('Video imported to Premiere Pro!', 'success');
+        });
+
+        // Listen for import failures
+        socket.on('import_failed', (data) => {
+            console.log('Import failed:', data);
+            showNotification(`Import failed: ${data.error}`, 'error');
         });
 
     } catch (error) {
@@ -925,6 +960,280 @@ function showNotification(message, type = 'success', duration = 5000) {
     return notification;
 }
 
+// Create and inject the download buttons
+function createDownloadButtons() {
+    // Don't create buttons if they already exist
+    if (document.querySelector('#ytp-floating-container')) {
+        return;
+    }
+
+    console.log('YTP: Creating download buttons');
+
+    // Create the main floating container
+    const floatingContainer = document.createElement('div');
+    floatingContainer.id = 'ytp-floating-container';
+    floatingContainer.className = 'ytp-floating-container';
+    
+    // Position the container in bottom left
+    floatingContainer.style.cssText = `
+        position: fixed !important;
+        bottom: 20px !important;
+        left: 20px !important;
+        z-index: 10000 !important;
+        pointer-events: auto !important;
+    `;
+
+    // Create the main container
+    const mainContainer = document.createElement('div');
+    mainContainer.className = 'ytp-main-container';
+
+    // Create toggle button
+    const toggleButton = document.createElement('button');
+    toggleButton.className = 'ytp-toggle-button';
+    toggleButton.innerHTML = '⚡';
+    toggleButton.title = 'Toggle YoutubetoPremiere buttons';
+
+    // Create buttons container
+    const buttonsContainer = document.createElement('div');
+    buttonsContainer.className = 'ytp-buttons-container';
+
+    // Create download buttons
+    const buttons = [
+        {
+            id: 'send-to-premiere-button',
+            text: 'Premiere',
+            icon: '🎬',
+            title: 'Send to Premiere Pro',
+            type: 'video'
+        },
+        {
+            id: 'clip-button',
+            text: 'Clip',
+            icon: '✂️',
+            title: 'Download Clip',
+            type: 'clip'
+        },
+        {
+            id: 'audio-button',
+            text: 'Audio',
+            icon: '🎵',
+            title: 'Download Audio',
+            type: 'audio'
+        }
+    ];
+
+    buttons.forEach(buttonData => {
+        const button = document.createElement('button');
+        button.id = buttonData.id;
+        button.className = 'download-button';
+        button.title = buttonData.title;
+        
+        const progressText = document.createElement('span');
+        progressText.className = 'progress-text';
+        
+        const buttonIcon = document.createElement('span');
+        buttonIcon.className = 'button-icon';
+        buttonIcon.textContent = buttonData.icon;
+        
+        const textSpan = document.createElement('span');
+        textSpan.textContent = buttonData.text;
+        
+        progressText.appendChild(buttonIcon);
+        progressText.appendChild(textSpan);
+        button.appendChild(progressText);
+        
+        // Add cancel button
+        const cancelButton = document.createElement('div');
+        cancelButton.className = 'cancel-button';
+        cancelButton.textContent = '✕';
+        button.appendChild(cancelButton);
+        
+        // Add click handler
+        button.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleButtonClick(buttonData.type, button);
+        });
+        
+        buttonsContainer.appendChild(button);
+    });
+
+    // Toggle functionality
+    toggleButton.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        buttonsVisible = !buttonsVisible;
+        localStorage.setItem('ytp-buttons-visible', buttonsVisible.toString());
+        
+        if (buttonsVisible) {
+            buttonsContainer.classList.remove('hidden');
+            toggleButton.classList.remove('buttons-hidden');
+            mainContainer.classList.remove('buttons-collapsed');
+        } else {
+            buttonsContainer.classList.add('hidden');
+            toggleButton.classList.add('buttons-hidden');
+            mainContainer.classList.add('buttons-collapsed');
+        }
+    });
+
+    // Set initial visibility state
+    if (!buttonsVisible) {
+        buttonsContainer.classList.add('hidden');
+        toggleButton.classList.add('buttons-hidden');
+        mainContainer.classList.add('buttons-collapsed');
+    }
+
+    // Assemble the structure
+    mainContainer.appendChild(toggleButton);
+    mainContainer.appendChild(buttonsContainer);
+    floatingContainer.appendChild(mainContainer);
+    
+    // Add to page
+    document.body.appendChild(floatingContainer);
+    
+    console.log('YTP: Download buttons created and added to page');
+}
+
+// Handle button clicks
+async function handleButtonClick(type, button) {
+    if (buttonStates[type] && buttonStates[type].isDownloading) {
+        console.log(`YTP: ${type} download already in progress`);
+        return;
+    }
+
+    console.log(`YTP: ${type} button clicked`);
+
+    // Get current video URL
+    const videoUrl = window.location.href;
+    if (!videoUrl.includes('youtube.com/watch') && !videoUrl.includes('youtu.be/') && !videoUrl.includes('/shorts/')) {
+        showNotification('Please navigate to a YouTube video first', 'error');
+        return;
+    }
+
+    // Set downloading state
+    if (buttonStates[type]) {
+        buttonStates[type].isDownloading = true;
+    }
+    button.classList.add('downloading');
+    
+    try {
+        // Get cookies and user agent for the request
+        const cookiesData = await getCookiesForServer();
+        const userAgent = navigator.userAgent;
+
+        // Prepare request data
+        const requestData = {
+            url: videoUrl,
+            type: type,
+            cookies: cookiesData.cookies,
+            userAgent: userAgent
+        };
+
+        // For clip downloads, we might need to get timing info
+        if (type === 'clip') {
+            // For now, we'll use default values or get from user
+            // This could be enhanced to show a modal for time selection
+            requestData.clipStart = 0;
+            requestData.clipEnd = 30; // Default 30 second clip
+        }
+
+        console.log(`YTP: Sending ${type} download request:`, requestData);
+
+        // Send via socket if connected
+        if (socket && socket.connected) {
+            socket.emit('download_request', requestData);
+            showNotification(`${type} download started`, 'success');
+        } else {
+            // Fallback to HTTP request
+            try {
+                const response = await fetch('http://localhost:3001/download', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestData)
+                });
+
+                if (response.ok) {
+                    showNotification(`${type} download started`, 'success');
+                } else {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+            } catch (fetchError) {
+                console.error('YTP: HTTP fallback failed:', fetchError);
+                showNotification('Failed to start download. Please ensure the application is running.', 'error');
+            }
+        }
+
+    } catch (error) {
+        console.error(`YTP: Error handling ${type} button click:`, error);
+        showNotification(`Error starting ${type} download`, 'error');
+    } finally {
+        // Reset button state after a delay
+        setTimeout(() => {
+            if (buttonStates[type]) {
+                buttonStates[type].isDownloading = false;
+            }
+            button.classList.remove('downloading');
+        }, 3000);
+    }
+}
+
+// Update button progress display
+function updateButtonProgress(type, progress) {
+    const buttonMap = {
+        'video': 'send-to-premiere-button',
+        'clip': 'clip-button', 
+        'audio': 'audio-button'
+    };
+    
+    const buttonId = buttonMap[type];
+    if (!buttonId) return;
+    
+    const button = document.getElementById(buttonId);
+    if (!button) return;
+    
+    const progressText = button.querySelector('.progress-text span:not(.button-icon)');
+    if (progressText) {
+        progressText.textContent = `${progress}%`;
+    }
+}
+
+// Reset button state after download
+function resetButtonState(type) {
+    const buttonMap = {
+        'video': 'send-to-premiere-button',
+        'clip': 'clip-button',
+        'audio': 'audio-button'
+    };
+    
+    const buttonId = buttonMap[type];
+    if (!buttonId) return;
+    
+    const button = document.getElementById(buttonId);
+    if (!button) return;
+    
+    // Reset button state
+    if (buttonStates[type]) {
+        buttonStates[type].isDownloading = false;
+    }
+    
+    button.classList.remove('downloading');
+    button.classList.add('success');
+    
+    // Reset text
+    const progressText = button.querySelector('.progress-text span:not(.button-icon)');
+    if (progressText) {
+        const originalText = type === 'video' ? 'Premiere' : type === 'clip' ? 'Clip' : 'Audio';
+        progressText.textContent = originalText;
+    }
+    
+    // Remove success state after a moment
+    setTimeout(() => {
+        button.classList.remove('success');
+    }, 2000);
+}
+
 // Initialize the extension when DOM is ready
 function initializeExtension() {
     console.log('YTP: Initializing extension');
@@ -932,8 +1241,11 @@ function initializeExtension() {
     // Initialize socket connection
     initializeSocket();
     
-    // Update button visibility based on page type
-    updateButtonsVisibility();
+    // Create and inject buttons
+    setTimeout(() => {
+        createDownloadButtons();
+        updateButtonsVisibility();
+    }, 1000);
     
     // Listen for page navigation changes
     let currentUrl = window.location.href;
@@ -941,6 +1253,10 @@ function initializeExtension() {
         if (window.location.href !== currentUrl) {
             currentUrl = window.location.href;
             setTimeout(() => {
+                // Recreate buttons on page change if they don't exist
+                if (!document.querySelector('#ytp-floating-container')) {
+                    createDownloadButtons();
+                }
                 updateButtonsVisibility();
             }, 1000);
         }
