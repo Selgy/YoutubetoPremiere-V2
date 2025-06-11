@@ -4,7 +4,17 @@ import Settings from './Settings';
 import io from 'socket.io-client';
 
 declare const window: Window & {
-  cep: any;
+  cep: {
+    util: {
+      openURLInDefaultBrowser: (url: string) => void;
+    };
+    fs: {
+      showOpenDialogEx: (allowMultiple: boolean, chooseDirectory: boolean, title: string, initialPath: string | null) => {
+        err: number;
+        data: string[] | null;
+      };
+    };
+  };
   __adobe_cep__: any;
 };
 
@@ -256,11 +266,61 @@ const Main = () => {
 
   const handleDownloadUpdate = () => {
     if (updateInfo?.download_url) {
-      window.open(updateInfo.download_url, '_blank');
-      setShowUpdateModal(false); // Close the modal after opening download
+      console.log('Opening download URL:', updateInfo.download_url);
+      
+      if (isCEPEnvironment && window.cep) {
+        // Use CEP API to open external URL
+        try {
+          window.cep.util.openURLInDefaultBrowser(updateInfo.download_url);
+          console.log('Opened URL in default browser via CEP');
+          setShowUpdateModal(false);
+          showNotification('Téléchargement ouvert dans le navigateur', 'success');
+        } catch (error) {
+          console.error('CEP browser open failed:', error);
+          // Fallback: copy URL to clipboard
+          copyToClipboard(updateInfo.download_url);
+        }
+      } else {
+        // Fallback for non-CEP environment
+        try {
+          window.open(updateInfo.download_url, '_blank');
+          setShowUpdateModal(false);
+        } catch (error) {
+          console.error('window.open failed:', error);
+          copyToClipboard(updateInfo.download_url);
+        }
+      }
     } else {
       console.error('No download URL available');
       showNotification('URL de téléchargement non disponible', 'error');
+    }
+  };
+
+  const copyToClipboard = (text: string) => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(() => {
+          showNotification('URL copiée dans le presse-papiers', 'info');
+          setShowUpdateModal(false);
+        });
+      } else {
+        // Fallback for older browsers or non-secure contexts
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        textArea.remove();
+        showNotification('URL copiée dans le presse-papiers', 'info');
+        setShowUpdateModal(false);
+      }
+    } catch (error) {
+      console.error('Failed to copy to clipboard:', error);
+      showNotification('Impossible de copier l\'URL. Vérifiez la console.', 'error');
     }
   };
 
