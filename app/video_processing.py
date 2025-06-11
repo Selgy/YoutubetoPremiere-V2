@@ -1236,38 +1236,33 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     
                     logging.info(f"Video downloaded and processed: {final_path}")
                     
-                    # Check if there are connected Premiere clients for WebSocket
-                    from YoutubetoPremiere import connected_clients
-                    premiere_clients = connected_clients.get('premiere', {})
-                    has_premiere_clients = len(premiere_clients) > 0
+                    # Try WebSocket import and always use HTTP fallback for reliability
+                    websocket_success = False
+                    try:
+                        socketio.emit('import_video', {'path': final_path})
+                        logging.info(f"Sent import_video via WebSocket: {final_path}")
+                        websocket_success = True
+                    except Exception as e:
+                        logging.warning(f"WebSocket import failed: {e}")
                     
-                    if has_premiere_clients:
-                        # Try WebSocket first when clients are connected
-                        try:
-                            socketio.emit('import_video', {'path': final_path})
-                            logging.info(f"Sent import_video via WebSocket to {len(premiere_clients)} Premiere client(s): {final_path}")
-                        except Exception as e:
-                            logging.warning(f"WebSocket import failed despite connected clients, using HTTP fallback: {e}")
-                            has_premiere_clients = False  # Fall through to HTTP fallback
-                    
-                    if not has_premiere_clients:
-                        # Use HTTP fallback when no WebSocket clients or WebSocket failed
-                        logging.info("No Premiere clients connected via WebSocket, using HTTP fallback")
-                        try:
-                            import requests
-                            import json
-                            fallback_data = {
-                                'path': final_path,
-                                'url': video_url
-                            }
-                            response = requests.post('http://localhost:3001/trigger-import', 
-                                                   json=fallback_data, timeout=5)
-                            if response.status_code == 200:
-                                logging.info("HTTP fallback import trigger sent successfully")
-                            else:
-                                logging.error(f"HTTP fallback failed: {response.status_code}")
-                        except Exception as http_error:
-                            logging.error(f"HTTP fallback also failed: {http_error}")
+                    # Always also try HTTP fallback for maximum reliability
+                    try:
+                        import requests
+                        import json
+                        fallback_data = {
+                            'path': final_path,
+                            'url': video_url
+                        }
+                        response = requests.post('http://localhost:3001/trigger-import', 
+                                               json=fallback_data, timeout=5)
+                        if response.status_code == 200:
+                            logging.info("HTTP fallback import trigger sent successfully")
+                        else:
+                            logging.error(f"HTTP fallback failed: {response.status_code}")
+                    except Exception as http_error:
+                        logging.error(f"HTTP fallback also failed: {http_error}")
+                        if not websocket_success:
+                            logging.error("Both WebSocket and HTTP import methods failed!")
                     
                     # Emit both formats to ensure compatibility for download completion
                     try:
