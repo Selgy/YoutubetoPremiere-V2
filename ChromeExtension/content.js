@@ -879,3 +879,88 @@ function initializeSocket() {
         socket.on('connect', () => {
             console.log('Connected to server');
         });
+
+        socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+        });
+
+        socket.on('error', (error) => {
+            console.error('Socket error:', error);
+        });
+
+    } catch (error) {
+        console.error('Failed to initialize socket:', error);
+    }
+}
+
+// Function to show notifications
+function showNotification(message, type = 'success', duration = 5000) {
+    const notification = document.createElement('div');
+    notification.className = 'ytp-notification';
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: ${type === 'error' ? '#dc3545' : type === 'info' ? '#17a2b8' : '#28a745'};
+        color: white;
+        padding: 15px 20px;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        z-index: 10000;
+        max-width: 350px;
+        font-family: Arial, sans-serif;
+        font-size: 14px;
+        line-height: 1.4;
+    `;
+    notification.textContent = message;
+    
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        if (notification.parentNode) {
+            notification.parentNode.removeChild(notification);
+        }
+    }, duration);
+    
+    return notification;
+}
+
+// Initialize the extension when DOM is ready
+function initializeExtension() {
+    console.log('YTP: Initializing extension');
+    
+    // Initialize socket connection
+    initializeSocket();
+    
+    // Update button visibility based on page type
+    updateButtonsVisibility();
+    
+    // Listen for page navigation changes
+    let currentUrl = window.location.href;
+    const observer = new MutationObserver(() => {
+        if (window.location.href !== currentUrl) {
+            currentUrl = window.location.href;
+            setTimeout(() => {
+                updateButtonsVisibility();
+            }, 1000);
+        }
+    });
+    
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+    
+    // Listen for fullscreen changes
+    document.addEventListener('fullscreenchange', updateButtonsVisibility);
+    document.addEventListener('webkitfullscreenchange', updateButtonsVisibility);
+    document.addEventListener('mozfullscreenchange', updateButtonsVisibility);
+    document.addEventListener('MSFullscreenChange', updateButtonsVisibility);
+}
+
+// Start the extension when the page loads
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeExtension);
+} else {
+    initializeExtension();
+}
