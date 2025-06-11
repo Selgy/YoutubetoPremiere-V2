@@ -511,7 +511,29 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             )
             
             if result and os.path.exists(result):
-                socketio.emit('import_video', {'path': result})
+                # Try WebSocket first, then HTTP fallback
+                try:
+                    socketio.emit('import_video', {'path': result})
+                    logging.info(f"Sent import_video via WebSocket for: {result}")
+                except Exception as e:
+                    logging.warning(f"WebSocket import failed, using HTTP fallback: {e}")
+                    # HTTP fallback - make request to trigger-import endpoint
+                    try:
+                        import requests
+                        import json
+                        fallback_data = {
+                            'path': result,
+                            'url': video_url
+                        }
+                        response = requests.post('http://localhost:3001/trigger-import', 
+                                               json=fallback_data, timeout=5)
+                        if response.status_code == 200:
+                            logging.info("HTTP fallback import trigger sent successfully")
+                        else:
+                            logging.error(f"HTTP fallback failed: {response.status_code}")
+                    except Exception as http_error:
+                        logging.error(f"HTTP fallback also failed: {http_error}")
+                
                 return {"success": True, "path": result}
             else:
                 return {"error": "Failed to download audio"}
@@ -541,7 +563,29 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             )
             
             if result and result.get("success") and result.get("path") and os.path.exists(result["path"]):
-                socketio.emit('import_video', {'path': result["path"]})
+                # Try WebSocket first, then HTTP fallback
+                try:
+                    socketio.emit('import_video', {'path': result["path"]})
+                    logging.info(f"Sent import_video via WebSocket for: {result['path']}")
+                except Exception as e:
+                    logging.warning(f"WebSocket import failed, using HTTP fallback: {e}")
+                    # HTTP fallback - make request to trigger-import endpoint
+                    try:
+                        import requests
+                        import json
+                        fallback_data = {
+                            'path': result["path"],
+                            'url': video_url
+                        }
+                        response = requests.post('http://localhost:3001/trigger-import', 
+                                               json=fallback_data, timeout=5)
+                        if response.status_code == 200:
+                            logging.info("HTTP fallback import trigger sent successfully")
+                        else:
+                            logging.error(f"HTTP fallback failed: {response.status_code}")
+                    except Exception as http_error:
+                        logging.error(f"HTTP fallback also failed: {http_error}")
+                
                 return {"success": True, "path": result["path"]}
             else:
                 error_msg = result.get("error") if result and "error" in result else "Failed to download clip"
@@ -562,7 +606,29 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             )
             
             if result and os.path.exists(result):
-                socketio.emit('import_video', {'path': result})
+                # Try WebSocket first, then HTTP fallback
+                try:
+                    socketio.emit('import_video', {'path': result})
+                    logging.info(f"Sent import_video via WebSocket for: {result}")
+                except Exception as e:
+                    logging.warning(f"WebSocket import failed, using HTTP fallback: {e}")
+                    # HTTP fallback - make request to trigger-import endpoint
+                    try:
+                        import requests
+                        import json
+                        fallback_data = {
+                            'path': result,
+                            'url': video_url
+                        }
+                        response = requests.post('http://localhost:3001/trigger-import', 
+                                               json=fallback_data, timeout=5)
+                        if response.status_code == 200:
+                            logging.info("HTTP fallback import trigger sent successfully")
+                        else:
+                            logging.error(f"HTTP fallback failed: {response.status_code}")
+                    except Exception as http_error:
+                        logging.error(f"HTTP fallback also failed: {http_error}")
+                
                 return {"success": True, "path": result}
             else:
                 return {"error": "Failed to download video"}
@@ -1139,10 +1205,36 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     os.replace(f'{final_path}_with_metadata.mp4', final_path)
                     
                     logging.info(f"Video downloaded and processed: {final_path}")
-                    socketio.emit('import_video', {'path': final_path})
-                    # Emit both formats to ensure compatibility
-                    socketio.emit('download-complete', {'url': video_url, 'path': final_path})  # Hyphenated format for Chrome extension
-                    socketio.emit('download_complete')  # Underscore format for other clients
+                    
+                    # Try WebSocket first, then HTTP fallback for import
+                    try:
+                        socketio.emit('import_video', {'path': final_path})
+                        logging.info(f"Sent import_video via WebSocket for: {final_path}")
+                    except Exception as e:
+                        logging.warning(f"WebSocket import failed, using HTTP fallback: {e}")
+                        # HTTP fallback - make request to trigger-import endpoint
+                        try:
+                            import requests
+                            import json
+                            fallback_data = {
+                                'path': final_path,
+                                'url': video_url
+                            }
+                            response = requests.post('http://localhost:3001/trigger-import', 
+                                                   json=fallback_data, timeout=5)
+                            if response.status_code == 200:
+                                logging.info("HTTP fallback import trigger sent successfully")
+                            else:
+                                logging.error(f"HTTP fallback failed: {response.status_code}")
+                        except Exception as http_error:
+                            logging.error(f"HTTP fallback also failed: {http_error}")
+                    
+                    # Emit both formats to ensure compatibility for download completion
+                    try:
+                        socketio.emit('download-complete', {'url': video_url, 'path': final_path})  # Hyphenated format for Chrome extension
+                        socketio.emit('download_complete')  # Underscore format for other clients
+                    except Exception as e:
+                        logging.warning(f"Failed to emit download completion events: {e}")
                     
                     return final_path
                 except subprocess.CalledProcessError as e:

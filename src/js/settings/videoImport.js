@@ -218,6 +218,49 @@ export async function setupVideoImportHandler(csInterface) {
             }
         });
 
+        // HTTP fallback polling for import triggers when WebSocket fails
+        const pollForImportTriggers = async () => {
+            try {
+                const response = await fetch(`http://${serverIP}:3001/check-import-trigger`);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.trigger && data.trigger.path) {
+                        console.log('HTTP fallback: Received import trigger for:', data.trigger.path);
+                        
+                        // Wait a bit to ensure the file is fully written
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        
+                        // Verify file exists before import
+                        const fs = window.cep_node.require('fs');
+                        if (!fs.existsSync(data.trigger.path)) {
+                            console.error('HTTP fallback: File does not exist at path:', data.trigger.path);
+                            return;
+                        }
+
+                        console.log('HTTP fallback: Starting import for file:', data.trigger.path);
+                        const result = await importVideo(data.trigger.path);
+                        console.log('HTTP fallback: Import result:', result);
+                    }
+                }
+            } catch (error) {
+                // Silently fail - this is expected when server is not available
+                // Only log if it's not a network error
+                if (!error.message.includes('fetch') && !error.message.includes('network')) {
+                    console.error('Error polling for import triggers:', error);
+                }
+            }
+        };
+
+        // Start polling for HTTP triggers every 2 seconds
+        const pollInterval = setInterval(pollForImportTriggers, 2000);
+
+        // Clean up polling when socket disconnects
+        socket.on('disconnect', () => {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+            }
+        });
+
         socket.on('download-complete', () => {
             console.log('Download completed (legacy event)');
         });

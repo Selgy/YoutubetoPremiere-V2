@@ -11,6 +11,7 @@ import platform
 import re
 import tempfile
 import subprocess
+import time
 
 def register_routes(app, socketio, settings):
     connected_clients = set()
@@ -492,6 +493,105 @@ def register_routes(app, socketio, settings):
             
         except Exception as e:
             logging.error(f"Error getting audio languages: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/trigger-import', methods=['POST'])
+    def trigger_import():
+        """HTTP fallback endpoint to trigger video import when WebSocket fails"""
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({'error': 'No data provided'}), 400
+                
+            video_path = data.get('path')
+            if not video_path:
+                return jsonify({'error': 'No path provided'}), 400
+                
+            if not os.path.exists(video_path):
+                return jsonify({'error': 'File not found'}), 404
+                
+            logging.info(f"HTTP fallback: Triggering import for {video_path}")
+            
+            # Store the import request for Premiere extension to pick up
+            import tempfile
+            import json
+            
+            # Create a trigger file that the Premiere extension can monitor
+            # Use the same temp directory as the application for consistency
+            from utils import get_temp_dir
+            temp_dir = get_temp_dir()
+            trigger_file = os.path.join(temp_dir, 'YoutubetoPremiere_import_trigger.json')
+            
+            trigger_data = {
+                'path': video_path,
+                'timestamp': str(int(time.time())),
+                'url': data.get('url', ''),
+                'type': 'import_video'
+            }
+            
+            with open(trigger_file, 'w', encoding='utf-8') as f:
+                json.dump(trigger_data, f)
+            
+            logging.info(f"Created import trigger file: {trigger_file}")
+            
+            # Also try WebSocket as primary method (might work sometimes)
+            try:
+                socketio.emit('import_video', {'path': video_path})
+                logging.info("Sent import_video via WebSocket as primary method")
+            except Exception as ws_error:
+                logging.warning(f"WebSocket import failed (expected): {ws_error}")
+            
+            return jsonify({'success': True, 'method': 'trigger_file'}), 200
+            
+        except Exception as e:
+            logging.error(f"Error in trigger-import endpoint: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/check-import-trigger', methods=['GET'])
+    def check_import_trigger():
+        """Endpoint for Premiere extension to check for pending import triggers"""
+        try:
+            import tempfile
+            import json
+            
+            # Use the same temp directory as the application for consistency
+            from utils import get_temp_dir
+            temp_dir = get_temp_dir()
+            trigger_file = os.path.join(temp_dir, 'YoutubetoPremiere_import_trigger.json')
+            
+            if not os.path.exists(trigger_file):
+                return jsonify({'trigger': None}), 200
+            
+            try:
+                with open(trigger_file, 'r', encoding='utf-8') as f:
+                    trigger_data = json.load(f)
+                
+                # Check if the trigger is recent (within last 5 minutes)
+                import time
+                current_time = int(time.time())
+                trigger_time = int(trigger_data.get('timestamp', 0))
+                
+                if current_time - trigger_time > 300:  # 5 minutes
+                    # Remove old trigger
+                    os.remove(trigger_file)
+                    return jsonify({'trigger': None}), 200
+                
+                # Remove the trigger file after reading (consume once)
+                os.remove(trigger_file)
+                
+                logging.info(f"Provided import trigger to Premiere extension: {trigger_data['path']}")
+                return jsonify({'trigger': trigger_data}), 200
+                
+            except (json.JSONDecodeError, ValueError, KeyError) as e:
+                logging.error(f"Invalid trigger file format: {e}")
+                try:
+                    os.remove(trigger_file)
+                except:
+                    pass
+                return jsonify({'trigger': None}), 200
+                
+        except Exception as e:
+            logging.error(f"Error checking import trigger: {e}")
             return jsonify({'error': str(e)}), 500
 
     # Process the request to get a download folder
