@@ -633,86 +633,136 @@ def open_sounds_folder():
         raise e
 
 def diagnose_windows_networking():
-    """Diagnose Windows networking issues that might affect the server"""
-    if sys.platform != 'win32':
-        return
-    
-    import subprocess
-    import os
-    logging.info("=== Windows Network Diagnostics ===")
-    
-    # Get system directories for Windows commands
-    system32_dir = os.path.join(os.environ.get('SYSTEMROOT', 'C:\\Windows'), 'System32')
-    netstat_path = os.path.join(system32_dir, 'netstat.exe')
-    ping_path = os.path.join(system32_dir, 'ping.exe')
-    netsh_path = os.path.join(system32_dir, 'netsh.exe')
+    """Diagnose Windows networking issues and log results"""
+    if platform.system() != 'Windows':
+        return {"success": False, "error": "This function is only for Windows"}
     
     try:
-        # Check if port 3001 is being used
-        if os.path.exists(netstat_path):
-            result = subprocess.run([netstat_path, '-an'], capture_output=True, text=True, timeout=10, encoding='utf-8', errors='replace')
-            if result.returncode == 0:
+        import subprocess
+        
+        diagnostics = {"success": True, "tests": []}
+        
+        logging.info("=== Windows Network Diagnostics ===")
+        
+        # Test 1: Check port usage
+        try:
+            result = subprocess.run(['netstat', '-ano'], 
+                                  capture_output=True, text=True, shell=True, timeout=10,
+                                  encoding='utf-8', errors='ignore')
+            if result.stdout:
+                # Filter for port 3001
                 lines = result.stdout.split('\n')
                 port_3001_lines = [line for line in lines if ':3001' in line]
-                if port_3001_lines:
-                    logging.info("Port 3001 usage:")
-                    for line in port_3001_lines[:5]:  # Limit output
-                        logging.info(f"  {line.strip()}")
-                else:
-                    logging.info("Port 3001 is not currently in use")
-        else:
-            logging.warning(f"netstat.exe not found at {netstat_path}")
-    except Exception as e:
-        logging.warning(f"Could not check port usage: {e}")
-    
-    try:
-        # Check Windows Firewall status
-        if os.path.exists(netsh_path):
-            result = subprocess.run([netsh_path, 'advfirewall', 'show', 'allprofiles', 'state'], 
-                                  capture_output=True, text=True, timeout=10, encoding='utf-8', errors='replace')
-            if result.returncode == 0:
-                logging.info("Windows Firewall status:")
-                for line in result.stdout.split('\n'):
-                    if 'State' in line and line.strip():
-                        logging.info(f"  {line.strip()}")
-        else:
-            logging.warning(f"netsh.exe not found at {netsh_path}")
-    except Exception as e:
-        logging.warning(f"Could not check Windows Firewall status: {e}")
-    
-    try:
-        # Test localhost connectivity
-        if os.path.exists(ping_path):
-            result = subprocess.run([ping_path, '-n', '1', 'localhost'], 
-                                  capture_output=True, text=True, timeout=10, encoding='utf-8', errors='replace')
-            if result.returncode == 0:
-                logging.info("Localhost ping successful")
+                
+                logging.info("Port 3001 usage:")
+                for line in port_3001_lines:
+                    # Clean line to remove any problematic characters
+                    clean_line = ''.join(char for char in line if ord(char) < 128)
+                    logging.info(f"  {clean_line}")
+                
+                test_result = {
+                    "name": "Port 3001 Check",
+                    "success": True,
+                    "details": f"Found {len(port_3001_lines)} connections on port 3001"
+                }
             else:
-                logging.warning("Localhost ping failed - this may indicate networking issues")
-                if result.stderr:
-                    logging.warning(f"Ping error: {result.stderr}")
-        else:
-            logging.warning(f"ping.exe not found at {ping_path}")
-    except Exception as e:
-        logging.warning(f"Could not test localhost connectivity: {e}")
-    
-    try:
-        # Check for proxy settings
-        if os.path.exists(netsh_path):
-            result = subprocess.run([netsh_path, 'winhttp', 'show', 'proxy'], 
-                                  capture_output=True, text=True, timeout=10, encoding='utf-8', errors='replace')
+                test_result = {
+                    "name": "Port 3001 Check", 
+                    "success": False,
+                    "details": "No netstat output received"
+                }
+                
+            diagnostics["tests"].append(test_result)
+            
+        except Exception as e:
+            logging.error(f"Port check failed: {e}")
+            diagnostics["tests"].append({
+                "name": "Port 3001 Check",
+                "success": False,
+                "details": f"Error: {str(e)}"
+            })
+        
+        # Test 2: Check Windows Firewall
+        try:
+            result = subprocess.run(['netsh', 'advfirewall', 'show', 'allprofiles'], 
+                                  capture_output=True, text=True, shell=True, timeout=10,
+                                  encoding='utf-8', errors='ignore')
             if result.returncode == 0:
-                proxy_info = result.stdout.strip()
-                if 'Direct access' in proxy_info or 'Accès direct' in proxy_info:
-                    logging.info("No proxy configured")
-                else:
-                    logging.info(f"Proxy information: {proxy_info[:100]}...")  # Truncate long output
-        else:
-            logging.warning("Cannot check proxy settings - netsh not available")
+                # Extract firewall state info safely
+                output_lines = result.stdout.split('\n')
+                firewall_states = []
+                for line in output_lines:
+                    if 'State' in line:
+                        # Clean the line
+                        clean_line = ''.join(char for char in line if ord(char) < 128)
+                        firewall_states.append(clean_line.strip())
+                
+                logging.info("Windows Firewall status:")
+                for state in firewall_states:
+                    logging.info(f"  {state}")
+                
+                test_result = {
+                    "name": "Windows Firewall Check",
+                    "success": True,
+                    "details": f"Checked firewall profiles: {len(firewall_states)} profiles found"
+                }
+            else:
+                test_result = {
+                    "name": "Windows Firewall Check",
+                    "success": False,
+                    "details": f"Command failed with code {result.returncode}"
+                }
+                
+            diagnostics["tests"].append(test_result)
+            
+        except Exception as e:
+            logging.error(f"Firewall check failed: {e}")
+            diagnostics["tests"].append({
+                "name": "Windows Firewall Check",
+                "success": False,
+                "details": f"Error: {str(e)}"
+            })
+        
+        # Test 3: Basic connectivity test
+        try:
+            import socket
+            test_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            test_socket.settimeout(5)
+            result = test_socket.connect_ex(('localhost', 3001))
+            test_socket.close()
+            
+            if result == 0:
+                test_result = {
+                    "name": "Localhost Connectivity",
+                    "success": True,
+                    "details": "Successfully connected to localhost:3001"
+                }
+                logging.info("Localhost connectivity: OK")
+            else:
+                test_result = {
+                    "name": "Localhost Connectivity",
+                    "success": False,
+                    "details": f"Connection failed with error code {result}"
+                }
+                logging.info(f"Localhost connectivity failed: {result}")
+                
+            diagnostics["tests"].append(test_result)
+            
+        except Exception as e:
+            logging.error(f"Connectivity test failed: {e}")
+            diagnostics["tests"].append({
+                "name": "Localhost Connectivity",
+                "success": False,
+                "details": f"Error: {str(e)}"
+            })
+        
+        logging.info("=== Network Diagnostics Complete ===")
+        return diagnostics
+        
     except Exception as e:
-        logging.warning(f"Could not check proxy settings: {e}")
-    
-    logging.info("=== End Windows Network Diagnostics ===")
+        error_msg = f"Network diagnostics failed: {str(e)}"
+        logging.error(error_msg)
+        return {"success": False, "error": error_msg}
 
 def create_windows_firewall_rule():
     """Create Windows Firewall rule to allow YoutubetoPremiere application."""

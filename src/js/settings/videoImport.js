@@ -42,19 +42,46 @@ export async function setupVideoImportHandler(csInterface) {
         }
 
         socket = io(`http://${serverIP}:3001`, {
-            transports: ['polling', 'websocket'],
+            transports: ['websocket', 'polling'],  // Prefer WebSocket, fallback to polling
+            upgrade: true,  // Allow upgrading from polling to websocket
+            rememberUpgrade: true,  // Remember successful upgrades
             reconnection: true,
-            reconnectionAttempts: Infinity,
-            reconnectionDelay: 1000,
-            reconnectionDelayMax: 5000,
-            timeout: 20000,
-            forceNew: true,
-            upgrade: true,
-            rememberUpgrade: true,
-            rejectUnauthorized: false,
+            reconnectionAttempts: 10,  // Reasonable limit instead of infinity
+            reconnectionDelay: 2000,  // Start with 2 second delay
+            reconnectionDelayMax: 10000,  // Max 10 second delay
+            timeout: 30000,  // 30 second timeout
+            forceNew: false,  // Reuse existing connections when possible
             autoConnect: true,
-            withCredentials: true,
-            query: { client_type: 'premiere' }
+            withCredentials: false,  // Disable credentials for localhost
+            rejectUnauthorized: false,
+            query: { 
+                client_type: 'premiere',
+                version: '3.0.1'
+            },
+            // Additional optimizations for CEP environment
+            pingTimeout: 120000,  // 2 minute ping timeout
+            pingInterval: 30000,   // 30 second ping interval  
+            jsonp: false,          // Disable JSONP for better security
+            closeOnBeforeunload: true,  // Clean close on page unload
+            // Optimize for Windows CEP
+            compression: false,    // Disable compression for reliability
+            perMessageDeflate: false,  // Disable per-message compression
+            maxHttpBufferSize: 1e6,    // 1MB buffer size
+            // Cookie settings optimized for CEP
+            sessionCookie: false,
+            // Transport-specific settings
+            transportOptions: {
+                polling: {
+                    extraHeaders: {
+                        'User-Agent': 'Adobe-CEP-Extension'
+                    }
+                },
+                websocket: {
+                    extraHeaders: {
+                        'User-Agent': 'Adobe-CEP-Extension'
+                    }
+                }
+            }
         });
 
         let pendingImports = new Map();

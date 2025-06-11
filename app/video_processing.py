@@ -585,38 +585,21 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             )
             
             if result and os.path.exists(result):
-                # Check if there are connected Premiere clients for WebSocket
+                # Import via WebSocket only - no HTTP fallback
                 from YoutubetoPremiere import connected_clients
                 premiere_clients = connected_clients.get('premiere', {})
-                has_premiere_clients = len(premiere_clients) > 0
                 
-                if has_premiere_clients:
-                    # Try WebSocket first when clients are connected
+                if len(premiere_clients) > 0:
                     try:
                         socketio.emit('import_video', {'path': result})
                         logging.info(f"Sent import_video via WebSocket to {len(premiere_clients)} Premiere client(s): {result}")
                     except Exception as e:
-                        logging.warning(f"WebSocket import failed despite connected clients, using HTTP fallback: {e}")
-                        has_premiere_clients = False  # Fall through to HTTP fallback
-                
-                if not has_premiere_clients:
-                    # Use HTTP fallback when no WebSocket clients or WebSocket failed
-                    logging.info("No Premiere clients connected via WebSocket, using HTTP fallback")
-                    try:
-                        import requests
-                        import json
-                        fallback_data = {
-                            'path': result,
-                            'url': video_url
-                        }
-                        response = requests.post('http://localhost:3001/trigger-import', 
-                                               json=fallback_data, timeout=5)
-                        if response.status_code == 200:
-                            logging.info("HTTP fallback import trigger sent successfully")
-                        else:
-                            logging.error(f"HTTP fallback failed: {response.status_code}")
-                    except Exception as http_error:
-                        logging.error(f"HTTP fallback also failed: {http_error}")
+                        logging.error(f"WebSocket import failed: {e}")
+                        socketio.emit('import_failed', {'error': f'Import failed: {str(e)}'})
+                else:
+                    error_msg = "No Premiere Pro extension connected via WebSocket. Please ensure Premiere Pro is running with the extension loaded."
+                    logging.error(error_msg)
+                    socketio.emit('import_failed', {'error': error_msg})
                 
                 return {"success": True, "path": result}
             else:
@@ -647,38 +630,21 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             )
             
             if result and result.get("success") and result.get("path") and os.path.exists(result["path"]):
-                # Check if there are connected Premiere clients for WebSocket
+                # Import via WebSocket only - no HTTP fallback
                 from YoutubetoPremiere import connected_clients
                 premiere_clients = connected_clients.get('premiere', {})
-                has_premiere_clients = len(premiere_clients) > 0
                 
-                if has_premiere_clients:
-                    # Try WebSocket first when clients are connected
+                if len(premiere_clients) > 0:
                     try:
                         socketio.emit('import_video', {'path': result["path"]})
                         logging.info(f"Sent import_video via WebSocket to {len(premiere_clients)} Premiere client(s): {result['path']}")
                     except Exception as e:
-                        logging.warning(f"WebSocket import failed despite connected clients, using HTTP fallback: {e}")
-                        has_premiere_clients = False  # Fall through to HTTP fallback
-                
-                if not has_premiere_clients:
-                    # Use HTTP fallback when no WebSocket clients or WebSocket failed
-                    logging.info("No Premiere clients connected via WebSocket, using HTTP fallback")
-                    try:
-                        import requests
-                        import json
-                        fallback_data = {
-                            'path': result["path"],
-                            'url': video_url
-                        }
-                        response = requests.post('http://localhost:3001/trigger-import', 
-                                               json=fallback_data, timeout=5)
-                        if response.status_code == 200:
-                            logging.info("HTTP fallback import trigger sent successfully")
-                        else:
-                            logging.error(f"HTTP fallback failed: {response.status_code}")
-                    except Exception as http_error:
-                        logging.error(f"HTTP fallback also failed: {http_error}")
+                        logging.error(f"WebSocket import failed: {e}")
+                        socketio.emit('import_failed', {'error': f'Import failed: {str(e)}'})
+                else:
+                    error_msg = "No Premiere Pro extension connected via WebSocket. Please ensure Premiere Pro is running with the extension loaded."
+                    logging.error(error_msg)
+                    socketio.emit('import_failed', {'error': error_msg})
                 
                 return {"success": True, "path": result["path"]}
             else:
@@ -700,38 +666,21 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             )
             
             if result and os.path.exists(result):
-                # Check if there are connected Premiere clients for WebSocket
+                # Import via WebSocket only - no HTTP fallback
                 from YoutubetoPremiere import connected_clients
                 premiere_clients = connected_clients.get('premiere', {})
-                has_premiere_clients = len(premiere_clients) > 0
                 
-                if has_premiere_clients:
-                    # Try WebSocket first when clients are connected
+                if len(premiere_clients) > 0:
                     try:
                         socketio.emit('import_video', {'path': result})
                         logging.info(f"Sent import_video via WebSocket to {len(premiere_clients)} Premiere client(s): {result}")
                     except Exception as e:
-                        logging.warning(f"WebSocket import failed despite connected clients, using HTTP fallback: {e}")
-                        has_premiere_clients = False  # Fall through to HTTP fallback
-                
-                if not has_premiere_clients:
-                    # Use HTTP fallback when no WebSocket clients or WebSocket failed
-                    logging.info("No Premiere clients connected via WebSocket, using HTTP fallback")
-                    try:
-                        import requests
-                        import json
-                        fallback_data = {
-                            'path': result,
-                            'url': video_url
-                        }
-                        response = requests.post('http://localhost:3001/trigger-import', 
-                                               json=fallback_data, timeout=5)
-                        if response.status_code == 200:
-                            logging.info("HTTP fallback import trigger sent successfully")
-                        else:
-                            logging.error(f"HTTP fallback failed: {response.status_code}")
-                    except Exception as http_error:
-                        logging.error(f"HTTP fallback also failed: {http_error}")
+                        logging.error(f"WebSocket import failed: {e}")
+                        socketio.emit('import_failed', {'error': f'Import failed: {str(e)}'})
+                else:
+                    error_msg = "No Premiere Pro extension connected via WebSocket. Please ensure Premiere Pro is running with the extension loaded."
+                    logging.error(error_msg)
+                    socketio.emit('import_failed', {'error': error_msg})
                 
                 return {"success": True, "path": result}
             else:

@@ -334,26 +334,40 @@ try:
     socketio = SocketIO(app, 
         cors_allowed_origins="*",
         async_mode='threading',
-        ping_timeout=60,  # Increased timeout for Windows CEP
-        ping_interval=25,  # Increased interval for better Windows compatibility
+        ping_timeout=120,  # Longer timeout for stability
+        ping_interval=30,  # Balanced interval
         max_http_buffer_size=50 * 1024 * 1024,  # 50MB
-        transports=['polling'],  # Polling only for better CEP compatibility
+        transports=['websocket', 'polling'],  # Both transports for better CEP compatibility
         logger=False,  # Disable verbose logging
         engineio_logger=False,  # Disable verbose logging
-        always_connect=True,
-        allow_upgrades=False,  # Disable upgrades for consistency
+        always_connect=False,  # Let client control connection timing
+        allow_upgrades=True,  # Allow WebSocket upgrades from polling
         cookie=None,
         # Windows CEP optimizations
         compression=False,  # Disable compression for Windows compatibility
         jsonp=False,  # Disable JSONP for security
-        manage_session=False,  # Let client manage sessions
+        manage_session=True,  # Better session management
         # Handle multiple connections gracefully
         client_manager=None,  # Use default manager
-        # Increase connection limits for multiple process scenario
-        max_connections=50,  # Allow more concurrent connections
-        reconnection_delay=2000,  # 2 second delay between reconnection attempts
-        reconnection_delay_max=10000,  # Max 10 second delay
-        max_reconnection_attempts=20  # Allow more reconnection attempts
+        # Connection limits
+        max_connections=100,  # Allow more concurrent connections
+        reconnection_delay=1000,  # 1 second delay between reconnection attempts
+        reconnection_delay_max=5000,  # Max 5 second delay
+        max_reconnection_attempts=10,  # Reasonable reconnection attempts
+        # Additional CEP compatibility settings
+        upgrade_timeout=30,  # Time to wait for transport upgrade
+        # Reduce connection overhead
+        close_timeout=10,  # Quicker connection cleanup
+        heartbeat_timeout=30,  # Heartbeat for connection health
+        heartbeat_interval=10,  # Regular heartbeat checks
+        # Namespace settings
+        namespace='/',  # Use default namespace
+        # Session cookie settings for CEP
+        session_cookie_name='youtubetopremiere.sid',
+        session_cookie_path='/',
+        session_cookie_httponly=False,  # Allow JS access in CEP
+        session_cookie_secure=False,  # HTTP only for localhost
+        session_cookie_samesite=None  # No SameSite for CEP compatibility
     )
 
     logging.info("Flask and SocketIO initialized successfully")
@@ -407,64 +421,131 @@ def default_error_handler(e):
 def handle_connect():
     sid = request.sid
     client_type = request.args.get('client_type', 'unknown')
-    # Don't log client IP for privacy reasons
+    client_version = request.args.get('version', 'unknown')
     
-    # Validate client type
-    if client_type not in ['chrome', 'premiere']:
+    # Validate and sanitize client type
+    valid_types = ['chrome', 'premiere', 'unknown']
+    if client_type not in valid_types:
         client_type = 'unknown'
-        app_logger.warning(f'Connection with unspecified client type')
+        app_logger.warning(f'Connection with invalid client type: {client_type}')
     
-    # For tracking connections, we'll use 'anonymous' instead of IP
-    client_key = f'client_{len(connected_clients[client_type])}'
+    # For tracking connections, we'll use a unique key based on type and SID
+    client_key = f'{client_type}_{sid}'
     
     # Add new connection
     connected_clients[client_type][client_key] = sid
     
-    app_logger.info(f'Client connected - Type: {client_type}')
-    socketio.emit('connection_status', {'status': 'connected'}, room=sid)
+    # Send specific welcome message based on client type
+    connection_data = {
+        'status': 'connected',
+        'server_version': '3.0.1',
+        'client_type': client_type,
+        'sid': sid
+    }
+    
+    if client_type == 'chrome':
+        connection_data['message'] = 'Chrome extension connected successfully'
+        app_logger.info(f'Chrome extension connected - SID: {sid}, Version: {client_version}')
+    elif client_type == 'premiere':
+        connection_data['message'] = 'Premiere Pro extension connected successfully'
+        app_logger.info(f'Premiere Pro extension connected - SID: {sid}, Version: {client_version}')
+    else:
+        connection_data['message'] = 'Client connected with unknown type'
+        app_logger.info(f'Unknown client connected - SID: {sid}')
+    
+    socketio.emit('connection_status', connection_data, room=sid)
+    
+    # Also broadcast connection info to other clients (for debugging)
+    total_connections = sum(len(clients) for clients in connected_clients.values())
+    socketio.emit('client_count_update', {
+        'chrome': len(connected_clients['chrome']),
+        'premiere': len(connected_clients['premiere']),
+        'unknown': len(connected_clients['unknown']),
+        'total': total_connections
+    }, broadcast=True)
 
 @socketio.on('disconnect')
 def handle_disconnect():
     """Handle client disconnection"""
     sid = request.sid
+    disconnected_client_type = None
     
-    # Remove from appropriate client list - find by SID instead of IP
+    # Remove from appropriate client list - find by SID
     for client_type, clients in connected_clients.items():
         for client_key, client_sid in list(clients.items()):
             if client_sid == sid:
                 del clients[client_key]
-                logging.info(f'Client disconnected - Type: {client_type}, SID: {sid}')
-                return
+                disconnected_client_type = client_type
+                logging.info(f'{client_type.capitalize()} client disconnected - SID: {sid}')
+                break
+        if disconnected_client_type:
+            break
     
-    # If we get here, the client wasn't found in our tracking
-    logging.info(f'Unknown client disconnected - SID: {sid}')
+    # If we get here and no client was found, log it
+    if not disconnected_client_type:
+        logging.info(f'Unknown client disconnected - SID: {sid}')
+    
+    # Broadcast updated connection count
+    total_connections = sum(len(clients) for clients in connected_clients.values())
+    socketio.emit('client_count_update', {
+        'chrome': len(connected_clients['chrome']),
+        'premiere': len(connected_clients['premiere']),
+        'unknown': len(connected_clients['unknown']),
+        'total': total_connections
+    }, broadcast=True)
 
 @socketio.on('connection_check')
 def handle_connection_check(data):
     """Handle connection check requests from clients"""
     try:
-        # This simply responds with a status "ok" message
-        # No need to log every connection check
-        emit_to_client_type('connection_status', {'status': 'ok'}, request.args.get('client_type'))
+        client_type = request.args.get('client_type', 'unknown')
+        sid = request.sid
+        
+        # Respond with detailed status
+        status_data = {
+            'status': 'ok',
+            'server_time': time.time(),
+            'client_type': client_type,
+            'sid': sid,
+            'connected_clients': {
+                'chrome': len(connected_clients['chrome']),
+                'premiere': len(connected_clients['premiere']),
+                'unknown': len(connected_clients['unknown'])
+            }
+        }
+        
+        socketio.emit('connection_status', status_data, room=sid)
+        
     except Exception as e:
         app_logger.error(f'Error in handle_connection_check: {str(e)}')
 
 def emit_to_client_type(event, data, client_type=None):
     """Emit event to specific client type or all if client_type is None"""
+    emitted_count = 0
+    
     if client_type:
         # Only emit to clients of the specified type
-        for sid in connected_clients[client_type].values():
+        clients = connected_clients.get(client_type, {})
+        for client_key, sid in clients.items():
             try:
                 socketio.emit(event, data, room=sid)
-                # Reduced to debug level to minimize logs
-                if event != 'connection_status': # Don't log frequent connection status updates
-                    app_logger.debug(f'Emitting {event} to {client_type} client')
+                emitted_count += 1
             except Exception as e:
-                app_logger.error(f'Error emitting to client: {str(e)}')
+                app_logger.error(f'Error emitting {event} to {client_type} client {client_key}: {str(e)}')
+        
+        if emitted_count > 0:
+            app_logger.info(f'Emitted {event} to {emitted_count} {client_type} client(s)')
+        else:
+            app_logger.warning(f'No {client_type} clients available to receive {event}')
+            
     else:
-        # For backwards compatibility, emit to all if no type specified
-        socketio.emit(event, data)
-        app_logger.debug(f'Broadcasting {event}')
+        # Emit to all clients
+        try:
+            socketio.emit(event, data, broadcast=True)
+            total_clients = sum(len(clients) for clients in connected_clients.values())
+            app_logger.info(f'Broadcasted {event} to all {total_clients} clients')
+        except Exception as e:
+            app_logger.error(f'Error broadcasting {event}: {str(e)}')
 
 @socketio.on('import_video')
 def handle_import_video(data):
