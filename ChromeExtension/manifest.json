@@ -7,7 +7,8 @@
     "activeTab",
     "storage",
     "downloads",
-    "cookies"
+    "cookies",
+    "tabs"
   ],
   "host_permissions": [
     "https://www.youtube.com/*",
@@ -19,7 +20,8 @@
     "https://localhost:3001/*",
     "http://localhost:3001/*",
     "https://127.0.0.1:3001/*",
-    "http://127.0.0.1:3001/*"
+    "http://127.0.0.1:3001/*",
+    "https://github.com/*"
   ],
   "action": {
     "default_icon": {

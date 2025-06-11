@@ -327,6 +327,98 @@
             background: linear-gradient(90deg, transparent, rgba(78, 82, 255, 0.2), transparent);
             margin: 16px 0;
         }
+
+        /* Styles pour la notification de mise à jour */
+        .update-notification {
+            background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+            color: #856404;
+            border: 1px solid #ffeaa7;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 12px rgba(255, 193, 7, 0.3);
+            display: none;
+            animation: slideInDown 0.5s ease-out;
+        }
+
+        .update-notification.visible {
+            display: block;
+        }
+
+        @keyframes slideInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .update-content {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        .update-icon {
+            color: #ff6b35;
+            font-size: 24px;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        .update-text {
+            flex-grow: 1;
+        }
+
+        .update-title {
+            font-weight: 600;
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .update-message {
+            font-size: 12px;
+            line-height: 1.4;
+            margin-bottom: 12px;
+            opacity: 0.9;
+        }
+
+        .update-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .update-button {
+            background: linear-gradient(135deg, #ff6b35 0%, #f0932b 100%);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            flex: 1;
+        }
+
+        .update-button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(255, 107, 53, 0.4);
+        }
+
+        .update-button.secondary {
+            background: linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 100%);
+            color: #64748b;
+        }
+
+        .update-button.secondary:hover {
+            background: linear-gradient(135deg, #cbd5e1 0%, #94a3b8 100%);
+            box-shadow: 0 2px 8px rgba(148, 163, 184, 0.3);
+        }
     </style>
 </head>
 <body>
@@ -336,6 +428,28 @@
     </div>
 
     <div class="content">
+        <!-- Update Notification -->
+        <div id="update-notification" class="update-notification">
+            <div class="update-content">
+                <span class="material-symbols-outlined update-icon">system_update</span>
+                <div class="update-text">
+                    <div class="update-title">Mise à jour disponible</div>
+                    <div class="update-message" id="update-message">
+                        Une nouvelle version est disponible ! 
+                    </div>
+                    <div class="update-actions">
+                        <button class="update-button" id="download-update">
+                            <span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px;">download</span>
+                            Télécharger
+                        </button>
+                        <button class="update-button secondary" id="dismiss-update">
+                            Plus tard
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Status -->
         <div id="server-status" class="status disconnected">
             <span class="material-symbols-outlined">cloud_off</span>
