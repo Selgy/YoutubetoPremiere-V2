@@ -26,17 +26,23 @@ def check_ytdlp_version():
         version = yt_dlp.version.__version__
         logging.info(f"yt-dlp version: {version}")
         
-        # Also try to get version via CLI for comparison
-        try:
-            result = subprocess.run([sys.executable, '-m', 'yt_dlp', '--version'], 
-                                  capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
-                cli_version = result.stdout.strip()
-                logging.info(f"yt-dlp CLI version: {cli_version}")
-            else:
-                logging.warning(f"Failed to get yt-dlp CLI version: {result.stderr}")
-        except Exception as e:
-            logging.warning(f"Could not check yt-dlp CLI version: {e}")
+        # DISABLED: CLI version check causes 10-second timeouts with multiple processes
+        # This was causing process loops when multiple instances tried to run simultaneously
+        # The library version check above is sufficient for debugging
+        
+        # Also try to get version via CLI for comparison - DISABLED
+        # try:
+        #     result = subprocess.run([sys.executable, '-m', 'yt_dlp', '--version'], 
+        #                           capture_output=True, text=True, timeout=10)
+        #     if result.returncode == 0:
+        #         cli_version = result.stdout.strip()
+        #         logging.info(f"yt-dlp CLI version: {cli_version}")
+        #     else:
+        #         logging.warning(f"Failed to get yt-dlp CLI version: {result.stderr}")
+        # except Exception as e:
+        #     logging.warning(f"Could not check yt-dlp CLI version: {e}")
+        
+        logging.info("yt-dlp successfully loaded: %s", version)
             
         return version
     except ImportError as e:

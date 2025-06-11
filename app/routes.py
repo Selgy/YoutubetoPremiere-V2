@@ -879,37 +879,147 @@ def register_routes(app, socketio, settings):
 
     @app.route('/network-test', methods=['GET'])
     def network_test():
-        """Test network connectivity and return diagnostics"""
+        """Test network configuration and provide diagnostics"""
+        import time
+        import socket
+        from utils import diagnose_windows_networking
+        
         try:
-            import socket
-            import platform
-            
+            start_time = time.time()
             diagnostics = {
-                'server_status': 'running',
-                'platform': platform.system(),
-                'hostname': socket.gethostname(),
-                'localhost_ip': socket.gethostbyname('localhost'),
-                'server_port': 3001,
-                'timestamp': time.time()
+                'timestamp': start_time,
+                'tests': []
             }
             
-            # Test if we can bind to various addresses
-            bind_tests = {}
-            for addr in ['localhost', '127.0.0.1']:
-                try:
-                    test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    test_sock.settimeout(1)
-                    result = test_sock.connect_ex((addr, 3001))
-                    test_sock.close()
-                    bind_tests[addr] = result == 0
-                except Exception as e:
-                    bind_tests[addr] = False
+            # Test 1: Local socket binding
+            try:
+                test_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                test_socket.bind(('localhost', 0))  # Bind to any available port
+                test_port = test_socket.getsockname()[1]
+                test_socket.close()
+                
+                diagnostics['tests'].append({
+                    'name': 'Socket Binding',
+                    'status': 'pass',
+                    'message': f'Successfully bound to localhost:{test_port}',
+                    'duration_ms': (time.time() - start_time) * 1000
+                })
+            except Exception as e:
+                diagnostics['tests'].append({
+                    'name': 'Socket Binding',
+                    'status': 'fail',
+                    'message': f'Failed to bind socket: {str(e)}',
+                    'duration_ms': (time.time() - start_time) * 1000
+                })
             
-            diagnostics['connectivity_tests'] = bind_tests
+            # Test 2: Windows-specific networking diagnostics
+            if platform.system() == 'Windows':
+                win_diag_start = time.time()
+                try:
+                    win_diagnostics = diagnose_windows_networking()
+                    diagnostics['tests'].append({
+                        'name': 'Windows Network Diagnostics',
+                        'status': 'pass' if win_diagnostics.get('success') else 'fail',
+                        'message': 'Windows networking diagnostics completed',
+                        'details': win_diagnostics,
+                        'duration_ms': (time.time() - win_diag_start) * 1000
+                    })
+                except Exception as e:
+                    diagnostics['tests'].append({
+                        'name': 'Windows Network Diagnostics',
+                        'status': 'fail',
+                        'message': f'Windows diagnostics failed: {str(e)}',
+                        'duration_ms': (time.time() - win_diag_start) * 1000
+                    })
+            
+            # Test 3: HTTP connectivity test
+            http_test_start = time.time()
+            try:
+                test_response = requests.get('http://localhost:3001/health', timeout=5)
+                if test_response.status_code == 200:
+                    diagnostics['tests'].append({
+                        'name': 'HTTP Connectivity',
+                        'status': 'pass',
+                        'message': 'Successfully connected to local server',
+                        'duration_ms': (time.time() - http_test_start) * 1000
+                    })
+                else:
+                    diagnostics['tests'].append({
+                        'name': 'HTTP Connectivity',
+                        'status': 'fail',
+                        'message': f'HTTP request returned status {test_response.status_code}',
+                        'duration_ms': (time.time() - http_test_start) * 1000
+                    })
+            except Exception as e:
+                diagnostics['tests'].append({
+                    'name': 'HTTP Connectivity',
+                    'status': 'fail',
+                    'message': f'HTTP request failed: {str(e)}',
+                    'duration_ms': (time.time() - http_test_start) * 1000
+                })
+            
+            # Calculate total test duration
+            diagnostics['total_duration_ms'] = (time.time() - start_time) * 1000
+            diagnostics['success'] = all(test['status'] == 'pass' for test in diagnostics['tests'])
             
             return jsonify(diagnostics)
+            
         except Exception as e:
-            return jsonify({'error': str(e), 'server_status': 'error'}), 500
+            logging.error(f"Error in network test: {e}")
+            return jsonify({
+                'success': False,
+                'error': str(e),
+                'timestamp': time.time()
+            }), 500
+
+    @app.route('/process-diagnostics', methods=['GET'])
+    def process_diagnostics():
+        """Get process diagnostics including count and port usage"""
+        try:
+            from utils import get_process_diagnostics
+            result = get_process_diagnostics()
+            return jsonify(result)
+        except Exception as e:
+            logging.error(f"Error getting process diagnostics: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/cleanup-processes', methods=['POST'])
+    def cleanup_processes():
+        """Clean up YoutubetoPremiere processes"""
+        try:
+            from utils import cleanup_youtube_premiere_processes
+            
+            data = request.get_json() or {}
+            force = data.get('force', False)
+            
+            result = cleanup_youtube_premiere_processes(force=force)
+            return jsonify(result)
+        except Exception as e:
+            logging.error(f"Error cleaning up processes: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/count-processes', methods=['GET'])
+    def count_processes():
+        """Count YoutubetoPremiere processes"""
+        try:
+            from utils import count_youtube_premiere_processes
+            count = count_youtube_premiere_processes()
+            return jsonify({'success': True, 'count': count})
+        except Exception as e:
+            logging.error(f"Error counting processes: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/check-port', methods=['GET'])
+    def check_port():
+        """Check port usage"""
+        try:
+            from utils import check_port_usage
+            port = request.args.get('port', 3001, type=int)
+            result = check_port_usage(port)
+            return jsonify(result)
+        except Exception as e:
+            logging.error(f"Error checking port: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
 
 
     

@@ -715,46 +715,178 @@ def diagnose_windows_networking():
     logging.info("=== End Windows Network Diagnostics ===")
 
 def create_windows_firewall_rule():
-    """Attempt to create a Windows Firewall rule for the application"""
-    if sys.platform != 'win32':
-        return False
-    
-    import os
-    import subprocess
+    """Create Windows Firewall rule to allow YoutubetoPremiere application."""
+    if platform.system() != 'Windows':
+        return {"success": False, "error": "This function is only for Windows"}
     
     try:
-        # Get the current executable path
+        import subprocess
+        
+        # Get the path to the current executable
         if getattr(sys, 'frozen', False):
-            exe_path = sys.executable
+            # Running as compiled executable
+            app_path = sys.executable
         else:
-            exe_path = sys.executable
+            # Running as Python script
+            app_path = sys.executable
+            
+        # Rule name
+        rule_name = "YoutubetoPremiere"
         
-        # Get system directory for netsh
-        system32_dir = os.path.join(os.environ.get('SYSTEMROOT', 'C:\\Windows'), 'System32')
-        netsh_path = os.path.join(system32_dir, 'netsh.exe')
+        # Check if rule already exists
+        check_cmd = f'netsh advfirewall firewall show rule name="{rule_name}"'
+        result = subprocess.run(check_cmd, shell=True, capture_output=True, text=True)
         
-        if not os.path.exists(netsh_path):
-            logging.warning(f"netsh.exe not found at {netsh_path}")
-            return False
+        if "No rules match" not in result.stdout:
+            return {"success": True, "message": "Firewall rule already exists"}
         
-        # Try to add firewall rule for the Python executable
-        cmd = [
-            netsh_path, 'advfirewall', 'firewall', 'add', 'rule',
-            'name=YoutubetoPremiere Server',
-            f'program={exe_path}',
-            'dir=in',
-            'action=allow',
-            'protocol=TCP',
-            'localport=3001'
-        ]
+        # Create inbound rule
+        inbound_cmd = f'netsh advfirewall firewall add rule name="{rule_name}" dir=in action=allow program="{app_path}" enable=yes'
+        result_in = subprocess.run(inbound_cmd, shell=True, capture_output=True, text=True)
         
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode == 0:
-            logging.info("Successfully created Windows Firewall rule for YoutubetoPremiere")
-            return True
+        # Create outbound rule
+        outbound_cmd = f'netsh advfirewall firewall add rule name="{rule_name}" dir=out action=allow program="{app_path}" enable=yes'
+        result_out = subprocess.run(outbound_cmd, shell=True, capture_output=True, text=True)
+        
+        if result_in.returncode == 0 and result_out.returncode == 0:
+            return {"success": True, "message": "Firewall rules created successfully"}
         else:
-            logging.warning(f"Failed to create Windows Firewall rule: {result.stderr}")
-            return False
+            return {"success": False, "error": f"Failed to create firewall rules. In: {result_in.stderr}, Out: {result_out.stderr}"}
+            
     except Exception as e:
-        logging.warning(f"Could not create Windows Firewall rule: {e}")
-        return False
+        return {"success": False, "error": str(e)}
+
+def count_youtube_premiere_processes():
+    """Count the number of YoutubetoPremiere processes currently running"""
+    if sys.platform != 'win32':
+        return 0
+    
+    try:
+        result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq YoutubetoPremiere.exe'], 
+                              capture_output=True, text=True, shell=True)
+        
+        if result.returncode == 0:
+            lines = result.stdout.strip().split('\n')
+            # Count lines that contain YoutubetoPremiere.exe (skip header)
+            count = sum(1 for line in lines if 'YoutubetoPremiere.exe' in line)
+            logging.info(f"Found {count} YoutubetoPremiere processes")
+            return count
+        else:
+            logging.error(f"Failed to count processes: {result.stderr}")
+            return 0
+            
+    except Exception as e:
+        logging.error(f"Error counting processes: {e}")
+        return 0
+
+def cleanup_youtube_premiere_processes(force=False):
+    """Clean up YoutubetoPremiere processes"""
+    if sys.platform != 'win32':
+        return {"success": False, "error": "This function is only for Windows"}
+    
+    try:
+        process_count = count_youtube_premiere_processes()
+        if process_count == 0:
+            return {"success": True, "message": "No processes found to clean up", "processes_killed": 0}
+        
+        logging.info(f"Attempting to clean up {process_count} YoutubetoPremiere processes")
+        
+        processes_killed = 0
+        
+        if not force:
+            # First, try graceful termination
+            result = subprocess.run(['taskkill', '/IM', 'YoutubetoPremiere.exe'], 
+                                  capture_output=True, text=True, shell=True)
+            if result.returncode == 0:
+                logging.info("Attempted graceful termination")
+                time.sleep(2)  # Wait for graceful shutdown
+                
+                # Check if any processes remain
+                remaining = count_youtube_premiere_processes()
+                processes_killed = process_count - remaining
+                
+                if remaining == 0:
+                    return {"success": True, "message": "All processes cleaned up gracefully", "processes_killed": processes_killed}
+                else:
+                    logging.info(f"{remaining} processes remain after graceful termination")
+        
+        # Force kill any remaining processes (especially those stuck in yt-dlp timeouts)
+        logging.info("Force killing remaining processes...")
+        result = subprocess.run(['taskkill', '/F', '/IM', 'YoutubetoPremiere.exe'], 
+                              capture_output=True, text=True, shell=True)
+        
+        if result.returncode == 0:
+            time.sleep(1)  # Wait a moment for processes to be killed
+            remaining_after_force = count_youtube_premiere_processes()
+            total_killed = process_count - remaining_after_force
+            
+            return {
+                "success": True, 
+                "message": f"Successfully killed {total_killed} processes", 
+                "processes_killed": total_killed,
+                "remaining": remaining_after_force
+            }
+        else:
+            return {"success": False, "error": f"Failed to kill processes: {result.stderr}"}
+        
+    except Exception as e:
+        logging.error(f"Error during cleanup: {e}")
+        return {"success": False, "error": str(e)}
+
+def check_port_usage(port=3001):
+    """Check if the specified port is in use"""
+    if sys.platform != 'win32':
+        return {"success": False, "error": "This function is only for Windows"}
+    
+    try:
+        result = subprocess.run(['netstat', '-ano', '|', 'findstr', f':{port}'], 
+                              capture_output=True, text=True, shell=True)
+        
+        if result.returncode == 0 and result.stdout.strip():
+            lines = result.stdout.strip().split('\n')
+            connections = []
+            for line in lines:
+                if f':{port}' in line:
+                    parts = line.split()
+                    if len(parts) >= 5:
+                        connections.append({
+                            'protocol': parts[0],
+                            'local_address': parts[1],
+                            'foreign_address': parts[2],
+                            'state': parts[3],
+                            'pid': parts[4]
+                        })
+            
+            return {"success": True, "in_use": True, "connections": connections}
+        else:
+            return {"success": True, "in_use": False, "connections": []}
+            
+    except Exception as e:
+        logging.error(f"Error checking port usage: {e}")
+        return {"success": False, "error": str(e)}
+
+def get_process_diagnostics():
+    """Get comprehensive process diagnostics"""
+    try:
+        diagnostics = {
+            "process_count": count_youtube_premiere_processes(),
+            "port_usage": check_port_usage(),
+            "timestamp": time.time()
+        }
+        
+        # Add detailed process info if available
+        if sys.platform == 'win32':
+            try:
+                result = subprocess.run(['wmic', 'process', 'where', 'name="YoutubetoPremiere.exe"', 
+                                       'get', 'ProcessId,CommandLine,CreationDate'], 
+                                      capture_output=True, text=True, shell=True)
+                if result.returncode == 0:
+                    diagnostics["detailed_processes"] = result.stdout
+            except:
+                pass
+        
+        return {"success": True, "diagnostics": diagnostics}
+        
+    except Exception as e:
+        logging.error(f"Error getting process diagnostics: {e}")
+        return {"success": False, "error": str(e)}

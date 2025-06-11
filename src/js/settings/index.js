@@ -769,3 +769,96 @@ function handleProcessPermissionError(error, execPath, exec, path, extensionRoot
 // Start the Python server when the extension loads
 console.log("Background script loaded. Starting Python server...");
 startPythonServer();
+
+// Process management functions for user-triggered cleanup
+async function getProcessDiagnostics() {
+    try {
+        const response = await fetch('http://localhost:3001/process-diagnostics');
+        const result = await response.json();
+        console.log('Process diagnostics:', result);
+        return result;
+    } catch (error) {
+        console.error('Error getting process diagnostics:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+async function cleanupProcesses(force = false) {
+    try {
+        const response = await fetch('http://localhost:3001/cleanup-processes', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ force })
+        });
+        const result = await response.json();
+        console.log('Process cleanup result:', result);
+        return result;
+    } catch (error) {
+        console.error('Error cleaning up processes:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+async function getProcessCount() {
+    try {
+        const response = await fetch('http://localhost:3001/count-processes');
+        const result = await response.json();
+        console.log('Process count:', result);
+        return result;
+    } catch (error) {
+        console.error('Error getting process count:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+// Expose process management functions globally for debugging/manual use
+window.processManagement = {
+    getDiagnostics: getProcessDiagnostics,
+    cleanup: cleanupProcesses,
+    getCount: getProcessCount
+};
+
+// Console helper functions for manual cleanup if needed
+window.debugHelpers = {
+    async cleanupAll() {
+        console.log('🧹 Starting manual process cleanup...');
+        const diagnostics = await getProcessDiagnostics();
+        console.log('📊 Current diagnostics:', diagnostics);
+        
+        if (diagnostics.success && diagnostics.diagnostics.process_count > 1) {
+            console.log(`⚠️ Found ${diagnostics.diagnostics.process_count} processes. Cleaning up...`);
+            const cleanup = await cleanupProcesses(false); // Try graceful first
+            console.log('🔧 Cleanup result:', cleanup);
+            
+            if (!cleanup.success || cleanup.remaining > 0) {
+                console.log('💥 Graceful cleanup failed or processes remain. Forcing cleanup...');
+                const forceCleanup = await cleanupProcesses(true);
+                console.log('⚡ Force cleanup result:', forceCleanup);
+            }
+        } else {
+            console.log('✅ Process count looks normal');
+        }
+    },
+    
+    async status() {
+        console.log('📈 Getting current status...');
+        const [diagnostics, count] = await Promise.all([
+            getProcessDiagnostics(),
+            getProcessCount()
+        ]);
+        
+        console.log('📊 Diagnostics:', diagnostics);
+        console.log('🔢 Count:', count);
+        
+        return { diagnostics, count };
+    }
+};
+
+console.log('🔧 Process management functions available:');
+console.log('  window.processManagement.getDiagnostics() - Get process diagnostics');
+console.log('  window.processManagement.cleanup(force) - Clean up processes');
+console.log('  window.processManagement.getCount() - Get process count');
+console.log('  window.debugHelpers.cleanupAll() - Manual cleanup helper');
+console.log('  window.debugHelpers.status() - Get full status report');
