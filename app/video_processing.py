@@ -302,23 +302,63 @@ def try_extract_cookies_from_browser():
 
 def get_ffmpeg_path():
     """Get the path to ffmpeg executable"""
+    
+    # First check if FFMPEG_PATH environment variable is set (set by init.py)
+    env_ffmpeg_path = os.environ.get('FFMPEG_PATH')
+    if env_ffmpeg_path and os.path.exists(env_ffmpeg_path):
+        logging.info(f"Found ffmpeg via environment variable: {env_ffmpeg_path}")
+        return env_ffmpeg_path
+    
+    # Get extension root path if available
+    extension_root = os.environ.get('EXTENSION_ROOT', '')
+    
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Windows executable detection
+    if getattr(sys, 'frozen', False):
+        # If we're running from a PyInstaller bundle
+        base_path = os.path.dirname(sys.executable)
+        logging.info(f"Running from PyInstaller bundle, base path: {base_path}")
+    else:
+        base_path = script_dir
+    
     possible_locations = [
-        os.path.dirname(script_dir),  # Parent directory
-        script_dir,  # Current directory
-        os.path.join(script_dir, 'ffmpeg'),  # ffmpeg subdirectory
-        os.path.join(os.path.dirname(script_dir), 'ffmpeg'),  # Parent's ffmpeg subdirectory
-        os.path.join(os.path.dirname(os.path.dirname(script_dir)), 'exec'),  # CEP extension exec directory
-        os.environ.get('EXTENSION_ROOT', ''),  # Extension root if set
+        # PyInstaller _internal directory (most common for packaged apps)
+        os.path.join(base_path, '_internal'),
+        # Same directory as executable
+        base_path,
+        # Parent directory
+        os.path.dirname(base_path),
+        # Current script directory
+        script_dir,
+        # CEP extension exec directory
+        os.path.join(os.path.dirname(os.path.dirname(script_dir)), 'exec'),
+        os.path.join(os.path.dirname(script_dir), 'exec'),
     ]
     
-    # Add the current working directory and its parent
+    # Add extension root paths if available
+    if extension_root:
+        possible_locations.extend([
+            os.path.join(extension_root, 'exec', '_internal'),
+            os.path.join(extension_root, 'exec'),
+            extension_root,
+        ])
+    
+    # Add current working directory and its parent
     possible_locations.extend([
         os.getcwd(),
         os.path.dirname(os.getcwd()),
         os.path.join(os.getcwd(), 'exec'),
         os.path.join(os.path.dirname(os.getcwd()), 'exec'),
     ])
+    
+    # Add Windows-specific paths
+    if sys.platform == 'win32':
+        # Try common Windows installation paths
+        possible_locations.extend([
+            os.path.join(os.getenv('ProgramFiles', ''), 'ffmpeg', 'bin'),
+            os.path.join(os.getenv('ProgramFiles(x86)', ''), 'ffmpeg', 'bin'),
+        ])
     
     # Add macOS specific paths
     if sys.platform == 'darwin':
@@ -349,56 +389,74 @@ def get_ffmpeg_path():
     
     ffmpeg_name = 'ffmpeg.exe' if sys.platform == 'win32' else 'ffmpeg'
     
+    logging.info(f"Searching for {ffmpeg_name} in {len(possible_locations)} locations...")
+    
     # First try direct paths
     for location in possible_locations:
         ffmpeg_path = os.path.join(location, ffmpeg_name)
+        logging.debug(f"Checking: {ffmpeg_path}")
+        
         if os.path.exists(ffmpeg_path):
             logging.info(f"Found ffmpeg at: {ffmpeg_path}")
-            # On Windows, use a simpler file existence check when running from Premiere
+            
+            # On Windows, use a robust file size check
             if sys.platform == 'win32':
-                file_size = os.path.getsize(ffmpeg_path)
-                # If the file is large enough to be a valid ffmpeg executable, assume it works
-                if file_size > 1000000:  # Typical ffmpeg.exe is several MB
-                    logging.info(f"Assuming ffmpeg is valid based on file size ({file_size} bytes): {ffmpeg_path}")
-                    return ffmpeg_path
-                logging.warning(f"Found ffmpeg at {ffmpeg_path} but size is suspiciously small: {file_size} bytes")
-                continue
-                
+                try:
+                    file_size = os.path.getsize(ffmpeg_path)
+                    # FFmpeg executable should be at least 1MB
+                    if file_size > 1000000:
+                        logging.info(f"FFmpeg appears valid based on file size ({file_size} bytes): {ffmpeg_path}")
+                        return ffmpeg_path
+                    else:
+                        logging.warning(f"Found ffmpeg at {ffmpeg_path} but size is suspiciously small: {file_size} bytes")
+                        continue
+                except Exception as e:
+                    logging.warning(f"Error checking file size for {ffmpeg_path}: {e}")
+                    continue
+            
             # On Unix-like systems, verify permissions
             if sys.platform != 'win32':
                 if not os.access(ffmpeg_path, os.X_OK):
                     logging.warning(f"FFmpeg found at {ffmpeg_path} but is not executable")
                     continue
+            
+            # Try to run ffmpeg -version to verify it works (skip on Windows in Premiere environment)
+            if sys.platform != 'win32' or not getattr(sys, 'frozen', False):
+                try:
+                    # Use shell=True on Windows to avoid handle issues
+                    use_shell = sys.platform == 'win32'
+                    cmd = [ffmpeg_path, '-version'] if not use_shell else f'"{ffmpeg_path}" -version'
                     
-            # Try to run ffmpeg -version to verify it works
-            try:
-                # Use shell=True on Windows to avoid handle issues
-                use_shell = sys.platform == 'win32'
-                cmd = [ffmpeg_path, '-version'] if not use_shell else f'"{ffmpeg_path}" -version'
-                
-                result = subprocess.run(
-                    cmd,
-                    shell=use_shell,
-                    stdout=subprocess.PIPE, 
-                    stderr=subprocess.PIPE,
-                    timeout=5,
-                    text=True
-                )
-                
-                if result.returncode == 0:
-                    logging.info(f"Verified ffmpeg is working at: {ffmpeg_path}")
-                    return ffmpeg_path
-                else:
-                    logging.warning(f"FFmpeg found at {ffmpeg_path} but failed version check: {result.stderr}")
-            except Exception as e:
-                logging.warning(f"Error verifying ffmpeg at {ffmpeg_path}: {str(e)}")
-                # If on Windows, return the path anyway if the file exists and is large enough
-                if sys.platform == 'win32' and os.path.exists(ffmpeg_path) and os.path.getsize(ffmpeg_path) > 1000000:
-                    logging.info(f"Despite verification error, using ffmpeg at: {ffmpeg_path}")
-                    return ffmpeg_path
-                continue
+                    result = subprocess.run(
+                        cmd,
+                        shell=use_shell,
+                        stdout=subprocess.PIPE, 
+                        stderr=subprocess.PIPE,
+                        timeout=5,
+                        text=True
+                    )
+                    
+                    if result.returncode == 0:
+                        logging.info(f"Verified ffmpeg is working at: {ffmpeg_path}")
+                        return ffmpeg_path
+                    else:
+                        logging.warning(f"FFmpeg found at {ffmpeg_path} but failed version check: {result.stderr}")
+                except Exception as e:
+                    logging.warning(f"Error verifying ffmpeg at {ffmpeg_path}: {str(e)}")
+                    # If on Windows and running from PyInstaller, return the path anyway if file exists and is large enough
+                    if sys.platform == 'win32' and getattr(sys, 'frozen', False) and os.path.exists(ffmpeg_path):
+                        try:
+                            if os.path.getsize(ffmpeg_path) > 1000000:
+                                logging.info(f"Despite verification error, using ffmpeg at: {ffmpeg_path}")
+                                return ffmpeg_path
+                        except:
+                            pass
+                    continue
+            else:
+                # On Windows when frozen, skip verification and trust file size check
+                return ffmpeg_path
     
-    # If not found in standard paths, try looking for ffmpeg in PATH
+    # Try looking in PATH for macOS/Linux
     if sys.platform == 'darwin':
         try:
             # On macOS, try running ffmpeg directly as it might be in PATH
@@ -411,6 +469,22 @@ def get_ffmpeg_path():
                 return 'ffmpeg'  # Return just 'ffmpeg' to use PATH resolution
         except Exception as e:
             logging.warning(f"Error checking ffmpeg in PATH: {str(e)}")
+    
+    # Try Windows PATH with 'where' command
+    if sys.platform == 'win32':
+        try:
+            result = subprocess.run(['where', 'ffmpeg'], 
+                                 stdout=subprocess.PIPE, 
+                                 stderr=subprocess.PIPE,
+                                 text=True,
+                                 shell=True)
+            if result.returncode == 0 and result.stdout.strip():
+                ffmpeg_path = result.stdout.strip().split('\n')[0]
+                if os.path.exists(ffmpeg_path) and os.path.getsize(ffmpeg_path) > 1000000:
+                    logging.info(f"Found ffmpeg in Windows PATH: {ffmpeg_path}")
+                    return ffmpeg_path
+        except Exception as e:
+            logging.warning(f"Error checking ffmpeg in Windows PATH: {str(e)}")
 
     logging.error("FFmpeg not found in any of the expected locations")
     logging.error(f"Searched locations: {possible_locations}")

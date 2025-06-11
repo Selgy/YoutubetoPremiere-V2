@@ -862,6 +862,57 @@ def register_routes(app, socketio, settings):
                 'error': error_msg
             }), 500
 
+    @app.route('/network-test', methods=['GET'])
+    def network_test():
+        """Test network connectivity and return diagnostics"""
+        try:
+            import socket
+            import platform
+            
+            diagnostics = {
+                'server_status': 'running',
+                'platform': platform.system(),
+                'hostname': socket.gethostname(),
+                'localhost_ip': socket.gethostbyname('localhost'),
+                'server_port': 3001,
+                'timestamp': time.time()
+            }
+            
+            # Test if we can bind to various addresses
+            bind_tests = {}
+            for addr in ['localhost', '127.0.0.1']:
+                try:
+                    test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    test_sock.settimeout(1)
+                    test_sock.bind((addr, 0))  # Use port 0 to get any available port
+                    port = test_sock.getsockname()[1]
+                    test_sock.close()
+                    bind_tests[addr] = {'success': True, 'test_port': port}
+                except Exception as e:
+                    bind_tests[addr] = {'success': False, 'error': str(e)}
+            
+            diagnostics['bind_tests'] = bind_tests
+            
+            # Get network interfaces
+            try:
+                interfaces = []
+                addrs = socket.getaddrinfo(socket.gethostname(), None)
+                for addr in addrs:
+                    if addr[0] == socket.AF_INET:  # IPv4 only
+                        interfaces.append(addr[4][0])
+                diagnostics['network_interfaces'] = list(set(interfaces))
+            except Exception as e:
+                diagnostics['network_interfaces'] = f'Error: {str(e)}'
+            
+            return jsonify(diagnostics), 200
+            
+        except Exception as e:
+            return jsonify({
+                'server_status': 'error',
+                'error': str(e),
+                'timestamp': time.time()
+            }), 500
+
 
     
 

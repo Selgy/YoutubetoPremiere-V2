@@ -605,3 +605,98 @@ def open_sounds_folder():
     except Exception as e:
         logger.error(f"Error opening sounds folder: {str(e)}")
         raise e
+
+def diagnose_windows_networking():
+    """Diagnose Windows networking issues that might affect the server"""
+    if sys.platform != 'win32':
+        return
+    
+    import subprocess
+    logging.info("=== Windows Network Diagnostics ===")
+    
+    try:
+        # Check if port 3001 is being used
+        result = subprocess.run(['netstat', '-an'], capture_output=True, text=True, shell=True)
+        if result.returncode == 0:
+            lines = result.stdout.split('\n')
+            port_3001_lines = [line for line in lines if ':3001' in line]
+            if port_3001_lines:
+                logging.info("Port 3001 usage:")
+                for line in port_3001_lines:
+                    logging.info(f"  {line.strip()}")
+            else:
+                logging.info("Port 3001 is not currently in use")
+    except Exception as e:
+        logging.warning(f"Could not check port usage: {e}")
+    
+    try:
+        # Check Windows Firewall status
+        result = subprocess.run(['netsh', 'advfirewall', 'show', 'allprofiles', 'state'], 
+                              capture_output=True, text=True, shell=True)
+        if result.returncode == 0:
+            logging.info("Windows Firewall status:")
+            for line in result.stdout.split('\n'):
+                if 'State' in line:
+                    logging.info(f"  {line.strip()}")
+    except Exception as e:
+        logging.warning(f"Could not check Windows Firewall status: {e}")
+    
+    try:
+        # Test localhost connectivity
+        result = subprocess.run(['ping', '-n', '1', 'localhost'], 
+                              capture_output=True, text=True, shell=True)
+        if result.returncode == 0:
+            logging.info("Localhost ping successful")
+        else:
+            logging.warning("Localhost ping failed - this may indicate networking issues")
+    except Exception as e:
+        logging.warning(f"Could not test localhost connectivity: {e}")
+    
+    try:
+        # Check for proxy settings
+        result = subprocess.run(['netsh', 'winhttp', 'show', 'proxy'], 
+                              capture_output=True, text=True, shell=True)
+        if result.returncode == 0:
+            proxy_info = result.stdout.strip()
+            if 'Direct access' in proxy_info:
+                logging.info("No proxy configured")
+            else:
+                logging.warning(f"Proxy configured: {proxy_info}")
+    except Exception as e:
+        logging.warning(f"Could not check proxy settings: {e}")
+    
+    logging.info("=== End Windows Network Diagnostics ===")
+
+def create_windows_firewall_rule():
+    """Attempt to create a Windows Firewall rule for the application"""
+    if sys.platform != 'win32':
+        return False
+    
+    try:
+        # Get the current executable path
+        if getattr(sys, 'frozen', False):
+            exe_path = sys.executable
+        else:
+            exe_path = sys.executable
+        
+        # Try to add firewall rule for the Python executable
+        cmd = [
+            'netsh', 'advfirewall', 'firewall', 'add', 'rule',
+            'name=YoutubetoPremiere Server',
+            f'program={exe_path}',
+            'dir=in',
+            'action=allow',
+            'protocol=TCP',
+            'localport=3001'
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+        if result.returncode == 0:
+            logging.info("Successfully created Windows Firewall rule for YoutubetoPremiere")
+            return True
+        else:
+            logging.warning(f"Failed to create Windows Firewall rule: {result.stderr}")
+            return False
+    except Exception as e:
+        logging.warning(f"Could not create Windows Firewall rule: {e}")
+        return False

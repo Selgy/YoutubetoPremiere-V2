@@ -9,7 +9,7 @@ from flask_cors import CORS
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO
 from routes import register_routes
-from utils import load_settings, monitor_premiere_and_shutdown, play_notification_sound, get_temp_dir, clear_temp_files, check_ffmpeg
+from utils import load_settings, monitor_premiere_and_shutdown, play_notification_sound, get_temp_dir, clear_temp_files, check_ffmpeg, diagnose_windows_networking, create_windows_firewall_rule
 import re
 import subprocess
 import requests
@@ -328,15 +328,21 @@ try:
     socketio = SocketIO(app, 
         cors_allowed_origins="*",
         async_mode='threading',
-        ping_timeout=120,  # Increase timeout for Windows compatibility
-        ping_interval=60,  # Increase interval for Windows compatibility
+        ping_timeout=60,  # Shorter timeout for faster failure detection
+        ping_interval=25,  # Shorter interval for better connection detection
         max_http_buffer_size=100 * 1024 * 1024,  # 100MB
-        transports=['polling'],  # Use only polling to avoid WebSocket blocking
-        logger=False,  # Disable verbose logging now that it's working
+        transports=['polling', 'websocket'],  # Allow both polling and websocket
+        logger=False,  # Disable verbose logging
         engineio_logger=False,  # Disable verbose logging
         always_connect=True,
-        allow_upgrades=False,  # Disable upgrades to prevent WebSocket switching
-        cookie=None
+        allow_upgrades=True,  # Allow upgrading from polling to websocket
+        cookie=None,
+        # Add Windows-specific optimizations
+        compression=False,  # Disable compression for better Windows compatibility
+        jsonp=False,  # Disable JSONP polling for security
+        # Set engineio specific options for better Windows support
+        http_compression=False,
+        websocket_compression=False
     )
 
     logging.info("Flask and SocketIO initialized successfully")
@@ -526,58 +532,144 @@ def run_server():
     logging.info('Settings loaded: %s', settings_for_logging)
     register_routes(app, socketio, settings)
 
-    # On Windows, try binding to localhost first for better compatibility
-    # If that fails, fall back to binding to all interfaces
-    bind_host = 'localhost' if sys.platform == 'win32' else '0.0.0.0'
+    # Try different binding strategies based on platform
+    bind_hosts = ['localhost', '127.0.0.1']
+    if sys.platform != 'win32':
+        bind_hosts.append('0.0.0.0')  # Only use 0.0.0.0 on non-Windows systems
     
-    # Start server
-    logging.info(f'Starting server on {bind_host} port 3001')
+    server_started = False
+    bind_host = 'localhost'  # Default
     
-    server_thread = threading.Thread(target=lambda: socketio.run(
-        app, 
-        host=bind_host,
-        port=3001,
-        debug=False,
-        use_reloader=False
-    ))
-    server_thread.start()
+    # Try to start server with different host bindings
+    for host in bind_hosts:
+        try:
+            bind_host = host
+            logging.info(f'Trying to start server on {bind_host} port 3001')
+            
+            # Test if port is available
+            import socket
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            result = sock.connect_ex((host if host != '0.0.0.0' else 'localhost', 3001))
+            sock.close()
+            
+            if result == 0:
+                logging.warning(f"Port 3001 already in use on {host}")
+                continue
+            
+            # Start server in thread
+            server_thread = threading.Thread(target=lambda: socketio.run(
+                app, 
+                host=bind_host,
+                port=3001,
+                debug=False,
+                use_reloader=False,
+                log_output=False  # Reduce log output for cleaner console
+            ))
+            server_thread.daemon = True  # Make sure thread dies with main process
+            server_thread.start()
+            
+            # Wait for server to start
+            time.sleep(3)
+            
+            # Test connection to verify server started
+            try:
+                import requests
+                test_url = f'http://localhost:3001/health'
+                response = requests.get(test_url, timeout=2)
+                if response.status_code == 200:
+                    logging.info(f"Server successfully started on {bind_host}:3001")
+                    server_started = True
+                    break
+            except Exception as e:
+                logging.warning(f"Failed to verify server on {bind_host}: {e}")
+                continue
+                
+        except Exception as e:
+            logging.warning(f"Failed to start server on {bind_host}: {e}")
+            continue
     
-    # Wait a moment for the server to fully start before continuing
-    time.sleep(2)
+    if not server_started:
+        logging.error("Failed to start server on any available host")
+        # Try one last time with emergency settings
+        try:
+            logging.info("Attempting emergency server start with minimal settings...")
+            server_thread = threading.Thread(target=lambda: app.run(
+                host='localhost',
+                port=3001,
+                debug=False,
+                use_reloader=False,
+                threaded=True
+            ))
+            server_thread.daemon = True
+            server_thread.start()
+            time.sleep(2)
+        except Exception as e:
+            logging.critical(f"Emergency server start also failed: {e}")
+            return
     
-    # Verify the server is actually responding
-    max_retries = 10
+    # Comprehensive server health check
+    max_retries = 15
+    health_check_passed = False
+    
     for i in range(max_retries):
         try:
             import requests
-            response = requests.get('http://localhost:3001/health', timeout=1)
+            
+            # Test HTTP health endpoint
+            response = requests.get('http://localhost:3001/health', timeout=2)
             if response.status_code == 200:
-                logging.info("Server health check passed - server is ready")
-                break
-        except:
+                logging.info("HTTP health check passed")
+                
+                # Test if we can get server IP (this tests more routes)
+                try:
+                    ip_response = requests.get('http://localhost:3001/get-ip', timeout=2)
+                    if ip_response.status_code == 200:
+                        logging.info("Extended health check passed - all routes working")
+                        health_check_passed = True
+                        break
+                    else:
+                        logging.warning(f"Extended health check failed: HTTP {ip_response.status_code}")
+                except Exception as e:
+                    logging.warning(f"Extended health check failed: {e}")
+                    # Basic health passed, so continue anyway
+                    health_check_passed = True
+                    break
+            else:
+                logging.warning(f"Health check failed with HTTP {response.status_code}")
+                
+        except requests.exceptions.ConnectionError:
             if i < max_retries - 1:
                 logging.info(f"Server not ready yet, retrying in 1 second... ({i+1}/{max_retries})")
                 time.sleep(1)
             else:
-                logging.warning("Server health check failed after maximum retries, but continuing anyway")
-                # On Windows, provide additional troubleshooting info
-                if sys.platform == 'win32':
-                    logging.warning("If connection issues persist on Windows:")
-                    logging.warning("1. Check Windows Defender Firewall settings")
-                    logging.warning("2. Check if antivirus software is blocking the connection")
-                    logging.warning("3. Try running as administrator")
-                    logging.warning("4. Check if port 3001 is blocked by other software")
+                logging.error("Server health check failed - connection refused")
+        except Exception as e:
+            if i < max_retries - 1:
+                logging.info(f"Health check attempt {i+1} failed: {e}, retrying...")
+                time.sleep(1)
+            else:
+                logging.error(f"Server health check failed after {max_retries} attempts: {e}")
     
-    # Browser opening disabled - not needed for CEP extension
-    # if sys.platform == 'darwin' and getattr(sys, 'frozen', False):
-    #     try:
-    #         open_url_in_browser(f'http://localhost:3001/health')
-    #     except:
-    #         pass
-
+    if health_check_passed:
+        logging.info("Server health check passed - server is ready")
+    else:
+        logging.warning("Server health check failed, but continuing anyway")
+        # On Windows, provide additional troubleshooting info
+        if sys.platform == 'win32':
+            logging.warning("If connection issues persist on Windows:")
+            logging.warning("1. Check Windows Defender Firewall settings")
+            logging.warning("2. Check if antivirus software is blocking the connection")
+            logging.warning("3. Try running as administrator")
+            logging.warning("4. Check if port 3001 is blocked by other software")
+            logging.warning("5. Try restarting the application")
+    
+    # Start monitoring thread
     premiere_monitor_thread = threading.Thread(target=monitor_premiere_and_shutdown_wrapper)
+    premiere_monitor_thread.daemon = True
     premiere_monitor_thread.start()
 
+    # Keep main thread alive
     while not should_shutdown:
         time.sleep(1)
 
@@ -706,6 +798,16 @@ def setup_environment():
             logging.info(f"Temp directory ready: {temp_dir}")
         except Exception as e:
             logging.warning(f"Failed to set up temp directory: {str(e)}")
+        
+        # Run Windows networking diagnostics if on Windows
+        if sys.platform == 'win32':
+            diagnose_windows_networking()
+            
+            # Try to create firewall rule (this may fail if not running as admin)
+            try:
+                create_windows_firewall_rule()
+            except Exception as e:
+                logging.info(f"Could not create firewall rule (may need admin rights): {e}")
         
         # Log environment info
         logging.info(f"Environment PATH: {os.environ.get('PATH')}")
