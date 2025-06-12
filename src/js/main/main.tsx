@@ -2,47 +2,39 @@ import { useEffect, useState } from 'react';
 import './styles.css';
 import Settings from './Settings';
 import io from 'socket.io-client';
+import CSInterface from '../lib/cep/csinterface';
+import { SystemPath } from '../lib/cep/csinterface';
 
 declare const window: Window & {
-  cep: {
-    util: {
-      openURLInDefaultBrowser: (url: string) => void;
-    };
-    fs: {
-      showOpenDialogEx: (allowMultiple: boolean, chooseDirectory: boolean, title: string, initialPath: string | null) => {
-        err: number;
-        data: string[] | null;
-      };
-    };
-  };
+  cep: any;
   __adobe_cep__: any;
-  CSInterface: any;
 };
-
-declare class CSInterface {
-  constructor();
-  evalScript(script: string, callback: (result: string) => void): void;
-}
 
 // Get the local IP address from the server
 const getLocalIP = async () => {
-  // For CEP environment, always use localhost for stability
-  const possibleAddresses = ['localhost', '127.0.0.1'];
+  const possibleAddresses = ['localhost', '127.0.0.1', '192.168.56.1'];
   
   for (const address of possibleAddresses) {
     try {
-      const response = await fetch(`http://${address}:3001/health`);
+      const response = await fetch(`http://${address}:3001/get-ip`);
       if (response.ok) {
+        const data = await response.json();
         console.log('Successfully connected to server at:', address);
-        // Always return localhost for CEP environment
-        return 'localhost';
+        return data.ip;
       }
     } catch (error) {
       console.log(`Failed to connect to ${address}:`, error);
     }
   }
   
-  console.log('Could not connect to server, but defaulting to localhost for CEP');
+  // If we get here, try to use the last known working IP
+  const lastKnownIP = localStorage.getItem('serverIP');
+  if (lastKnownIP) {
+    console.log('Using last known IP:', lastKnownIP);
+    return lastKnownIP;
+  }
+  
+  console.error('Could not determine server IP, falling back to localhost');
   return 'localhost';
 };
 
@@ -59,6 +51,7 @@ const Main = () => {
   });
 
   const [lastPaths, setLastPaths] = useState<string[]>([]);
+  const [showDropdown, setShowDropdown] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isLicenseValid, setIsLicenseValid] = useState(false);
   const [licenseKey, setLicenseKey] = useState('');
@@ -68,14 +61,9 @@ const Main = () => {
   const [updateInfo, setUpdateInfo] = useState<any>(null);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const currentVersion = '3.0.3';
+  const currentVersion = '3.1.116';
   const [currentPage, setCurrentPage] = useState('main');
   const [serverIP, setServerIP] = useState('localhost');
-  
-  // Force localhost for all requests in CEP environment
-  const getServerURL = (endpoint: string) => {
-    return `http://localhost:3001${endpoint}`;
-  };
   const [isCEPEnvironment, setIsCEPEnvironment] = useState(false);
 
   useEffect(() => {
@@ -94,12 +82,12 @@ const Main = () => {
 
   useEffect(() => {
     const initializeConnection = async () => {
-      await getLocalIP();
-      // Force localhost for CEP environment
-      const finalIP = 'localhost';
-      localStorage.setItem('serverIP', finalIP);
-      setServerIP(finalIP);
-      console.log('Server IP set to:', finalIP);
+      const ip = await getLocalIP();
+      if (ip !== 'localhost') {
+        localStorage.setItem('serverIP', ip);
+      }
+      setServerIP(ip);
+      console.log('Server IP set to:', ip);
     };
     initializeConnection();
   }, []);
@@ -108,7 +96,7 @@ const Main = () => {
     const checkLicenseAndStart = async () => {
       setIsLoading(true);
       try {
-        const response = await fetch(getServerURL('/check-license'));
+        const response = await fetch(`http://${serverIP}:3001/check-license`);
         const data = await response.json();
         
         if (data.isValid) {
@@ -121,192 +109,76 @@ const Main = () => {
       setIsLoading(false);
     };
 
-    if (serverIP) {
+    if (serverIP !== 'localhost') {
       checkLicenseAndStart();
     }
   }, [serverIP]);
 
   useEffect(() => {
-    if (serverIP) {
+    if (serverIP !== 'localhost') {
       checkForUpdates();
     }
   }, [serverIP]);
 
   useEffect(() => {
-    if (!serverIP) return; // Only check if serverIP is empty/undefined
+    if (serverIP === 'localhost') return;
 
-    let connectionAttempts = 0;
-    const maxAttempts = 10;
-    let socket: any = null;
-    let useHttpFallback = false;
-    let healthCheckInterval: NodeJS.Timeout | null = null;
+    const socket = io(`http://${serverIP}:3001`, {
+      transports: ['polling', 'websocket'],
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 60000,
+      forceNew: true,
+      upgrade: true,
+      rememberUpgrade: true,
+      rejectUnauthorized: false,
+      autoConnect: true,
+      withCredentials: true,
+      query: { client_type: 'chrome' }
+    });
 
-    // Function to try WebSocket/Socket.IO connection
-    const attemptSocketConnection = () => {
-      if (useHttpFallback || connectionAttempts >= maxAttempts) {
-        console.log('Max socket connection attempts reached, switching to HTTP fallback');
-        useHttpFallback = true;
-        startHttpFallback();
-        return;
-      }
+    let retryCount = 0;
+    const maxRetries = Infinity;
 
-      connectionAttempts++;
-      console.log(`Socket connection attempt ${connectionAttempts}/${maxAttempts}`);
+    socket.on('connect', () => {
+      console.log('Connected to server');
+      retryCount = 0;
+    });
 
-      socket = io(`http://localhost:3001`, {
-        transports: ['polling'],  // Force polling only for CEP stability
-        reconnection: false,  // Disable automatic reconnection
-        timeout: 10000,  // Shorter timeout
-        forceNew: true,  // Force new connection each time
-        upgrade: false,   // Disable WebSocket upgrade for CEP
-        withCredentials: false,  // Disable credentials for localhost
-        query: { 
-          client_type: 'premiere',
-          cep_version: '1.0'
-        }
-      });
+    socket.on('connect_error', (error) => {
+      console.error('Connection error:', error);
+      retryCount++;
+      
+      console.log(`Retrying connection (attempt ${retryCount})`);
+      setTimeout(() => {
+        socket.connect();
+      }, Math.min(1000 * Math.pow(2, retryCount % 10), 10000));
+    });
 
-      socket.on('connect', () => {
-        console.log('Socket connected to server successfully');
-        connectionAttempts = 0; // Reset on successful connection
-        useHttpFallback = false;
-      });
-
-      socket.on('connect_error', (error: any) => {
-        console.log(`Socket connection error (attempt ${connectionAttempts}):`, error.message);
-        socket.disconnect();
-        
-        // Try again after a delay, or switch to HTTP fallback
+    socket.on('disconnect', (reason) => {
+      console.log('Disconnected:', reason);
+      if (reason === 'io server disconnect' || reason === 'transport close') {
         setTimeout(() => {
-          if (connectionAttempts < maxAttempts) {
-            attemptSocketConnection();
-          } else {
-            console.log('Switching to HTTP fallback mode');
-            useHttpFallback = true;
-            startHttpFallback();
-          }
-        }, 2000);
-      });
+          console.log('Attempting to reconnect...');
+          socket.connect();
+        }, 1000);
+      }
+    });
 
-      socket.on('disconnect', () => {
-        console.log('Socket disconnected');
-      });
+    socket.on('error', (error) => {
+      console.error('Socket error:', error);
+      setTimeout(() => {
+        console.log(`Retrying after error (attempt ${retryCount})`);
+        socket.connect();
+      }, Math.min(1000 * Math.pow(2, retryCount % 10), 10000));
+    });
 
-      socket.on('error', (error: any) => {
-        console.log('Socket error:', error.message);
-      });
-
-      // Add missing event handlers for video import
-      socket.on('import_video', async (data: any) => {
-        console.log('Received import_video command:', data);
-        try {
-          const path = data.path;
-          if (!path) {
-            console.error('No path provided for import');
-            socket.emit('import_complete', { success: false, error: 'No path provided' });
-            return;
-          }
-
-          // Import the video using CEP ExtendScript
-          const success = await importVideoToPremiere(path);
-          
-          if (success) {
-            console.log('Successfully imported video:', path);
-            socket.emit('import_complete', { success: true, path: path });
-            showNotification('Vidéo importée avec succès', 'success');
-          } else {
-            console.error('Failed to import video:', path);
-            socket.emit('import_complete', { success: false, path: path, error: 'Import failed' });
-            showNotification('Échec de l\'importation vidéo', 'error');
-          }
-                 } catch (error) {
-           console.error('Error importing video:', error);
-           socket.emit('import_complete', { success: false, error: String(error) });
-           showNotification('Erreur lors de l\'importation', 'error');
-         }
-      });
-
-      socket.on('download_started', (data: any) => {
-        console.log('Download started:', data);
-        showNotification('Téléchargement commencé', 'info');
-      });
-
-      socket.on('download-complete', (data: any) => {
-        console.log('Download completed:', data);
-        showNotification('Téléchargement terminé', 'success');
-      });
-
-      socket.on('download-failed', (data: any) => {
-        console.log('Download failed:', data);
-        showNotification(`Échec du téléchargement: ${data.error || 'Erreur inconnue'}`, 'error');
-      });
-
-      socket.on('request_project_path', async () => {
-        console.log('Server requesting project path');
-        try {
-          const projectPath = await getPremiereProjectPath();
-          socket.emit('project_path_response', { path: projectPath });
-        } catch (error) {
-          console.error('Error getting project path:', error);
-          socket.emit('project_path_response', { error: String(error) });
-        }
-      });
-
-      socket.on('update_available', (data: any) => {
-        console.log('Update available notification received:', data);
-        if (data.has_update) {
-          setUpdateInfo(data);
-          setLatestVersion(data.latest_version);
-          setUpdateAvailable(true);
-          setShowUpdateModal(true);
-          showNotification(`🚀 Version ${data.latest_version} disponible !`, 'info');
-        }
-      });
-    };
-
-    // HTTP fallback function
-    const startHttpFallback = () => {
-      console.log('Starting HTTP fallback mode for main panel');
-      
-      // Simple health check polling
-      const checkServerHealth = async () => {
-        try {
-                   const controller = new AbortController();
-         const timeoutId = setTimeout(() => controller.abort(), 5000);
-         
-         const response = await fetch(getServerURL('/health'), {
-           method: 'GET',
-           signal: controller.signal
-         });
-         
-         clearTimeout(timeoutId);
-          
-          if (response.ok) {
-            // Server is accessible via HTTP
-            console.log('HTTP fallback: Server health check passed');
-          }
-        } catch (error) {
-          console.log('HTTP fallback: Server health check failed:', error);
-        }
-      };
-
-      // Start health check polling every 30 seconds
-      healthCheckInterval = setInterval(checkServerHealth, 30000);
-      
-      // Initial health check
-      checkServerHealth();
-    };
-
-    // Start with socket connection attempt
-    attemptSocketConnection();
+    // Force initial connection
+    socket.connect();
 
     return () => {
-      if (socket) {
-        socket.disconnect();
-      }
-      if (healthCheckInterval) {
-        clearInterval(healthCheckInterval);
-      }
+      socket.disconnect();
     };
   }, [serverIP]);
 
@@ -315,8 +187,7 @@ const Main = () => {
     
     setIsCheckingUpdates(true);
     try {
-      // Add client_type parameter to identify this as Premiere Pro extension
-      const response = await fetch(getServerURL('/check-updates?client_type=premiere'));
+      const response = await fetch(`http://${serverIP}:3001/check-updates`);
       const data = await response.json();
       
       if (data.success) {
@@ -326,11 +197,7 @@ const Main = () => {
         
         // Show modal if update available
         if (data.has_update) {
-          console.log(`Premiere Pro Extension: Update available - v${data.current_version} -> v${data.latest_version}`);
           setShowUpdateModal(true);
-          showNotification(`Nouvelle version ${data.latest_version} disponible !`, 'info');
-        } else {
-          console.log(`Premiere Pro Extension: No updates available - v${data.current_version} is current`);
         }
       } else {
         console.error('Error checking for updates:', data.error);
@@ -343,62 +210,10 @@ const Main = () => {
   };
 
   const handleDownloadUpdate = () => {
-    if (updateInfo?.download_url) {
-      console.log('Opening download URL:', updateInfo.download_url);
-      
-      if (isCEPEnvironment && window.cep) {
-        // Use CEP API to open external URL
-        try {
-          window.cep.util.openURLInDefaultBrowser(updateInfo.download_url);
-          console.log('Opened URL in default browser via CEP');
-          setShowUpdateModal(false);
-          showNotification('Téléchargement ouvert dans le navigateur', 'success');
-        } catch (error) {
-          console.error('CEP browser open failed:', error);
-          // Fallback: copy URL to clipboard
-          copyToClipboard(updateInfo.download_url);
-        }
-      } else {
-        // Fallback for non-CEP environment
-        try {
-          window.open(updateInfo.download_url, '_blank');
-          setShowUpdateModal(false);
-        } catch (error) {
-          console.error('window.open failed:', error);
-          copyToClipboard(updateInfo.download_url);
-        }
-      }
-    } else {
-      console.error('No download URL available');
-      showNotification('URL de téléchargement non disponible', 'error');
-    }
-  };
-
-  const copyToClipboard = (text: string) => {
-    try {
-      if (navigator.clipboard && window.isSecureContext) {
-        navigator.clipboard.writeText(text).then(() => {
-          showNotification('URL copiée dans le presse-papiers', 'info');
-          setShowUpdateModal(false);
-        });
-      } else {
-        // Fallback for older browsers or non-secure contexts
-        const textArea = document.createElement('textarea');
-        textArea.value = text;
-        textArea.style.position = 'fixed';
-        textArea.style.left = '-999999px';
-        textArea.style.top = '-999999px';
-        document.body.appendChild(textArea);
-        textArea.focus();
-        textArea.select();
-        document.execCommand('copy');
-        textArea.remove();
-        showNotification('URL copiée dans le presse-papiers', 'info');
-        setShowUpdateModal(false);
-      }
-    } catch (error) {
-      console.error('Failed to copy to clipboard:', error);
-      showNotification('Impossible de copier l\'URL. Vérifiez la console.', 'error');
+    if (updateAvailable && updateInfo) {
+      setShowUpdateModal(true);
+    } else if (updateInfo?.download_url) {
+      window.open(updateInfo.download_url, '_blank');
     }
   };
 
@@ -407,7 +222,7 @@ const Main = () => {
     setErrorMessage('');
     
     try {
-      const response = await fetch(getServerURL('/validate-license'), {
+      const response = await fetch(`http://${serverIP}:3001/validate-license`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -435,7 +250,7 @@ const Main = () => {
 
   const loadSettings = async () => {
     try {
-      const response = await fetch(getServerURL('/settings'));
+      const response = await fetch(`http://${serverIP}:3001/settings`);
       if (response.ok) {
         const serverSettings = await response.json();
         setSettings(serverSettings);
@@ -470,7 +285,7 @@ const Main = () => {
         licenseKey: settings.licenseKey
       };
 
-              const saveResponse = await fetch(getServerURL('/settings'), {
+      const saveResponse = await fetch(`http://${serverIP}:3001/settings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -530,7 +345,7 @@ const Main = () => {
     setSettings(newSettings);
     
     try {
-      const response = await fetch(getServerURL('/settings'), {
+      const response = await fetch(`http://${serverIP}:3001/settings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -549,90 +364,8 @@ const Main = () => {
   };
 
   const showNotification = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
-    console.log(`[${type.toUpperCase()}] ${message}`);
-    // You can add visual notification logic here if needed
-  };
-
-  // Premiere Pro import functions
-  const importVideoToPremiere = async (filePath: string): Promise<boolean> => {
-    try {
-      if (!isCEPEnvironment) {
-        console.error('Cannot import video: Not in CEP environment');
-        return false;
-      }
-
-      // ExtendScript to import video file
-      const script = `
-        try {
-          if (!app.isDocumentOpen()) {
-            alert('No project is open in Premiere Pro');
-            'false';
-          } else {
-            var success = app.project.importFiles(['${filePath.replace(/\\/g, '\\\\')}'], true, app.project.rootItem, false);
-            if (success) {
-              'true';
-            } else {
-              'false';
-            }
-          }
-        } catch (e) {
-          'false';
-        }
-      `;
-
-      const result = await executeExtendScript(script);
-      return result === 'true';
-    } catch (error) {
-      console.error('Error importing video to Premiere:', error);
-      return false;
-    }
-  };
-
-  const getPremiereProjectPath = async (): Promise<string | null> => {
-    try {
-      if (!isCEPEnvironment) {
-        console.error('Cannot get project path: Not in CEP environment');
-        return null;
-      }
-
-      // ExtendScript to get project path
-      const script = `
-        try {
-          if (!app.isDocumentOpen()) {
-            'NO_PROJECT';
-          } else {
-            app.project.path || 'UNSAVED_PROJECT';
-          }
-        } catch (e) {
-          'ERROR';
-        }
-      `;
-
-      const result = await executeExtendScript(script);
-      return result && result !== 'NO_PROJECT' && result !== 'UNSAVED_PROJECT' && result !== 'ERROR' ? result : null;
-    } catch (error) {
-      console.error('Error getting Premiere project path:', error);
-      return null;
-    }
-  };
-
-  const executeExtendScript = async (script: string): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      try {
-        if (!isCEPEnvironment || !window.__adobe_cep__) {
-          reject(new Error('CEP environment not available'));
-          return;
-        }
-
-        // Use CEP evalScript to execute ExtendScript
-        const csInterface = new CSInterface();
-        csInterface.evalScript(script, (result: string) => {
-          resolve(result);
-        });
-      } catch (error) {
-        reject(error);
-      }
-    });
+    // Simple console log instead of toast notification
+    console.log(`${type.toUpperCase()}: ${message}`);
   };
 
   if (isLoading) {

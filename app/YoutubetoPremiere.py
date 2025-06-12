@@ -9,7 +9,7 @@ from flask_cors import CORS
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO
 from routes import register_routes
-from utils import load_settings, monitor_premiere_and_shutdown, play_notification_sound, get_temp_dir, clear_temp_files, check_ffmpeg, diagnose_windows_networking, create_windows_firewall_rule
+from utils import load_settings, monitor_premiere_and_shutdown, play_notification_sound, get_temp_dir, clear_temp_files, check_ffmpeg
 import re
 import subprocess
 import requests
@@ -17,40 +17,6 @@ from pathlib import Path
 from init import init
 import tempfile
 from datetime import datetime
-
-# Check yt-dlp version at startup for debugging
-def check_ytdlp_version():
-    """Check and log yt-dlp version for debugging purposes"""
-    try:
-        import yt_dlp
-        version = yt_dlp.version.__version__
-        logging.info(f"yt-dlp version: {version}")
-        
-        # DISABLED: CLI version check causes 10-second timeouts with multiple processes
-        # This was causing process loops when multiple instances tried to run simultaneously
-        # The library version check above is sufficient for debugging
-        
-        # Also try to get version via CLI for comparison - DISABLED
-        # try:
-        #     result = subprocess.run([sys.executable, '-m', 'yt_dlp', '--version'], 
-        #                           capture_output=True, text=True, timeout=10)
-        #     if result.returncode == 0:
-        #         cli_version = result.stdout.strip()
-        #         logging.info(f"yt-dlp CLI version: {cli_version}")
-        #     else:
-        #         logging.warning(f"Failed to get yt-dlp CLI version: {result.stderr}")
-        # except Exception as e:
-        #     logging.warning(f"Could not check yt-dlp CLI version: {e}")
-        
-        logging.info("yt-dlp successfully loaded: %s", version)
-            
-        return version
-    except ImportError as e:
-        logging.error(f"yt-dlp not found: {e}")
-        return None
-    except Exception as e:
-        logging.error(f"Error checking yt-dlp version: {e}")
-        return None
 
 
 # Determine log directory
@@ -208,15 +174,10 @@ def check_server_running(port=3001):
     try:
         import requests
         response = requests.get(f'http://localhost:{port}/health', timeout=1)
-        if response.status_code == 200:
-            logging.info(f"Found existing server running on port {port}")
-            return True
-    except Exception as e:
+        return response.status_code == 200
+    except:
         # If request fails, port might be used by another application
-        logging.warning(f"Port {port} is in use but health check failed: {e}")
         return False
-    
-    return False
 
 def get_app_paths():
     """Get all relevant application paths and log them for debugging"""
@@ -259,13 +220,6 @@ def get_app_paths():
 logging.info(f'Python version: {sys.version}')
 logging.info(f'Platform: {platform.platform()}')
 logging.info(f'Process ID: {os.getpid()}')
-
-# Check yt-dlp version for debugging
-ytdlp_version = check_ytdlp_version()
-if ytdlp_version:
-    logging.info(f'yt-dlp successfully loaded: {ytdlp_version}')
-else:
-    logging.error('yt-dlp version check failed - this may cause video download issues')
 
 # Get and log all application paths (but hide sensitive user paths)
 paths = get_app_paths()
@@ -334,34 +288,19 @@ try:
     socketio = SocketIO(app, 
         cors_allowed_origins="*",
         async_mode='threading',
-        ping_timeout=60,  # Shorter timeout for CEP
-        ping_interval=25,  # Shorter interval for CEP
-        max_http_buffer_size=10 * 1024 * 1024,  # 10MB for CEP compatibility
-        transports=['polling'],  # Force polling only for CEP stability
-        logger=False,  # Disable verbose logging
-        engineio_logger=False,  # Disable verbose logging
-        always_connect=False,  # Let client control connection timing
-        allow_upgrades=False,  # Disable WebSocket upgrades for CEP
-        cookie=None,
-        # Windows CEP optimizations
-        compression=False,  # Disable compression for Windows compatibility
-        jsonp=False,  # Disable JSONP for security
-        manage_session=False,  # Simpler session management for CEP
-        # Handle multiple connections gracefully
-        client_manager=None,  # Use default manager
-        # Connection limits adjusted for CEP
-        max_connections=50,  # Fewer concurrent connections for CEP
-        # Remove reconnection settings (client handles this)
-        # Additional CEP compatibility settings
-        # Reduce connection overhead
-        close_timeout=5,  # Quicker connection cleanup for CEP
-        # Namespace settings
-        namespace='/',  # Use default namespace
-        # Disable session cookies for CEP simplicity
-        session_cookie_name=None,
-        session_cookie_httponly=False,  # Allow JS access in CEP
-        session_cookie_secure=False,  # HTTP only for localhost
-        session_cookie_samesite=None  # No SameSite for CEP compatibility
+        ping_timeout=120,
+        ping_interval=25000,
+        max_http_buffer_size=100 * 1024 * 1024,  # 100MB
+        transports=['websocket', 'polling'],
+        logger=False,
+        engineio_logger=False,
+        always_connect=True,
+        reconnection=True,
+        reconnection_attempts=-1,  # Use -1 for unlimited reconnection attempts
+        reconnection_delay=1000,
+        reconnection_delay_max=5000,
+        allow_upgrades=True,
+        cookie=None
     )
 
     logging.info("Flask and SocketIO initialized successfully")
@@ -415,131 +354,66 @@ def default_error_handler(e):
 def handle_connect():
     sid = request.sid
     client_type = request.args.get('client_type', 'unknown')
-    client_version = request.args.get('version', 'unknown')
+    # Don't log client IP for privacy reasons
     
-    # Validate and sanitize client type
-    valid_types = ['chrome', 'premiere', 'unknown']
-    if client_type not in valid_types:
+    # Validate client type
+    if client_type not in ['chrome', 'premiere']:
         client_type = 'unknown'
-        app_logger.warning(f'Connection with invalid client type: {client_type}')
+        app_logger.warning(f'Connection with unspecified client type')
     
-    # For tracking connections, we'll use a unique key based on type and SID
-    client_key = f'{client_type}_{sid}'
+    # For tracking connections, we'll use 'anonymous' instead of IP
+    client_key = f'client_{len(connected_clients[client_type])}'
     
     # Add new connection
     connected_clients[client_type][client_key] = sid
     
-    # Send specific welcome message based on client type
-    connection_data = {
-        'status': 'connected',
-        'server_version': '3.0.1',
-        'client_type': client_type,
-        'sid': sid
-    }
-    
-    if client_type == 'chrome':
-        connection_data['message'] = 'Chrome extension connected successfully'
-        app_logger.info(f'Chrome extension connected - SID: {sid}, Version: {client_version}')
-    elif client_type == 'premiere':
-        connection_data['message'] = 'Premiere Pro extension connected successfully'
-        app_logger.info(f'Premiere Pro extension connected - SID: {sid}, Version: {client_version}')
-    else:
-        connection_data['message'] = 'Client connected with unknown type'
-        app_logger.info(f'Unknown client connected - SID: {sid}')
-    
-    socketio.emit('connection_status', connection_data, room=sid)
-    
-    # Also broadcast connection info to other clients (for debugging)
-    total_connections = sum(len(clients) for clients in connected_clients.values())
-    socketio.emit('client_count_update', {
-        'chrome': len(connected_clients['chrome']),
-        'premiere': len(connected_clients['premiere']),
-        'unknown': len(connected_clients['unknown']),
-        'total': total_connections
-    }, broadcast=True)
+    app_logger.info(f'Client connected - Type: {client_type}')
+    socketio.emit('connection_status', {'status': 'connected'}, room=sid)
 
 @socketio.on('disconnect')
 def handle_disconnect():
     """Handle client disconnection"""
     sid = request.sid
-    disconnected_client_type = None
     
-    # Remove from appropriate client list - find by SID
+    # Remove from appropriate client list - find by SID instead of IP
     for client_type, clients in connected_clients.items():
         for client_key, client_sid in list(clients.items()):
             if client_sid == sid:
                 del clients[client_key]
-                disconnected_client_type = client_type
-                logging.info(f'{client_type.capitalize()} client disconnected - SID: {sid}')
-                break
-        if disconnected_client_type:
-            break
+                logging.info(f'Client disconnected - Type: {client_type}, SID: {sid}')
+                return
     
-    # If we get here and no client was found, log it
-    if not disconnected_client_type:
-        logging.info(f'Unknown client disconnected - SID: {sid}')
-    
-    # Broadcast updated connection count
-    total_connections = sum(len(clients) for clients in connected_clients.values())
-    socketio.emit('client_count_update', {
-        'chrome': len(connected_clients['chrome']),
-        'premiere': len(connected_clients['premiere']),
-        'unknown': len(connected_clients['unknown']),
-        'total': total_connections
-    }, broadcast=True)
+    # If we get here, the client wasn't found in our tracking
+    logging.info(f'Unknown client disconnected - SID: {sid}')
 
 @socketio.on('connection_check')
 def handle_connection_check(data):
     """Handle connection check requests from clients"""
     try:
-        client_type = request.args.get('client_type', 'unknown')
-        sid = request.sid
-        
-        # Respond with detailed status
-        status_data = {
-            'status': 'ok',
-            'server_time': time.time(),
-            'client_type': client_type,
-            'sid': sid,
-            'connected_clients': {
-                'chrome': len(connected_clients['chrome']),
-                'premiere': len(connected_clients['premiere']),
-                'unknown': len(connected_clients['unknown'])
-            }
-        }
-        
-        socketio.emit('connection_status', status_data, room=sid)
-        
+        # This simply responds with a status "ok" message
+        # No need to log every connection check
+        emit_to_client_type('connection_status', {'status': 'ok'}, request.args.get('client_type'))
     except Exception as e:
         app_logger.error(f'Error in handle_connection_check: {str(e)}')
 
 def emit_to_client_type(event, data, client_type=None):
     """Emit event to specific client type or all if client_type is None"""
-    emitted_count = 0
-    
     if client_type:
         # Only emit to clients of the specified type
-        clients = connected_clients.get(client_type, {})
-        for client_key, sid in clients.items():
+        for sid in connected_clients[client_type].values():
             try:
                 socketio.emit(event, data, room=sid)
-                emitted_count += 1
+                # Reduced to debug level to minimize logs
+                if event != 'connection_status': # Don't log frequent connection status updates
+                    app_logger.debug(f'Emitting {event} to {client_type} client')
             except Exception as e:
-                app_logger.error(f'Error emitting {event} to {client_type} client {client_key}: {str(e)}')
-        
-        if emitted_count > 0:
-            app_logger.info(f'Emitted {event} to {emitted_count} {client_type} client(s)')
-        else:
-            app_logger.warning(f'No {client_type} clients available to receive {event}')
-            
+                app_logger.error(f'Error emitting to client: {str(e)}')
     else:
-        # Emit to all clients
-        try:
-            socketio.emit(event, data, broadcast=True)
-            total_clients = sum(len(clients) for clients in connected_clients.values())
-            app_logger.info(f'Broadcasted {event} to all {total_clients} clients')
-        except Exception as e:
-            app_logger.error(f'Error broadcasting {event}: {str(e)}')
+        # For backwards compatibility, emit to all if no type specified
+        socketio.emit(event, data)
+        app_logger.debug(f'Broadcasting {event}')
+
+@socketio.on('progress')
 
 @socketio.on('import_video')
 def handle_import_video(data):
@@ -618,147 +492,28 @@ def run_server():
     logging.info('Settings loaded: %s', settings_for_logging)
     register_routes(app, socketio, settings)
 
-    # Try different binding strategies based on platform
-    bind_hosts = ['localhost', '127.0.0.1']
-    if sys.platform != 'win32':
-        bind_hosts.append('0.0.0.0')  # Only use 0.0.0.0 on non-Windows systems
-    
-    server_started = False
-    bind_host = 'localhost'  # Default
-    
-    # Try to start server with different host bindings
-    for host in bind_hosts:
-        try:
-            bind_host = host
-            logging.info(f'Trying to start server on {bind_host} port 3001')
-            
-            # Test if port is available
-            import socket
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(1)
-            result = sock.connect_ex((host if host != '0.0.0.0' else 'localhost', 3001))
-            sock.close()
-            
-            if result == 0:
-                logging.warning(f"Port 3001 already in use on {host}")
-                continue
-            
-            # Start server in thread
-            server_thread = threading.Thread(target=lambda: socketio.run(
-                app, 
-                host=bind_host,
-                port=3001,
-                debug=False,
-                use_reloader=False,
-                log_output=False  # Reduce log output for cleaner console
-            ))
-            server_thread.daemon = True  # Make sure thread dies with main process
-            server_thread.start()
-            
-            # Wait for server to start
-            time.sleep(3)
-            
-            # Test connection to verify server started
-            try:
-                import requests
-                test_url = f'http://localhost:3001/health'
-                response = requests.get(test_url, timeout=2)
-                if response.status_code == 200:
-                    logging.info(f"Server successfully started on {bind_host}:3001")
-                    server_started = True
-                    break
-            except Exception as e:
-                logging.warning(f"Failed to verify server on {bind_host}: {e}")
-                continue
-                
-        except Exception as e:
-            logging.warning(f"Failed to start server on {bind_host}: {e}")
-            continue
-    
-    if not server_started:
-        logging.error("Failed to start server on any available host")
-        # Try one last time with emergency settings
-        try:
-            logging.info("Attempting emergency server start with minimal settings...")
-            server_thread = threading.Thread(target=lambda: app.run(
-                host='localhost',
-                port=3001,
-                debug=False,
-                use_reloader=False,
-                threaded=True
-            ))
-            server_thread.daemon = True
-            server_thread.start()
-            time.sleep(2)
-        except Exception as e:
-            logging.critical(f"Emergency server start also failed: {e}")
-            return
-    
-    # Comprehensive server health check
-    max_retries = 15
-    health_check_passed = False
-    
-    for i in range(max_retries):
-        try:
-            import requests
-            
-            # Test HTTP health endpoint
-            response = requests.get('http://localhost:3001/health', timeout=2)
-            if response.status_code == 200:
-                logging.info("HTTP health check passed")
-                
-                # Test if we can get server IP (this tests more routes)
-                try:
-                    ip_response = requests.get('http://localhost:3001/get-ip', timeout=2)
-                    if ip_response.status_code == 200:
-                        logging.info("Extended health check passed - all routes working")
-                        health_check_passed = True
-                        break
-                    else:
-                        logging.warning(f"Extended health check failed: HTTP {ip_response.status_code}")
-                except Exception as e:
-                    logging.warning(f"Extended health check failed: {e}")
-                    # Basic health passed, so continue anyway
-                    health_check_passed = True
-                    break
-            else:
-                logging.warning(f"Health check failed with HTTP {response.status_code}")
-                
-        except requests.exceptions.ConnectionError:
-            if i < max_retries - 1:
-                logging.info(f"Server not ready yet, retrying in 1 second... ({i+1}/{max_retries})")
-                time.sleep(1)
-            else:
-                logging.error("Server health check failed - connection refused")
-        except Exception as e:
-            if i < max_retries - 1:
-                logging.info(f"Health check attempt {i+1} failed: {e}, retrying...")
-                time.sleep(1)
-            else:
-                logging.error(f"Server health check failed after {max_retries} attempts: {e}")
-    
-    if health_check_passed:
-        logging.info("Server health check passed - server is ready")
-    else:
-        logging.warning("Server health check failed, but continuing anyway")
-        # On Windows, provide additional troubleshooting info
-        if sys.platform == 'win32':
-            logging.warning("If connection issues persist on Windows:")
-            logging.warning("1. Check Windows Defender Firewall settings")
-            logging.warning("2. Check if antivirus software is blocking the connection")
-            logging.warning("3. Try running as administrator")
-            logging.warning("4. Check if port 3001 is blocked by other software")
-            logging.warning("5. Try restarting the application")
-    
-    # Start monitoring thread
-    premiere_monitor_thread = threading.Thread(target=monitor_premiere_and_shutdown_wrapper)
-    premiere_monitor_thread.daemon = True
-    premiere_monitor_thread.start()
-    
-    # Start automatic update checker
-    start_update_checker()
+    # Start server without exposing IP addresses
+    logging.info(f'Starting server on all interfaces on port 3001')
 
-    # Keep main thread alive
+    server_thread = threading.Thread(target=lambda: socketio.run(
+        app, 
+        host='0.0.0.0',  # Bind to all available interfaces
+        port=3001,
+        debug=False,
+        use_reloader=False
+    ))
+    server_thread.start()
+    
+    # Browser opening disabled - not needed for CEP extension
+    # if sys.platform == 'darwin' and getattr(sys, 'frozen', False):
+    #     try:
+    #         open_url_in_browser(f'http://localhost:3001/health')
+    #     except:
+    #         pass
+
+    premiere_monitor_thread = threading.Thread(target=monitor_premiere_and_shutdown_wrapper)
+    premiere_monitor_thread.start()
+
     while not should_shutdown:
         time.sleep(1)
 
@@ -846,196 +601,60 @@ def progress_hook(d, socketio):
 
 def setup_environment():
     """Set up the application environment"""
-    try:
-        # Initialize all requirements
-        config = init()
+    # Initialize all requirements
+    config = init()
+    
+    # Set environment variables
+    if config['ffmpeg_path']:
+        # Set both the directory and the full path for maximum compatibility
+        os.environ['FFMPEG_PATH'] = config['ffmpeg_path']
         
-        # Set environment variables
-        if config['ffmpeg_path']:
-            # Set both the directory and the full path for maximum compatibility
-            os.environ['FFMPEG_PATH'] = config['ffmpeg_path']
+        # Add the directory containing ffmpeg to PATH
+        ffmpeg_dir = os.path.dirname(config['ffmpeg_path'])
+        if ffmpeg_dir:
+            os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
+            logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
             
-            # Add the directory containing ffmpeg to PATH
-            ffmpeg_dir = os.path.dirname(config['ffmpeg_path'])
-            if ffmpeg_dir:
-                os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
-                logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
-                
-            # On Windows, create symbolic links to ffmpeg in system temp directory for better accessibility
-            if sys.platform == 'win32':
-                try:
-                    temp_dir = get_temp_dir()
-                    temp_ffmpeg_path = os.path.join(temp_dir, 'ffmpeg.exe')
-                    if not os.path.exists(temp_ffmpeg_path) and os.path.exists(config['ffmpeg_path']):
-                        # Copy ffmpeg to temp directory as symbolink links might not work well in all Windows contexts
-                        import shutil
-                        shutil.copy2(config['ffmpeg_path'], temp_ffmpeg_path)
-                        logging.info(f"Created ffmpeg copy in temp directory: {temp_ffmpeg_path}")
-                        
-                        # Add temp directory to PATH as well
-                        os.environ["PATH"] = temp_dir + os.pathsep + os.environ["PATH"]
-                except Exception as e:
-                    logging.warning(f"Failed to create ffmpeg copy in temp directory: {str(e)}")
-        
-        # Clear temporary files from previous runs
-        try:
-            temp_dir = get_temp_dir()
-            clear_temp_files(temp_dir)
-            
-            # Create necessary directories
-            os.makedirs(temp_dir, exist_ok=True)
-            logging.info(f"Temp directory ready: {temp_dir}")
-        except Exception as e:
-            logging.warning(f"Failed to set up temp directory: {str(e)}")
-        
-        # Run Windows networking diagnostics if on Windows
+        # On Windows, create symbolic links to ffmpeg in system temp directory for better accessibility
         if sys.platform == 'win32':
-            diagnose_windows_networking()
-            
-            # Try to create firewall rule (this may fail if not running as admin)
             try:
-                create_windows_firewall_rule()
+                temp_dir = get_temp_dir()
+                temp_ffmpeg_path = os.path.join(temp_dir, 'ffmpeg.exe')
+                if not os.path.exists(temp_ffmpeg_path) and os.path.exists(config['ffmpeg_path']):
+                    # Copy ffmpeg to temp directory as symbolink links might not work well in all Windows contexts
+                    import shutil
+                    shutil.copy2(config['ffmpeg_path'], temp_ffmpeg_path)
+                    logging.info(f"Created ffmpeg copy in temp directory: {temp_ffmpeg_path}")
+                    
+                    # Add temp directory to PATH as well
+                    os.environ["PATH"] = temp_dir + os.pathsep + os.environ["PATH"]
             except Exception as e:
-                logging.info(f"Could not create firewall rule (may need admin rights): {e}")
-        
-        # Log environment info
-        logging.info(f"Environment PATH: {os.environ.get('PATH')}")
-        logging.info(f"Environment FFMPEG_PATH: {os.environ.get('FFMPEG_PATH')}")
-        
-        return config
-        
-    except Exception as e:
-        logging.error(f"Error in setup_environment: {str(e)}")
-        logging.warning("Continuing with default environment settings")
-        # Return a minimal config that allows the server to start
-        return {
-            'ffmpeg_path': None,
-            'temp_dir': None
-        }
-
-def check_server_already_running():
-    """Check if server is already running on port 3001"""
-    try:
-        import socket
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(1)
-        result = sock.connect_ex(('localhost', 3001))
-        sock.close()
-        
-        if result == 0:
-            logging.info("Found existing server running on port 3001")
-            return True
-        return False
-    except Exception as e:
-        logging.warning(f"Error checking if server is running: {e}")
-        return False
-
-def check_and_broadcast_updates():
-    """Check for updates periodically and broadcast to all connected clients"""
-    def version_tuple(v):
-        return tuple(map(int, (v.split("."))))
+                logging.warning(f"Failed to create ffmpeg copy in temp directory: {str(e)}")
     
-    current_version = '3.0.127'
-    last_check_time = 0
-    last_notified_version = None
+    # Clear temporary files from previous runs
+    temp_dir = get_temp_dir()
+    clear_temp_files(temp_dir)
     
-    while True:
-        try:
-            current_time = time.time()
-            # Check every 6 hours (21600 seconds)
-            if current_time - last_check_time >= 21600:
-                logging.info("Performing automatic update check...")
-                
-                github_api_url = 'https://api.github.com/repos/Selgy/YoutubetoPremiere-V2/releases/latest'
-                response = requests.get(github_api_url, timeout=10)
-                
-                if response.status_code == 200:
-                    release_data = response.json()
-                    latest_version = release_data.get('tag_name', '').lstrip('v')
-                    
-                    try:
-                        is_newer = version_tuple(latest_version) > version_tuple(current_version)
-                    except:
-                        is_newer = latest_version != current_version
-                    
-                    if is_newer and latest_version != last_notified_version:
-                        # New update available, broadcast to all clients
-                        logging.info(f"Broadcasting update notification: v{current_version} -> v{latest_version}")
-                        
-                        # Get download URLs
-                        system = platform.system().lower()
-                        machine = platform.machine().lower()
-                        
-                        download_urls = {}
-                        assets = release_data.get('assets', [])
-                        
-                        for asset in assets:
-                            asset_name = asset.get('name', '')
-                            browser_download_url = asset.get('browser_download_url', '')
-                            
-                            if 'Windows' in asset_name and asset_name.endswith('.exe'):
-                                download_urls['windows'] = browser_download_url
-                            elif 'macOS' in asset_name and asset_name.endswith('.pkg'):
-                                download_urls['mac_arm64'] = browser_download_url
-                                download_urls['mac_intel'] = browser_download_url
-                        
-                        # Determine current OS
-                        if system == 'darwin':
-                            if 'arm' in machine or 'aarch64' in machine:
-                                os_type = 'mac_arm64'
-                            else:
-                                os_type = 'mac_intel'
-                        elif system == 'windows':
-                            os_type = 'windows'
-                        else:
-                            os_type = 'unknown'
-                        
-                        download_url = download_urls.get(os_type)
-                        
-                        # Broadcast to all connected clients
-                        socketio.emit('update_available', {
-                            'current_version': current_version,
-                            'latest_version': latest_version,
-                            'download_url': download_url,
-                            'release_notes': release_data.get('body', ''),
-                            'has_update': True,
-                            'auto_check': True
-                        })
-                        
-                        last_notified_version = latest_version
-                        logging.info(f"Update notification sent to all clients: v{latest_version}")
-                    
-                    else:
-                        logging.info(f"No new updates available (current: v{current_version}, latest: v{latest_version})")
-                
-                last_check_time = current_time
-                
-        except Exception as e:
-            logging.error(f"Error in automatic update check: {e}")
-        
-        # Sleep for 1 hour before checking again
-        time.sleep(3600)
-
-def start_update_checker():
-    """Start the automatic update checker in a daemon thread"""
-    update_thread = threading.Thread(target=check_and_broadcast_updates, daemon=True)
-    update_thread.start()
-    logging.info("Automatic update checker started")
+    # Create necessary directories
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    # Log environment info
+    logging.info(f"Environment PATH: {os.environ.get('PATH')}")
+    logging.info(f"Environment FFMPEG_PATH: {os.environ.get('FFMPEG_PATH')}")
+    
+    return config
 
 def main():
-    """Main function"""
+    """Main entry point"""
     try:
-        # Check if another server is already running
-        if check_server_already_running():
-            logging.info("Server already running on port 3001. Exiting.")
-            sys.exit(0)
-        
-        setup_environment()
+        # Start the server
         run_server()
     except KeyboardInterrupt:
-        logging.info("Received shutdown signal")
+        logging.info("Server stopped by user")
+        print("\nServer stopped by user")
     except Exception as e:
-        logging.error(f"Fatal error in main: {e}")
+        logging.error(f"Error starting server: {str(e)}")
+        print(f"Error starting server: {str(e)}")
         sys.exit(1)
 
 # Main entry point

@@ -12,125 +12,14 @@ let isProcessing = false;
 // Function to check if server is already running
 async function isServerRunning() {
     try {
-        // Test both HTTP health and check for existing processes
-        const [httpHealth, processCheck] = await Promise.all([
-            checkHttpHealth(),
-            checkExistingProcesses()
-        ]);
-        
-        return httpHealth || processCheck;
-    } catch (error) {
-        return false;
-    }
-}
-
-async function checkHttpHealth() {
-    try {
         const response = await fetch('http://localhost:3001/health', {
             method: 'GET',
-            timeout: 3000 // Increased timeout
+            timeout: 1000
         });
         return response.ok;
     } catch (error) {
         return false;
     }
-}
-
-async function checkExistingProcesses() {
-    if (process.platform !== 'win32') {
-        return false; // Only implement for Windows for now
-    }
-    
-    try {
-        const { exec } = window.cep_node.require('child_process');
-        
-        return new Promise((resolve) => {
-            // Check for existing YoutubetoPremiere processes
-            exec('tasklist /FI "IMAGENAME eq YoutubetoPremiere.exe" /FO CSV', (error, stdout, stderr) => {
-                if (error) {
-                    resolve(false);
-                    return;
-                }
-                
-                // Parse CSV output to count processes
-                const lines = stdout.split('\n').filter(line => line.includes('YoutubetoPremiere.exe'));
-                const processCount = lines.length;
-                
-                console.log(`Found ${processCount} existing YoutubetoPremiere processes`);
-                
-                // If we have more than 2 processes, there's likely a problem
-                if (processCount >= 3) {
-                    console.warn(`Too many processes detected (${processCount}). Waiting for cleanup...`);
-                    resolve(true); // Prevent launching more
-                } else if (processCount >= 1) {
-                    // Check if any of these processes are actually serving on port 3001
-                    checkPortUsage(3001).then(portInUse => {
-                        resolve(portInUse);
-                    }).catch(() => resolve(false));
-                } else {
-                    resolve(false);
-                }
-            });
-        });
-    } catch (error) {
-        console.error('Error checking existing processes:', error);
-        return false;
-    }
-}
-
-async function checkPortUsage(port) {
-    try {
-        const { exec } = window.cep_node.require('child_process');
-        
-        return new Promise((resolve) => {
-            exec(`netstat -an | findstr :${port}`, (error, stdout, stderr) => {
-                if (error) {
-                    resolve(false);
-                    return;
-                }
-                
-                // Check if port is in LISTENING state
-                const isListening = stdout.includes('LISTENING') && stdout.includes(`:${port} `);
-                console.log(`Port ${port} is ${isListening ? 'in use' : 'free'}`);
-                resolve(isListening);
-            });
-        });
-    } catch (error) {
-        return false;
-    }
-}
-
-async function countExistingProcesses() {
-    if (process.platform !== 'win32') {
-        return 0;
-    }
-    
-    try {
-        const { exec } = window.cep_node.require('child_process');
-        
-        return new Promise((resolve) => {
-            exec('tasklist /FI "IMAGENAME eq YoutubetoPremiere.exe" /FO CSV', (error, stdout, stderr) => {
-                if (error) {
-                    resolve(0);
-                    return;
-                }
-                
-                const lines = stdout.split('\n').filter(line => line.includes('YoutubetoPremiere.exe'));
-                resolve(lines.length);
-            });
-        });
-    } catch (error) {
-        return 0;
-    }
-}
-
-async function waitForProcessCleanup() {
-    const processCount = await countExistingProcesses();
-    if (processCount > 2) {
-        console.log(`Found ${processCount} processes - waiting for automatic cleanup...`);
-        return processCount;
-    }
-    return 0;
 }
 
 // Wait for CEP to be ready
@@ -387,47 +276,26 @@ async function setupScriptWatcher() {
 }
 
 async function startPythonServer() {
-    console.log('Background script loaded. Starting Python server...');
-    
-    // First, check if server is already running
-    const serverAlreadyRunning = await isServerRunning();
-    if (serverAlreadyRunning) {
-        console.log('Server is already running. Skipping process launch.');
-        
-        // Wait a bit more to see if SocketIO can connect
-        setTimeout(async () => {
-            const stillRunning = await checkHttpHealth();
-            if (stillRunning) {
-                console.log('Server confirmed to be running and healthy.');
-            }
-        }, 2000);
-        
+    console.log("Starting Python server...");
+    try {
+        // Check if server is already running
+        const serverRunning = await isServerRunning();
+        if (serverRunning) {
+            console.log("Server is already running, skipping server start");
+            // Still initialize the rest of the extension
+            const [nodeModules, cs] = await Promise.all([
+                initializeNodeModules(),
+                initializeCSInterface()
+            ]);
+            
+            csInterface = cs;
+            await initializeWithRetry(nodeModules);
+            await setupScriptWatcher();
+            setupVideoImportHandler(csInterface);
             return;
         }
 
-    // If on Windows, wait for any existing processes to clean up
-    if (process.platform === 'win32') {
-        const processCount = await waitForProcessCleanup();
-        if (processCount > 0) {
-            console.log(`Waiting for ${processCount} existing processes to clean up before starting new server...`);
-            // Wait up to 10 seconds for cleanup
-            for (let i = 0; i < 20; i++) {
-                await new Promise(resolve => setTimeout(resolve, 500));
-                const currentCount = await countExistingProcesses();
-                if (currentCount === 0) {
-                    console.log('Process cleanup completed. Safe to start new server.');
-                    break;
-                }
-                if (i === 19) {
-                    console.warn('Process cleanup timeout. Starting server anyway.');
-                }
-            }
-        }
-    }
-    
-    console.log('Starting Python server...');
-    
-    try {
+        // Wait for both Node.js modules and CSInterface to be available
         const [nodeModules, cs] = await Promise.all([
             initializeNodeModules(),
             initializeCSInterface()
@@ -526,17 +394,15 @@ async function startPythonServer() {
 
         console.log(`Starting Python server from: ${PythonExecutablePath}`);
         try {
-            // Environment variables for Python server
+            // For macOS, create a more robust environment
             const serverEnv = { 
                 ...process.env, 
                 Python_BACKTRACE: '1', 
                 EXTENSION_ROOT: extensionRoot,
                 PYTHONIOENCODING: 'utf-8',
                 PYTHONUNBUFFERED: '1',
-                // Set appropriate PATH based on platform
-                PATH: process.platform === 'win32' 
-                    ? process.env.PATH || process.env.Path || 'C:\\Windows\\system32;C:\\Windows;C:\\Windows\\System32\\Wbem'
-                    : process.env.PATH || '/usr/local/bin:/usr/bin:/bin'
+                // Ensure PATH is always available
+                PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin'
             };
             
             if (process.platform === 'darwin') {
@@ -769,96 +635,3 @@ function handleProcessPermissionError(error, execPath, exec, path, extensionRoot
 // Start the Python server when the extension loads
 console.log("Background script loaded. Starting Python server...");
 startPythonServer();
-
-// Process management functions for user-triggered cleanup
-async function getProcessDiagnostics() {
-    try {
-        const response = await fetch('http://localhost:3001/process-diagnostics');
-        const result = await response.json();
-        console.log('Process diagnostics:', result);
-        return result;
-    } catch (error) {
-        console.error('Error getting process diagnostics:', error);
-        return { success: false, error: error.message };
-    }
-}
-
-async function cleanupProcesses(force = false) {
-    try {
-        const response = await fetch('http://localhost:3001/cleanup-processes', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ force })
-        });
-        const result = await response.json();
-        console.log('Process cleanup result:', result);
-        return result;
-    } catch (error) {
-        console.error('Error cleaning up processes:', error);
-        return { success: false, error: error.message };
-    }
-}
-
-async function getProcessCount() {
-    try {
-        const response = await fetch('http://localhost:3001/count-processes');
-        const result = await response.json();
-        console.log('Process count:', result);
-        return result;
-    } catch (error) {
-        console.error('Error getting process count:', error);
-        return { success: false, error: error.message };
-    }
-}
-
-// Expose process management functions globally for debugging/manual use
-window.processManagement = {
-    getDiagnostics: getProcessDiagnostics,
-    cleanup: cleanupProcesses,
-    getCount: getProcessCount
-};
-
-// Console helper functions for manual cleanup if needed
-window.debugHelpers = {
-    async cleanupAll() {
-        console.log('🧹 Starting manual process cleanup...');
-        const diagnostics = await getProcessDiagnostics();
-        console.log('📊 Current diagnostics:', diagnostics);
-        
-        if (diagnostics.success && diagnostics.diagnostics.process_count > 1) {
-            console.log(`⚠️ Found ${diagnostics.diagnostics.process_count} processes. Cleaning up...`);
-            const cleanup = await cleanupProcesses(false); // Try graceful first
-            console.log('🔧 Cleanup result:', cleanup);
-            
-            if (!cleanup.success || cleanup.remaining > 0) {
-                console.log('💥 Graceful cleanup failed or processes remain. Forcing cleanup...');
-                const forceCleanup = await cleanupProcesses(true);
-                console.log('⚡ Force cleanup result:', forceCleanup);
-            }
-        } else {
-            console.log('✅ Process count looks normal');
-        }
-    },
-    
-    async status() {
-        console.log('📈 Getting current status...');
-        const [diagnostics, count] = await Promise.all([
-            getProcessDiagnostics(),
-            getProcessCount()
-        ]);
-        
-        console.log('📊 Diagnostics:', diagnostics);
-        console.log('🔢 Count:', count);
-        
-        return { diagnostics, count };
-    }
-};
-
-console.log('🔧 Process management functions available:');
-console.log('  window.processManagement.getDiagnostics() - Get process diagnostics');
-console.log('  window.processManagement.cleanup(force) - Clean up processes');
-console.log('  window.processManagement.getCount() - Get process count');
-console.log('  window.debugHelpers.cleanupAll() - Manual cleanup helper');
-console.log('  window.debugHelpers.status() - Get full status report');

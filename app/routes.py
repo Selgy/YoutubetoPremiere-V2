@@ -11,15 +11,10 @@ import platform
 import re
 import tempfile
 import subprocess
-import time
-import threading
 
 def register_routes(app, socketio, settings):
     connected_clients = set()
     current_download = {'process': None, 'ydl': None, 'cancel_callback': None}
-    
-    # Store pending import triggers for HTTP fallback polling
-    pending_import_triggers = []
     
     def validate_youtube_url(url):
         """Validate that the URL is from a YouTube domain"""
@@ -71,17 +66,14 @@ def register_routes(app, socketio, settings):
 
     @app.route('/get-version', methods=['GET'])
     def get_version():
-        return jsonify(version='3.0.3')
+        return jsonify(version='3.0.1')
 
     @app.route('/check-updates', methods=['GET'])
     def check_updates():
         """Check for available updates from GitHub releases"""
         try:
             # Current version
-            current_version = '3.0.3'
-            
-            # Get client type from query parameter
-            client_type = request.args.get('client_type', 'unknown')
+            current_version = '3.0.1'
             
             # Detect OS
             system = platform.system().lower()
@@ -121,43 +113,21 @@ def register_routes(app, socketio, settings):
                     except:
                         is_newer = latest_version != current_version
                     
-                    # Extract actual download URLs from GitHub release assets
+                    # Generate download URLs based on OS
                     download_urls = {}
-                    assets = release_data.get('assets', [])
+                    base_url = f"https://github.com/Selgy/YoutubetoPremiere-V2/releases/download/v{latest_version}"
                     
-                    for asset in assets:
-                        asset_name = asset.get('name', '')
-                        browser_download_url = asset.get('browser_download_url', '')
-                        
-                        if 'Windows' in asset_name and asset_name.endswith('.exe'):
-                            download_urls['windows'] = browser_download_url
-                        elif 'macOS' in asset_name and asset_name.endswith('.pkg'):
-                            # For now, use the same file for both Intel and ARM Macs
-                            download_urls['mac_arm64'] = browser_download_url
-                            download_urls['mac_intel'] = browser_download_url
+                    download_urls['windows'] = f"{base_url}/YoutubetoPremiere_Win_{latest_version}.exe"
+                    download_urls['mac_arm64'] = f"{base_url}/YoutubetoPremiere_Mac_arm64_{latest_version}.pkg"
+                    download_urls['mac_intel'] = f"{base_url}/YoutubetoPremiere_Mac_intel_{latest_version}.pkg"
                     
                     # Get the appropriate download URL for current OS
                     download_url = download_urls.get(os_type)
-                    
-                    # Fallback: if no assets found, construct URLs from expected naming pattern
-                    if not download_urls:
-                        base_url = f"https://github.com/Selgy/YoutubetoPremiere-V2/releases/download/v{latest_version}"
-                        download_urls['windows'] = f"{base_url}/YouTubetoPremiere-Windows.exe"
-                        download_urls['mac_arm64'] = f"{base_url}/YouTubetoPremiere-macOS.pkg"
-                        download_urls['mac_intel'] = f"{base_url}/YouTubetoPremiere-macOS.pkg"
-                        download_url = download_urls.get(os_type)
-                    
-                    # Log the update check for this client type
-                    if is_newer:
-                        logging.info(f"Update available for {client_type}: v{current_version} -> v{latest_version}")
-                    else:
-                        logging.info(f"No update needed for {client_type}: v{current_version} is current")
                     
                     return jsonify({
                         'current_version': current_version,
                         'latest_version': latest_version,
                         'has_update': is_newer,
-                        'client_type': client_type,
                         'os_type': os_type,
                         'download_url': download_url,
                         'all_download_urls': download_urls,
@@ -171,7 +141,6 @@ def register_routes(app, socketio, settings):
                         'current_version': current_version,
                         'latest_version': current_version,
                         'has_update': False,
-                        'client_type': client_type,
                         'os_type': os_type,
                         'success': True,
                         'message': 'Repository not found. You have the latest available version.'
@@ -179,7 +148,6 @@ def register_routes(app, socketio, settings):
                 else:
                     return jsonify({
                         'current_version': current_version,
-                        'client_type': client_type,
                         'success': False,
                         'error': f'GitHub API returned status {response.status_code}'
                     })
@@ -190,7 +158,6 @@ def register_routes(app, socketio, settings):
                     'current_version': current_version,
                     'latest_version': current_version,
                     'has_update': False,
-                    'client_type': client_type,
                     'os_type': os_type,
                     'success': True,
                     'message': 'Unable to check for updates. You may be offline or GitHub is unavailable.'
@@ -200,7 +167,6 @@ def register_routes(app, socketio, settings):
             logging.error(f"Error checking updates: {e}")
             return jsonify({
                 'current_version': current_version,
-                'client_type': client_type,
                 'success': False,
                 'error': str(e)
             }), 500
@@ -279,79 +245,52 @@ def register_routes(app, socketio, settings):
             # Check for clip parameters regardless of passed download_type
             current_time = data.get('currentTime')
             
-            # Start the download asynchronously to avoid HTTP timeout
-            def async_download():
-                try:
-                    # Copy download_type to local scope
-                    local_download_type = download_type
-                    
-                    # If currentTime is provided, treat as clip download
-                    if current_time is not None:
-                        # Ensure download_type is set to 'clip'
-                        local_download_type = 'clip'
-                        logging.info(f"Handling as clip download for time: {current_time}")
-                        
-                        # Convert to float and use settings for before/after times
-                        current_time_float = float(current_time)
-                        seconds_before = float(current_settings.get('secondsBefore', 15))
-                        seconds_after = float(current_settings.get('secondsAfter', 15))
-                        
-                        # Calculate clip start and end times
-                        clip_start = max(0, current_time_float - seconds_before)
-                        clip_end = current_time_float + seconds_after
-                        
-                        logging.info(f"Clip parameters: start={clip_start}, end={clip_end}, duration={clip_end-clip_start}")
-                        
-                        # Process the video with clip parameters
-                        result = handle_video_url(
-                            video_url=video_url, 
-                            download_type='clip',  # Explicit clip type
-                            current_download=current_download, 
-                            socketio=socketio,
-                            clip_start=clip_start,
-                            clip_end=clip_end,
-                            settings=current_settings,
-                            cookies=cookies,
-                            user_agent=user_agent
-                        )
-                    else:
-                        # No clip parameters, process as regular download
-                        logging.info(f"Handling as regular {local_download_type} download")
-                        result = handle_video_url(
-                            video_url=video_url, 
-                            download_type=local_download_type, 
-                            current_download=current_download, 
-                            socketio=socketio,
-                            settings=current_settings,
-                            cookies=cookies,
-                            user_agent=user_agent
-                        )
-                    
-                    if 'error' in result:
-                        logging.error(f"Download failed: {result['error']}")
-                        socketio.emit('download-failed', {'error': result['error']})
-                    else:
-                        logging.info(f"Download completed successfully: {result}")
-                        socketio.emit('download-complete', {'result': result})
-                        
-                except Exception as e:
-                    error_message = f"Error in async download: {str(e)}"
-                    logging.error(error_message)
-                    socketio.emit('download-failed', {'error': error_message})
+            # If currentTime is provided, treat as clip download
+            if current_time is not None:
+                # Ensure download_type is set to 'clip'
+                download_type = 'clip'
+                logging.info(f"Handling as clip download for time: {current_time}")
+                
+                # Convert to float and use settings for before/after times
+                current_time = float(current_time)
+                seconds_before = float(current_settings.get('secondsBefore', 15))
+                seconds_after = float(current_settings.get('secondsAfter', 15))
+                
+                # Calculate clip start and end times
+                clip_start = max(0, current_time - seconds_before)
+                clip_end = current_time + seconds_after
+                
+                logging.info(f"Clip parameters: start={clip_start}, end={clip_end}, duration={clip_end-clip_start}")
+                
+                # Process the video with clip parameters
+                result = handle_video_url(
+                    video_url=video_url, 
+                    download_type='clip',  # Explicit clip type
+                    current_download=current_download, 
+                    socketio=socketio,
+                    clip_start=clip_start,
+                    clip_end=clip_end,
+                    settings=current_settings,
+                    cookies=cookies,
+                    user_agent=user_agent
+                )
+            else:
+                # No clip parameters, process as regular video
+                logging.info(f"Handling as regular {download_type} download")
+                result = handle_video_url(
+                    video_url=video_url, 
+                    download_type=download_type, 
+                    current_download=current_download, 
+                    socketio=socketio,
+                    settings=current_settings,
+                    cookies=cookies,
+                    user_agent=user_agent
+                )
             
-            # Start the download in a separate thread
-            download_thread = threading.Thread(target=async_download)
-            download_thread.daemon = True
-            download_thread.start()
-            
-            # Return immediately to avoid HTTP timeout
-            return jsonify({
-                'success': True, 
-                'message': 'Download started',
-                'url': video_url,
-                'type': download_type
-            }), 200
-            
+            if 'error' in result:
+                return jsonify({'error': result['error']}), 400
+                
+            return jsonify({'success': True}), 200
         except Exception as e:
             error_message = f"Error handling video URL: {str(e)}"
             logging.error(error_message)
@@ -493,46 +432,31 @@ def register_routes(app, socketio, settings):
     @app.route('/get-ip', methods=['GET'])
     def get_ip():
         try:
-            # Always prioritize localhost for local development and CEP extensions
-            preferred_ips = ['localhost', '127.0.0.1']
-            external_ips = []
-            
             # Try to get all possible IP addresses
             hostname = socket.gethostname()
+            possible_ips = []
             
             # Get all network interfaces
-            try:
-                for interface in socket.getaddrinfo(hostname, None):
-                    ip = interface[4][0]
-                    # Only include IPv4 addresses
-                    if '.' in ip and ip not in preferred_ips:
-                        external_ips.append(ip)
-            except Exception as e:
-                logging.warning(f"Could not enumerate network interfaces: {e}")
+            for interface in socket.getaddrinfo(hostname, None):
+                ip = interface[4][0]
+                # Only include IPv4 addresses that aren't localhost
+                if '.' in ip and ip != '127.0.0.1':
+                    possible_ips.append(ip)
             
-            # Build complete IP list: prioritize localhost, then external IPs
-            all_ips = preferred_ips + external_ips
+            # If we found any valid IPs, return the first one
+            if possible_ips:
+                # Don't log actual IP addresses for privacy
+                logging.info(f'Found {len(possible_ips)} IP address(es)')
+                return jsonify({'ip': possible_ips[0]})
             
-            # For CEP extensions, always return localhost as the primary IP
-            # since the Chrome extension and Python server run on the same machine
-            primary_ip = 'localhost'
-            
-            logging.info(f'Returning localhost as primary IP for CEP compatibility')
-            logging.info(f'Available IPs: {all_ips}')
-            
-            return jsonify({
-                'ip': primary_ip,
-                'ips': all_ips,
-                'hostname': hostname
-            })
+            # Fallback to the basic method
+            local_ip = socket.gethostbyname(hostname)
+            logging.info(f'Using fallback IP method')
+            return jsonify({'ip': local_ip})
             
         except Exception as e:
             logging.error(f'Error getting IP address: {e}')
-            return jsonify({
-                'ip': 'localhost', 
-                'ips': ['localhost', '127.0.0.1'],
-                'error': str(e)
-            })
+            return jsonify({'ip': 'localhost', 'error': str(e)})
 
     @app.route('/get-audio-languages', methods=['POST'])
     def get_audio_languages():
@@ -554,8 +478,6 @@ def register_routes(app, socketio, settings):
         except Exception as e:
             logging.error(f"Error getting audio languages: {e}")
             return jsonify({'error': str(e)}), 500
-
-    # HTTP fallback routes removed - using WebSocket only communication
 
     # Process the request to get a download folder
     @socketio.on('project_path_response')
@@ -824,223 +746,6 @@ def register_routes(app, socketio, settings):
                 'status': 'error',
                 'error': error_msg
             }), 500
-
-    @app.route('/network-test', methods=['GET'])
-    def network_test():
-        """Test network configuration and provide diagnostics"""
-        import time
-        import socket
-        from utils import diagnose_windows_networking
-        
-        try:
-            start_time = time.time()
-            diagnostics = {
-                'timestamp': start_time,
-                'tests': []
-            }
-            
-            # Test 1: Local socket binding
-            try:
-                test_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                test_socket.bind(('localhost', 0))  # Bind to any available port
-                test_port = test_socket.getsockname()[1]
-                test_socket.close()
-                
-                diagnostics['tests'].append({
-                    'name': 'Socket Binding',
-                    'status': 'pass',
-                    'message': f'Successfully bound to localhost:{test_port}',
-                    'duration_ms': (time.time() - start_time) * 1000
-                })
-            except Exception as e:
-                diagnostics['tests'].append({
-                    'name': 'Socket Binding',
-                    'status': 'fail',
-                    'message': f'Failed to bind socket: {str(e)}',
-                    'duration_ms': (time.time() - start_time) * 1000
-                })
-            
-            # Test 2: Windows-specific networking diagnostics
-            if platform.system() == 'Windows':
-                win_diag_start = time.time()
-                try:
-                    win_diagnostics = diagnose_windows_networking()
-                    diagnostics['tests'].append({
-                        'name': 'Windows Network Diagnostics',
-                        'status': 'pass' if win_diagnostics.get('success') else 'fail',
-                        'message': 'Windows networking diagnostics completed',
-                        'details': win_diagnostics,
-                        'duration_ms': (time.time() - win_diag_start) * 1000
-                    })
-                except Exception as e:
-                    diagnostics['tests'].append({
-                        'name': 'Windows Network Diagnostics',
-                        'status': 'fail',
-                        'message': f'Windows diagnostics failed: {str(e)}',
-                        'duration_ms': (time.time() - win_diag_start) * 1000
-                    })
-            
-            # Test 3: HTTP connectivity test
-            http_test_start = time.time()
-            try:
-                test_response = requests.get('http://localhost:3001/health', timeout=5)
-                if test_response.status_code == 200:
-                    diagnostics['tests'].append({
-                        'name': 'HTTP Connectivity',
-                        'status': 'pass',
-                        'message': 'Successfully connected to local server',
-                        'duration_ms': (time.time() - http_test_start) * 1000
-                    })
-                else:
-                    diagnostics['tests'].append({
-                        'name': 'HTTP Connectivity',
-                        'status': 'fail',
-                        'message': f'HTTP request returned status {test_response.status_code}',
-                        'duration_ms': (time.time() - http_test_start) * 1000
-                    })
-            except Exception as e:
-                diagnostics['tests'].append({
-                    'name': 'HTTP Connectivity',
-                    'status': 'fail',
-                    'message': f'HTTP request failed: {str(e)}',
-                    'duration_ms': (time.time() - http_test_start) * 1000
-                })
-            
-            # Calculate total test duration
-            diagnostics['total_duration_ms'] = (time.time() - start_time) * 1000
-            diagnostics['success'] = all(test['status'] == 'pass' for test in diagnostics['tests'])
-            
-            return jsonify(diagnostics)
-            
-        except Exception as e:
-            logging.error(f"Error in network test: {e}")
-            return jsonify({
-                'success': False,
-                'error': str(e),
-                'timestamp': time.time()
-            }), 500
-
-    @app.route('/process-diagnostics', methods=['GET'])
-    def process_diagnostics():
-        """Get process diagnostics including count and port usage"""
-        try:
-            from utils import get_process_diagnostics
-            result = get_process_diagnostics()
-            return jsonify(result)
-        except Exception as e:
-            logging.error(f"Error getting process diagnostics: {e}")
-            return jsonify({'success': False, 'error': str(e)}), 500
-
-    @app.route('/cleanup-processes', methods=['POST'])
-    def cleanup_processes():
-        """Clean up YoutubetoPremiere processes"""
-        try:
-            from utils import cleanup_youtube_premiere_processes
-            
-            data = request.get_json() or {}
-            force = data.get('force', False)
-            
-            result = cleanup_youtube_premiere_processes(force=force)
-            return jsonify(result)
-        except Exception as e:
-            logging.error(f"Error cleaning up processes: {e}")
-            return jsonify({'success': False, 'error': str(e)}), 500
-
-    @app.route('/count-processes', methods=['GET'])
-    def count_processes():
-        """Count YoutubetoPremiere processes"""
-        try:
-            from utils import count_youtube_premiere_processes
-            count = count_youtube_premiere_processes()
-            return jsonify({'success': True, 'count': count})
-        except Exception as e:
-            logging.error(f"Error counting processes: {e}")
-            return jsonify({'success': False, 'error': str(e)}), 500
-
-    @app.route('/check-port', methods=['GET'])
-    def check_port():
-        """Check port usage"""
-        try:
-            from utils import check_port_usage
-            port = request.args.get('port', 3001, type=int)
-            result = check_port_usage(port)
-            return jsonify(result)
-        except Exception as e:
-            logging.error(f"Error checking port: {e}")
-            return jsonify({'success': False, 'error': str(e)}), 500
-
-    @app.route('/check-import-trigger', methods=['GET'])
-    def check_import_trigger():
-        """Check for pending import triggers (HTTP fallback for Premiere extension)"""
-        try:
-            if pending_import_triggers:
-                # Return the first pending trigger and remove it from the queue
-                trigger = pending_import_triggers.pop(0)
-                logging.info(f"HTTP fallback: Returning import trigger for {trigger.get('path', 'unknown')}")
-                return jsonify({'trigger': trigger})
-            else:
-                # No triggers pending
-                return jsonify({'trigger': None})
-        except Exception as e:
-            logging.error(f"Error checking import trigger: {e}")
-            return jsonify({'error': str(e)}), 500
-
-    @app.route('/trigger-import', methods=['POST'])
-    def trigger_import():
-        """Trigger an import via HTTP (fallback method)"""
-        try:
-            data = request.get_json()
-            if not data:
-                return jsonify({'error': 'No data provided'}), 400
-            
-            path = data.get('path')
-            if not path:
-                return jsonify({'error': 'No path provided'}), 400
-            
-            # Verify file exists
-            if not os.path.exists(path):
-                logging.error(f"File does not exist for HTTP trigger: {path}")
-                return jsonify({'error': 'File not found'}), 404
-            
-            # Add to pending triggers queue for HTTP fallback polling
-            trigger_data = {
-                'path': path,
-                'url': data.get('url', ''),
-                'timestamp': time.time()
-            }
-            pending_import_triggers.append(trigger_data)
-            
-            logging.info(f"HTTP fallback: Added import trigger for {path}")
-            return jsonify({'success': True, 'message': 'Import trigger added'})
-            
-        except Exception as e:
-            logging.error(f"Error triggering import: {e}")
-            return jsonify({'error': str(e)}), 500
-
-    @app.route('/broadcast-update-notification', methods=['POST'])
-    def broadcast_update_notification():
-        """Broadcast update notification to all connected clients"""
-        try:
-            data = request.get_json()
-            if not data:
-                return jsonify({'success': False, 'error': 'No data provided'}), 400
-            
-            # Broadcast to all connected clients
-            socketio.emit('update_available', {
-                'current_version': data.get('current_version'),
-                'latest_version': data.get('latest_version'),
-                'download_url': data.get('download_url'),
-                'release_notes': data.get('release_notes'),
-                'has_update': data.get('has_update', False)
-            })
-            
-            logging.info(f"Update notification broadcasted: v{data.get('current_version')} -> v{data.get('latest_version')}")
-            
-            return jsonify({'success': True}), 200
-            
-        except Exception as e:
-            logging.error(f"Error broadcasting update notification: {e}")
-            return jsonify({'success': False, 'error': str(e)}), 500
 
 
     

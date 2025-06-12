@@ -302,63 +302,23 @@ def try_extract_cookies_from_browser():
 
 def get_ffmpeg_path():
     """Get the path to ffmpeg executable"""
-    
-    # First check if FFMPEG_PATH environment variable is set (set by init.py)
-    env_ffmpeg_path = os.environ.get('FFMPEG_PATH')
-    if env_ffmpeg_path and os.path.exists(env_ffmpeg_path):
-        logging.info(f"Found ffmpeg via environment variable: {env_ffmpeg_path}")
-        return env_ffmpeg_path
-    
-    # Get extension root path if available
-    extension_root = os.environ.get('EXTENSION_ROOT', '')
-    
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # Windows executable detection
-    if getattr(sys, 'frozen', False):
-        # If we're running from a PyInstaller bundle
-        base_path = os.path.dirname(sys.executable)
-        logging.info(f"Running from PyInstaller bundle, base path: {base_path}")
-    else:
-        base_path = script_dir
-    
     possible_locations = [
-        # PyInstaller _internal directory (most common for packaged apps)
-        os.path.join(base_path, '_internal'),
-        # Same directory as executable
-        base_path,
-        # Parent directory
-        os.path.dirname(base_path),
-        # Current script directory
-        script_dir,
-        # CEP extension exec directory
-        os.path.join(os.path.dirname(os.path.dirname(script_dir)), 'exec'),
-        os.path.join(os.path.dirname(script_dir), 'exec'),
+        os.path.dirname(script_dir),  # Parent directory
+        script_dir,  # Current directory
+        os.path.join(script_dir, 'ffmpeg'),  # ffmpeg subdirectory
+        os.path.join(os.path.dirname(script_dir), 'ffmpeg'),  # Parent's ffmpeg subdirectory
+        os.path.join(os.path.dirname(os.path.dirname(script_dir)), 'exec'),  # CEP extension exec directory
+        os.environ.get('EXTENSION_ROOT', ''),  # Extension root if set
     ]
     
-    # Add extension root paths if available
-    if extension_root:
-        possible_locations.extend([
-            os.path.join(extension_root, 'exec', '_internal'),
-            os.path.join(extension_root, 'exec'),
-            extension_root,
-        ])
-    
-    # Add current working directory and its parent
+    # Add the current working directory and its parent
     possible_locations.extend([
         os.getcwd(),
         os.path.dirname(os.getcwd()),
         os.path.join(os.getcwd(), 'exec'),
         os.path.join(os.path.dirname(os.getcwd()), 'exec'),
     ])
-    
-    # Add Windows-specific paths
-    if sys.platform == 'win32':
-        # Try common Windows installation paths
-        possible_locations.extend([
-            os.path.join(os.getenv('ProgramFiles', ''), 'ffmpeg', 'bin'),
-            os.path.join(os.getenv('ProgramFiles(x86)', ''), 'ffmpeg', 'bin'),
-        ])
     
     # Add macOS specific paths
     if sys.platform == 'darwin':
@@ -389,74 +349,56 @@ def get_ffmpeg_path():
     
     ffmpeg_name = 'ffmpeg.exe' if sys.platform == 'win32' else 'ffmpeg'
     
-    logging.info(f"Searching for {ffmpeg_name} in {len(possible_locations)} locations...")
-    
     # First try direct paths
     for location in possible_locations:
         ffmpeg_path = os.path.join(location, ffmpeg_name)
-        logging.debug(f"Checking: {ffmpeg_path}")
-        
         if os.path.exists(ffmpeg_path):
             logging.info(f"Found ffmpeg at: {ffmpeg_path}")
-            
-            # On Windows, use a robust file size check
+            # On Windows, use a simpler file existence check when running from Premiere
             if sys.platform == 'win32':
-                try:
-                    file_size = os.path.getsize(ffmpeg_path)
-                    # FFmpeg executable should be at least 1MB
-                    if file_size > 1000000:
-                        logging.info(f"FFmpeg appears valid based on file size ({file_size} bytes): {ffmpeg_path}")
-                        return ffmpeg_path
-                    else:
-                        logging.warning(f"Found ffmpeg at {ffmpeg_path} but size is suspiciously small: {file_size} bytes")
-                        continue
-                except Exception as e:
-                    logging.warning(f"Error checking file size for {ffmpeg_path}: {e}")
-                    continue
-            
+                file_size = os.path.getsize(ffmpeg_path)
+                # If the file is large enough to be a valid ffmpeg executable, assume it works
+                if file_size > 1000000:  # Typical ffmpeg.exe is several MB
+                    logging.info(f"Assuming ffmpeg is valid based on file size ({file_size} bytes): {ffmpeg_path}")
+                    return ffmpeg_path
+                logging.warning(f"Found ffmpeg at {ffmpeg_path} but size is suspiciously small: {file_size} bytes")
+                continue
+                
             # On Unix-like systems, verify permissions
             if sys.platform != 'win32':
                 if not os.access(ffmpeg_path, os.X_OK):
                     logging.warning(f"FFmpeg found at {ffmpeg_path} but is not executable")
                     continue
-            
-            # Try to run ffmpeg -version to verify it works (skip on Windows in Premiere environment)
-            if sys.platform != 'win32' or not getattr(sys, 'frozen', False):
-                try:
-                    # Use shell=True on Windows to avoid handle issues
-                    use_shell = sys.platform == 'win32'
-                    cmd = [ffmpeg_path, '-version'] if not use_shell else f'"{ffmpeg_path}" -version'
                     
-                    result = subprocess.run(
-                        cmd,
-                        shell=use_shell,
-                        stdout=subprocess.PIPE, 
-                        stderr=subprocess.PIPE,
-                        timeout=5,
-                        text=True
-                    )
-                    
-                    if result.returncode == 0:
-                        logging.info(f"Verified ffmpeg is working at: {ffmpeg_path}")
-                        return ffmpeg_path
-                    else:
-                        logging.warning(f"FFmpeg found at {ffmpeg_path} but failed version check: {result.stderr}")
-                except Exception as e:
-                    logging.warning(f"Error verifying ffmpeg at {ffmpeg_path}: {str(e)}")
-                    # If on Windows and running from PyInstaller, return the path anyway if file exists and is large enough
-                    if sys.platform == 'win32' and getattr(sys, 'frozen', False) and os.path.exists(ffmpeg_path):
-                        try:
-                            if os.path.getsize(ffmpeg_path) > 1000000:
-                                logging.info(f"Despite verification error, using ffmpeg at: {ffmpeg_path}")
-                                return ffmpeg_path
-                        except:
-                            pass
-                    continue
-            else:
-                # On Windows when frozen, skip verification and trust file size check
-                return ffmpeg_path
+            # Try to run ffmpeg -version to verify it works
+            try:
+                # Use shell=True on Windows to avoid handle issues
+                use_shell = sys.platform == 'win32'
+                cmd = [ffmpeg_path, '-version'] if not use_shell else f'"{ffmpeg_path}" -version'
+                
+                result = subprocess.run(
+                    cmd,
+                    shell=use_shell,
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.PIPE,
+                    timeout=5,
+                    text=True
+                )
+                
+                if result.returncode == 0:
+                    logging.info(f"Verified ffmpeg is working at: {ffmpeg_path}")
+                    return ffmpeg_path
+                else:
+                    logging.warning(f"FFmpeg found at {ffmpeg_path} but failed version check: {result.stderr}")
+            except Exception as e:
+                logging.warning(f"Error verifying ffmpeg at {ffmpeg_path}: {str(e)}")
+                # If on Windows, return the path anyway if the file exists and is large enough
+                if sys.platform == 'win32' and os.path.exists(ffmpeg_path) and os.path.getsize(ffmpeg_path) > 1000000:
+                    logging.info(f"Despite verification error, using ffmpeg at: {ffmpeg_path}")
+                    return ffmpeg_path
+                continue
     
-    # Try looking in PATH for macOS/Linux
+    # If not found in standard paths, try looking for ffmpeg in PATH
     if sys.platform == 'darwin':
         try:
             # On macOS, try running ffmpeg directly as it might be in PATH
@@ -469,22 +411,6 @@ def get_ffmpeg_path():
                 return 'ffmpeg'  # Return just 'ffmpeg' to use PATH resolution
         except Exception as e:
             logging.warning(f"Error checking ffmpeg in PATH: {str(e)}")
-    
-    # Try Windows PATH with 'where' command
-    if sys.platform == 'win32':
-        try:
-            result = subprocess.run(['where', 'ffmpeg'], 
-                                 stdout=subprocess.PIPE, 
-                                 stderr=subprocess.PIPE,
-                                 text=True,
-                                 shell=True)
-            if result.returncode == 0 and result.stdout.strip():
-                ffmpeg_path = result.stdout.strip().split('\n')[0]
-                if os.path.exists(ffmpeg_path) and os.path.getsize(ffmpeg_path) > 1000000:
-                    logging.info(f"Found ffmpeg in Windows PATH: {ffmpeg_path}")
-                    return ffmpeg_path
-        except Exception as e:
-            logging.warning(f"Error checking ffmpeg in Windows PATH: {str(e)}")
 
     logging.error("FFmpeg not found in any of the expected locations")
     logging.error(f"Searched locations: {possible_locations}")
@@ -585,22 +511,7 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             )
             
             if result and os.path.exists(result):
-                # Import via WebSocket only - no HTTP fallback
-                from YoutubetoPremiere import connected_clients
-                premiere_clients = connected_clients.get('premiere', {})
-                
-                if len(premiere_clients) > 0:
-                    try:
-                        socketio.emit('import_video', {'path': result})
-                        logging.info(f"Sent import_video via WebSocket to {len(premiere_clients)} Premiere client(s): {result}")
-                    except Exception as e:
-                        logging.error(f"WebSocket import failed: {e}")
-                        socketio.emit('import_failed', {'error': f'Import failed: {str(e)}'})
-                else:
-                    error_msg = "No Premiere Pro extension connected via WebSocket. Please ensure Premiere Pro is running with the extension loaded."
-                    logging.error(error_msg)
-                    socketio.emit('import_failed', {'error': error_msg})
-                
+                socketio.emit('import_video', {'path': result})
                 return {"success": True, "path": result}
             else:
                 return {"error": "Failed to download audio"}
@@ -630,22 +541,7 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             )
             
             if result and result.get("success") and result.get("path") and os.path.exists(result["path"]):
-                # Import via WebSocket only - no HTTP fallback
-                from YoutubetoPremiere import connected_clients
-                premiere_clients = connected_clients.get('premiere', {})
-                
-                if len(premiere_clients) > 0:
-                    try:
-                        socketio.emit('import_video', {'path': result["path"]})
-                        logging.info(f"Sent import_video via WebSocket to {len(premiere_clients)} Premiere client(s): {result['path']}")
-                    except Exception as e:
-                        logging.error(f"WebSocket import failed: {e}")
-                        socketio.emit('import_failed', {'error': f'Import failed: {str(e)}'})
-                else:
-                    error_msg = "No Premiere Pro extension connected via WebSocket. Please ensure Premiere Pro is running with the extension loaded."
-                    logging.error(error_msg)
-                    socketio.emit('import_failed', {'error': error_msg})
-                
+                socketio.emit('import_video', {'path': result["path"]})
                 return {"success": True, "path": result["path"]}
             else:
                 error_msg = result.get("error") if result and "error" in result else "Failed to download clip"
@@ -666,22 +562,7 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             )
             
             if result and os.path.exists(result):
-                # Import via WebSocket only - no HTTP fallback
-                from YoutubetoPremiere import connected_clients
-                premiere_clients = connected_clients.get('premiere', {})
-                
-                if len(premiere_clients) > 0:
-                    try:
-                        socketio.emit('import_video', {'path': result})
-                        logging.info(f"Sent import_video via WebSocket to {len(premiere_clients)} Premiere client(s): {result}")
-                    except Exception as e:
-                        logging.error(f"WebSocket import failed: {e}")
-                        socketio.emit('import_failed', {'error': f'Import failed: {str(e)}'})
-                else:
-                    error_msg = "No Premiere Pro extension connected via WebSocket. Please ensure Premiere Pro is running with the extension loaded."
-                    logging.error(error_msg)
-                    socketio.emit('import_failed', {'error': error_msg})
-                
+                socketio.emit('import_video', {'path': result})
                 return {"success": True, "path": result}
             else:
                 return {"error": "Failed to download video"}
@@ -1241,67 +1122,142 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             final_path = output_path
             logging.info(f"Expected final path: {final_path}")
 
+            # Check for downloaded files - first try exact path, then look for variants
+            actual_file = None
+            
             if os.path.exists(final_path):
-                logging.info(f"File exists at: {final_path}")
+                actual_file = final_path
+                logging.info(f"File exists at expected path: {final_path}")
+            else:
+                # Look for separate video/audio files that need merging
+                base_name = os.path.splitext(final_path)[0]
+                base_dir = os.path.dirname(final_path)
+                
+                # Common yt-dlp separate file patterns
+                video_patterns = [f"{base_name}.f*.mp4", f"{base_name}.mp4.f*"]
+                audio_patterns = [f"{base_name}.f*.m4a", f"{base_name}.m4a.f*", 
+                                f"{base_name}.f*.mp3", f"{base_name}.mp3.f*"]
+                
+                import glob
+                video_files = []
+                audio_files = []
+                
+                # Find video and audio files
+                for pattern in video_patterns:
+                    video_files.extend(glob.glob(pattern))
+                for pattern in audio_patterns:
+                    audio_files.extend(glob.glob(pattern))
+                
+                logging.info(f"Found video files: {video_files}")
+                logging.info(f"Found audio files: {audio_files}")
+                
+                if video_files and audio_files:
+                    # Merge video and audio files
+                    video_file = video_files[0]  # Use first found
+                    audio_file = audio_files[0]  # Use first found
+                    
+                    logging.info(f"Merging {video_file} and {audio_file} into {final_path}")
+                    
+                    merge_command = [
+                        ffmpeg_path,
+                        '-i', video_file,
+                        '-i', audio_file,
+                        '-c:v', 'copy',
+                        '-c:a', 'aac',
+                        '-y',  # Overwrite
+                        final_path
+                    ]
+                    
+                    try:
+                        subprocess.run(merge_command, check=True, capture_output=True, text=True)
+                        logging.info(f"Successfully merged files into: {final_path}")
+                        
+                        # Clean up separate files
+                        try:
+                            os.remove(video_file)
+                            os.remove(audio_file)
+                            logging.info("Cleaned up temporary separate files")
+                        except Exception as e:
+                            logging.warning(f"Could not clean up temporary files: {e}")
+                        
+                        actual_file = final_path
+                        
+                    except subprocess.CalledProcessError as e:
+                        logging.error(f"Error merging files: {e}")
+                        if e.stderr:
+                            logging.error(f"FFmpeg stderr: {e.stderr}")
+                        # Don't fail completely - maybe one of the files is usable
+                        if os.path.exists(video_file):
+                            # Use video file if it exists and seems complete
+                            actual_file = video_file
+                            logging.info(f"Using video file as fallback: {video_file}")
+                
+                # If still no file, look for any files with similar names
+                if not actual_file:
+                    all_files = os.listdir(base_dir) if os.path.exists(base_dir) else []
+                    base_filename = os.path.basename(base_name)
+                    
+                    # Look for files that start with our base filename
+                    candidates = [f for f in all_files if f.startswith(base_filename) and f.endswith(('.mp4', '.mkv', '.webm'))]
+                    
+                    if candidates:
+                        # Use the most recently modified file
+                        candidates_full = [os.path.join(base_dir, f) for f in candidates]
+                        candidates_full.sort(key=os.path.getmtime, reverse=True)
+                        actual_file = candidates_full[0]
+                        logging.info(f"Using most recent candidate file: {actual_file}")
+                        
+                        # Move it to the expected location if different
+                        if actual_file != final_path:
+                            try:
+                                os.rename(actual_file, final_path)
+                                actual_file = final_path
+                                logging.info(f"Moved file to expected location: {final_path}")
+                            except Exception as e:
+                                logging.warning(f"Could not move file to expected location: {e}")
+
+            if actual_file and os.path.exists(actual_file):
+                logging.info(f"Using file: {actual_file}")
+                
                 # Add URL to metadata
                 metadata_command = [
                     ffmpeg_path,  # Use the full path here
-                    '-i', final_path,
+                    '-i', actual_file,
                     '-metadata', f'comment={video_url}',
                     '-codec', 'copy',
-                    f'{final_path}_with_metadata.mp4'
+                    f'{actual_file}_with_metadata.mp4'
                 ]
                 logging.info(f"Running FFmpeg command: {' '.join(metadata_command)}")
 
                 try:
                     subprocess.run(metadata_command, check=True)
-                    os.replace(f'{final_path}_with_metadata.mp4', final_path)
+                    os.replace(f'{actual_file}_with_metadata.mp4', actual_file)
                     
-                    logging.info(f"Video downloaded and processed: {final_path}")
+                    logging.info(f"Video downloaded and processed: {actual_file}")
+                    socketio.emit('import_video', {'path': actual_file})
+                    # Emit both formats to ensure compatibility
+                    socketio.emit('download-complete', {'url': video_url, 'path': actual_file})  # Hyphenated format for Chrome extension
+                    socketio.emit('download_complete')  # Underscore format for other clients
                     
-                    # Try WebSocket import and always use HTTP fallback for reliability
-                    websocket_success = False
-                    try:
-                        socketio.emit('import_video', {'path': final_path})
-                        logging.info(f"Sent import_video via WebSocket: {final_path}")
-                        websocket_success = True
-                    except Exception as e:
-                        logging.warning(f"WebSocket import failed: {e}")
-                    
-                    # Always also try HTTP fallback for maximum reliability
-                    try:
-                        import requests
-                        import json
-                        fallback_data = {
-                            'path': final_path,
-                            'url': video_url
-                        }
-                        response = requests.post('http://localhost:3001/trigger-import', 
-                                               json=fallback_data, timeout=5)
-                        if response.status_code == 200:
-                            logging.info("HTTP fallback import trigger sent successfully")
-                        else:
-                            logging.error(f"HTTP fallback failed: {response.status_code}")
-                    except Exception as http_error:
-                        logging.error(f"HTTP fallback also failed: {http_error}")
-                        if not websocket_success:
-                            logging.error("Both WebSocket and HTTP import methods failed!")
-                    
-                    # Emit both formats to ensure compatibility for download completion
-                    try:
-                        socketio.emit('download-complete', {'url': video_url, 'path': final_path})  # Hyphenated format for Chrome extension
-                        socketio.emit('download_complete')  # Underscore format for other clients
-                    except Exception as e:
-                        logging.warning(f"Failed to emit download completion events: {e}")
-                    
-                    return final_path
+                    return actual_file
                 except subprocess.CalledProcessError as e:
                     logging.error(f"Error adding metadata: {e}")
                     logging.error(f"FFmpeg stderr: {e.stderr if hasattr(e, 'stderr') else 'No stderr'}")
-                    socketio.emit('download-failed', {'message': 'Failed to add metadata.'})
-                    return None
+                    # Still return the file even if metadata failed
+                    logging.info(f"Returning file without metadata: {actual_file}")
+                    socketio.emit('import_video', {'path': actual_file})
+                    socketio.emit('download-complete', {'url': video_url, 'path': actual_file})
+                    socketio.emit('download_complete')
+                    return actual_file
             else:
-                logging.error(f"File not found at expected path: {final_path}")
+                logging.error(f"No suitable file found. Expected: {final_path}")
+                # List all files in directory for debugging
+                try:
+                    all_files = os.listdir(os.path.dirname(final_path))
+                    logging.error(f"Files in download directory: {all_files}")
+                except Exception as e:
+                    logging.error(f"Could not list directory contents: {e}")
+                
                 raise Exception(f"Downloaded file not found at {final_path}")
 
     except Exception as e:

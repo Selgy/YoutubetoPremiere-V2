@@ -19,7 +19,6 @@ document.addEventListener('DOMContentLoaded', () => {
     initializePopup();
     loadSettings();
     checkServerStatus();
-    checkForUpdates();
     setupEventListeners();
 });
 
@@ -124,10 +123,6 @@ function setupEventListeners() {
         e.preventDefault();
         chrome.tabs.create({ url: 'https://github.com/your-repo/youtube-to-premiere' });
     });
-
-    // Update notification event listeners
-    document.getElementById('download-update').addEventListener('click', handleDownloadUpdate);
-    document.getElementById('dismiss-update').addEventListener('click', dismissUpdateNotification);
 }
 
 function updateSizeLabel() {
@@ -260,128 +255,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // Refresh server status every 10 seconds
-setInterval(checkServerStatus, 10000);
-
-// Global variable to store update info
-let updateInfo = null;
-
-// Check for updates function
-async function checkForUpdates() {
-    try {
-        console.log('YTP Popup: Checking for updates...');
-        
-        // Check if user has dismissed this update recently
-        const dismissedUpdate = await new Promise((resolve) => {
-            chrome.storage.local.get(['dismissedUpdate'], (result) => {
-                resolve(result.dismissedUpdate);
-            });
-        });
-        
-        // Add client_type parameter to identify this as Chrome extension
-        const response = await fetch('http://localhost:3001/check-updates?client_type=chrome', {
-            method: 'GET',
-            timeout: 5000
-        });
-        
-        if (!response.ok) {
-            console.log('YTP Popup: Update check failed - server not available');
-            return;
-        }
-        
-        const data = await response.json();
-        console.log('YTP Popup: Update check response:', data);
-        
-        if (data.success && data.has_update) {
-            // Don't show notification if user dismissed this version recently
-            if (dismissedUpdate && dismissedUpdate.version === data.latest_version) {
-                const dismissTime = new Date(dismissedUpdate.timestamp);
-                const now = new Date();
-                const hoursSinceDismiss = (now - dismissTime) / (1000 * 60 * 60);
-                
-                // Show again after 24 hours
-                if (hoursSinceDismiss < 24) {
-                    console.log('YTP Popup: Update available but dismissed recently');
-                    return;
-                }
-            }
-            
-            updateInfo = data;
-            showUpdateNotification(data);
-            
-            // Also show a more visible notification via content script
-            notifyContentScript('UPDATE_AVAILABLE', {
-                currentVersion: data.current_version,
-                latestVersion: data.latest_version,
-                releaseNotes: data.release_notes
-            });
-        } else {
-            console.log('YTP Popup: No updates available');
-        }
-    } catch (error) {
-        console.log('YTP Popup: Error checking for updates:', error);
-    }
-}
-
-// Show update notification
-function showUpdateNotification(data) {
-    const notification = document.getElementById('update-notification');
-    const message = document.getElementById('update-message');
-    
-    let messageText = `Version ${data.latest_version} est disponible ! `;
-    if (data.current_version) {
-        messageText += `(actuellement v${data.current_version})`;
-    }
-    
-    message.textContent = messageText;
-    notification.classList.add('visible');
-    
-    console.log('YTP Popup: Update notification shown');
-}
-
-// Handle download update button click
-function handleDownloadUpdate() {
-    if (!updateInfo || !updateInfo.download_url) {
-        console.error('YTP Popup: No download URL available');
-        showFeedback('Erreur : URL de téléchargement non disponible');
-        return;
-    }
-    
-    console.log('YTP Popup: Opening download URL:', updateInfo.download_url);
-    
-    // Open download URL in new tab
-    chrome.tabs.create({ url: updateInfo.download_url }, (tab) => {
-        if (tab) {
-            console.log('YTP Popup: Download tab opened successfully');
-            showFeedback('Téléchargement ouvert dans un nouvel onglet');
-            
-            // Hide notification after opening download
-            dismissUpdateNotification();
-        } else {
-            console.error('YTP Popup: Failed to open download tab');
-            showFeedback('Erreur lors de l\'ouverture du téléchargement');
-        }
-    });
-}
-
-// Dismiss update notification
-function dismissUpdateNotification() {
-    const notification = document.getElementById('update-notification');
-    notification.classList.remove('visible');
-    
-    // Store dismissal info to avoid showing again for 24 hours
-    if (updateInfo && updateInfo.latest_version) {
-        const dismissData = {
-            version: updateInfo.latest_version,
-            timestamp: new Date().toISOString()
-        };
-        
-        chrome.storage.local.set({ dismissedUpdate: dismissData }, () => {
-            console.log('YTP Popup: Update dismissed for 24 hours');
-        });
-    }
-    
-    console.log('YTP Popup: Update notification dismissed');
-}
-
-// Check for updates every 30 minutes (when popup is opened)
-let updateCheckInterval = setInterval(checkForUpdates, 30 * 60 * 1000); 
+setInterval(checkServerStatus, 10000); 

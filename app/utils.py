@@ -53,14 +53,18 @@ def load_settings():
 
     settings['SETTINGS_FILE'] = settings_path
     
-    # Set up FFmpeg
+    # Set up FFmpeg using the init module function
     try:
-        settings['ffmpeg_path'] = find_ffmpeg()
-        # Add ffmpeg directory to PATH
-        ffmpeg_dir = os.path.dirname(settings['ffmpeg_path'])
-        os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
-        logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
-        logging.info(f"Using ffmpeg from: {settings['ffmpeg_path']}")
+        from init import find_ffmpeg as init_find_ffmpeg
+        settings['ffmpeg_path'] = init_find_ffmpeg()
+        if settings['ffmpeg_path']:
+            # Add ffmpeg directory to PATH
+            ffmpeg_dir = os.path.dirname(settings['ffmpeg_path'])
+            os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
+            logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
+            logging.info(f"Using ffmpeg from: {settings['ffmpeg_path']}")
+        else:
+            raise Exception("FFmpeg not found in any of the expected locations")
     except Exception as e:
         error_msg = f"Error setting up ffmpeg: {e}"
         logging.error(error_msg)
@@ -407,49 +411,23 @@ def is_premiere_running():
     return False
 
 def find_ffmpeg():
-    """Find FFmpeg executable - consistent with init.py approach"""
-    
-    # First check if FFMPEG_PATH environment variable is set
-    env_ffmpeg_path = os.environ.get('FFMPEG_PATH')
-    if env_ffmpeg_path and os.path.exists(env_ffmpeg_path):
-        logging.info(f"Found FFmpeg via environment variable: {env_ffmpeg_path}")
-        return env_ffmpeg_path
-    
     if getattr(sys, 'frozen', False):
         base_path = os.path.dirname(sys.executable)
     else:
         base_path = os.path.dirname(os.path.abspath(__file__))
     
-    # Try the same paths as init.py
     ffmpeg_paths = [
-        os.path.join(base_path, '_internal', 'ffmpeg.exe'),  # PyInstaller _internal
-        os.path.join(base_path, 'ffmpeg.exe'),               # Same directory
-        os.path.join(base_path, 'exec', 'ffmpeg.exe'),       # exec subdirectory
-        os.path.join(os.path.dirname(base_path), 'exec', 'ffmpeg.exe'),  # Parent's exec
-        os.path.join(os.path.dirname(base_path), 'ffmpeg.exe')            # Parent directory
+        os.path.join(base_path, 'exec', 'ffmpeg.exe'),
+        os.path.join(base_path, 'ffmpeg.exe'),
+        os.path.join(os.path.dirname(base_path), 'exec', 'ffmpeg.exe'),
+        os.path.join(os.path.dirname(base_path), 'ffmpeg.exe')
     ]
-    
-    # Add extension root paths if available
-    extension_root = os.environ.get('EXTENSION_ROOT')
-    if extension_root:
-        ffmpeg_paths.extend([
-            os.path.join(extension_root, 'exec', '_internal', 'ffmpeg.exe'),
-            os.path.join(extension_root, 'exec', 'ffmpeg.exe'),
-            os.path.join(extension_root, 'ffmpeg.exe'),
-        ])
     
     for path in ffmpeg_paths:
         if os.path.exists(path):
-            # Quick validation - check file size (FFmpeg should be several MB)
-            try:
-                if os.path.getsize(path) > 1000000:  # > 1MB
-                    logging.info(f"Found FFmpeg at: {path}")
-                    return path
-                else:
-                    logging.warning(f"Found ffmpeg at {path} but size is suspiciously small")
-            except Exception as e:
-                logging.warning(f"Error checking FFmpeg size at {path}: {e}")
-    
+            logging.info(f"Found FFmpeg at: {path}")
+            return path
+            
     raise Exception("FFmpeg not found in any of the expected locations")
 
 def save_download_path(download_path):
@@ -514,26 +492,12 @@ def get_temp_dir():
     
     # First try to use a subdirectory in the same directory as the script
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    temp_dir = os.path.join(script_dir, "temp")
     
-    # Check if script directory is writable BEFORE trying to create temp directory
-    if os.access(script_dir, os.W_OK):
-        temp_dir = os.path.join(script_dir, "temp")
-        try:
-            # Try to create the directory to test if we can actually write
-            os.makedirs(temp_dir, exist_ok=True)
-            # Test write access by creating a temporary file
-            test_file = os.path.join(temp_dir, 'test_write.tmp')
-            with open(test_file, 'w') as f:
-                f.write('test')
-            os.remove(test_file)
-            return temp_dir
-        except (OSError, PermissionError):
-            # If we can't create or write, fall through to system temp
-            pass
-    
-    # Use system temp directory
-    system_temp = tempfile.gettempdir()
-    temp_dir = os.path.join(system_temp, "YoutubetoPremiere")
+    # If that's not writable, use system temp directory
+    if not os.access(script_dir, os.W_OK):
+        system_temp = tempfile.gettempdir()
+        temp_dir = os.path.join(system_temp, "YoutubetoPremiere")
     
     # Create the directory if it doesn't exist
     os.makedirs(temp_dir, exist_ok=True)
@@ -617,46 +581,13 @@ def open_sounds_folder():
             os.makedirs(sounds_dir, exist_ok=True)
             logger.info(f"Created sounds directory: {sounds_dir}")
         
-        # Convert to absolute path and normalize for Windows
-        sounds_dir = os.path.abspath(sounds_dir)
-        logger.info(f"Attempting to open sounds folder: {sounds_dir}")
-        
         # Open the directory in file explorer
         if platform.system() == 'Windows':
-            # Try multiple methods for Windows
-            try:
-                # Method 1: Use explorer with normalized path
-                result = subprocess.run(['explorer', sounds_dir], 
-                                      capture_output=True, text=True, timeout=10)
-                if result.returncode == 0:
-                    logger.info(f"Opened sounds folder via explorer: {sounds_dir}")
-                    return sounds_dir
-                else:
-                    logger.warning(f"Explorer failed with code {result.returncode}: {result.stderr}")
-            except Exception as e:
-                logger.warning(f"Explorer method failed: {str(e)}")
-            
-            # Method 2: Use os.startfile (Windows specific)
-            try:
-                os.startfile(sounds_dir)
-                logger.info(f"Opened sounds folder via os.startfile: {sounds_dir}")
-                return sounds_dir
-            except Exception as e:
-                logger.warning(f"os.startfile method failed: {str(e)}")
-            
-            # Method 3: Use cmd with start command
-            try:
-                subprocess.run(['cmd', '/c', 'start', '""', sounds_dir], 
-                             shell=True, timeout=10)
-                logger.info(f"Opened sounds folder via cmd start: {sounds_dir}")
-                return sounds_dir
-            except Exception as e:
-                logger.warning(f"cmd start method failed: {str(e)}")
-                
+            subprocess.run(['explorer', sounds_dir], check=True)
         elif platform.system() == 'Darwin':  # macOS
-            subprocess.run(['open', sounds_dir], timeout=10)
+            subprocess.run(['open', sounds_dir], check=True)
         else:  # Linux and others
-            subprocess.run(['xdg-open', sounds_dir], timeout=10)
+            subprocess.run(['xdg-open', sounds_dir], check=True)
         
         logger.info(f"Opened sounds folder: {sounds_dir}")
         return sounds_dir
@@ -664,312 +595,3 @@ def open_sounds_folder():
     except Exception as e:
         logger.error(f"Error opening sounds folder: {str(e)}")
         raise e
-
-def diagnose_windows_networking():
-    """Diagnose Windows networking issues and log results"""
-    if platform.system() != 'Windows':
-        return {"success": False, "error": "This function is only for Windows"}
-    
-    try:
-        import subprocess
-        
-        diagnostics = {"success": True, "tests": []}
-        
-        logging.info("=== Windows Network Diagnostics ===")
-        
-        # Test 1: Check port usage
-        try:
-            result = subprocess.run(['netstat', '-ano'], 
-                                  capture_output=True, text=True, shell=True, timeout=10,
-                                  encoding='utf-8', errors='ignore')
-            if result.stdout:
-                # Filter for port 3001
-                lines = result.stdout.split('\n')
-                port_3001_lines = [line for line in lines if ':3001' in line]
-                
-                logging.info("Port 3001 usage:")
-                for line in port_3001_lines:
-                    # Clean line to remove any problematic characters
-                    clean_line = ''.join(char for char in line if ord(char) < 128)
-                    logging.info(f"  {clean_line}")
-                
-                test_result = {
-                    "name": "Port 3001 Check",
-                    "success": True,
-                    "details": f"Found {len(port_3001_lines)} connections on port 3001"
-                }
-            else:
-                test_result = {
-                    "name": "Port 3001 Check", 
-                    "success": False,
-                    "details": "No netstat output received"
-                }
-                
-            diagnostics["tests"].append(test_result)
-            
-        except Exception as e:
-            logging.error(f"Port check failed: {e}")
-            diagnostics["tests"].append({
-                "name": "Port 3001 Check",
-                "success": False,
-                "details": f"Error: {str(e)}"
-            })
-        
-        # Test 2: Check Windows Firewall
-        try:
-            result = subprocess.run(['netsh', 'advfirewall', 'show', 'allprofiles'], 
-                                  capture_output=True, text=True, shell=True, timeout=10,
-                                  encoding='utf-8', errors='ignore')
-            if result.returncode == 0:
-                # Extract firewall state info safely
-                output_lines = result.stdout.split('\n')
-                firewall_states = []
-                for line in output_lines:
-                    if 'State' in line:
-                        # Clean the line
-                        clean_line = ''.join(char for char in line if ord(char) < 128)
-                        firewall_states.append(clean_line.strip())
-                
-                logging.info("Windows Firewall status:")
-                for state in firewall_states:
-                    logging.info(f"  {state}")
-                
-                test_result = {
-                    "name": "Windows Firewall Check",
-                    "success": True,
-                    "details": f"Checked firewall profiles: {len(firewall_states)} profiles found"
-                }
-            else:
-                test_result = {
-                    "name": "Windows Firewall Check",
-                    "success": False,
-                    "details": f"Command failed with code {result.returncode}"
-                }
-                
-            diagnostics["tests"].append(test_result)
-            
-        except Exception as e:
-            logging.error(f"Firewall check failed: {e}")
-            diagnostics["tests"].append({
-                "name": "Windows Firewall Check",
-                "success": False,
-                "details": f"Error: {str(e)}"
-            })
-        
-        # Test 3: Basic connectivity test
-        try:
-            import socket
-            test_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            test_socket.settimeout(5)
-            result = test_socket.connect_ex(('localhost', 3001))
-            test_socket.close()
-            
-            if result == 0:
-                test_result = {
-                    "name": "Localhost Connectivity",
-                    "success": True,
-                    "details": "Successfully connected to localhost:3001"
-                }
-                logging.info("Localhost connectivity: OK")
-            else:
-                test_result = {
-                    "name": "Localhost Connectivity",
-                    "success": False,
-                    "details": f"Connection failed with error code {result}"
-                }
-                logging.info(f"Localhost connectivity failed: {result}")
-                
-            diagnostics["tests"].append(test_result)
-            
-        except Exception as e:
-            logging.error(f"Connectivity test failed: {e}")
-            diagnostics["tests"].append({
-                "name": "Localhost Connectivity",
-                "success": False,
-                "details": f"Error: {str(e)}"
-            })
-        
-        logging.info("=== Network Diagnostics Complete ===")
-        return diagnostics
-        
-    except Exception as e:
-        error_msg = f"Network diagnostics failed: {str(e)}"
-        logging.error(error_msg)
-        return {"success": False, "error": error_msg}
-
-def create_windows_firewall_rule():
-    """Create Windows Firewall rule to allow YoutubetoPremiere application."""
-    if platform.system() != 'Windows':
-        return {"success": False, "error": "This function is only for Windows"}
-    
-    try:
-        import subprocess
-        
-        # Get the path to the current executable
-        if getattr(sys, 'frozen', False):
-            # Running as compiled executable
-            app_path = sys.executable
-        else:
-            # Running as Python script
-            app_path = sys.executable
-            
-        # Rule name
-        rule_name = "YoutubetoPremiere"
-        
-        # Check if rule already exists
-        check_cmd = f'netsh advfirewall firewall show rule name="{rule_name}"'
-        result = subprocess.run(check_cmd, shell=True, capture_output=True, text=True)
-        
-        if "No rules match" not in result.stdout:
-            return {"success": True, "message": "Firewall rule already exists"}
-        
-        # Create inbound rule
-        inbound_cmd = f'netsh advfirewall firewall add rule name="{rule_name}" dir=in action=allow program="{app_path}" enable=yes'
-        result_in = subprocess.run(inbound_cmd, shell=True, capture_output=True, text=True)
-        
-        # Create outbound rule
-        outbound_cmd = f'netsh advfirewall firewall add rule name="{rule_name}" dir=out action=allow program="{app_path}" enable=yes'
-        result_out = subprocess.run(outbound_cmd, shell=True, capture_output=True, text=True)
-        
-        if result_in.returncode == 0 and result_out.returncode == 0:
-            return {"success": True, "message": "Firewall rules created successfully"}
-        else:
-            return {"success": False, "error": f"Failed to create firewall rules. In: {result_in.stderr}, Out: {result_out.stderr}"}
-            
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-def count_youtube_premiere_processes():
-    """Count the number of YoutubetoPremiere processes currently running"""
-    if sys.platform != 'win32':
-        return 0
-    
-    try:
-        result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq YoutubetoPremiere.exe'], 
-                              capture_output=True, text=True, shell=True)
-        
-        if result.returncode == 0:
-            lines = result.stdout.strip().split('\n')
-            # Count lines that contain YoutubetoPremiere.exe (skip header)
-            count = sum(1 for line in lines if 'YoutubetoPremiere.exe' in line)
-            logging.info(f"Found {count} YoutubetoPremiere processes")
-            return count
-        else:
-            logging.error(f"Failed to count processes: {result.stderr}")
-            return 0
-            
-    except Exception as e:
-        logging.error(f"Error counting processes: {e}")
-        return 0
-
-def cleanup_youtube_premiere_processes(force=False):
-    """Clean up YoutubetoPremiere processes"""
-    if sys.platform != 'win32':
-        return {"success": False, "error": "This function is only for Windows"}
-    
-    try:
-        process_count = count_youtube_premiere_processes()
-        if process_count == 0:
-            return {"success": True, "message": "No processes found to clean up", "processes_killed": 0}
-        
-        logging.info(f"Attempting to clean up {process_count} YoutubetoPremiere processes")
-        
-        processes_killed = 0
-        
-        if not force:
-            # First, try graceful termination
-            result = subprocess.run(['taskkill', '/IM', 'YoutubetoPremiere.exe'], 
-                                  capture_output=True, text=True, shell=True)
-            if result.returncode == 0:
-                logging.info("Attempted graceful termination")
-                time.sleep(2)  # Wait for graceful shutdown
-                
-                # Check if any processes remain
-                remaining = count_youtube_premiere_processes()
-                processes_killed = process_count - remaining
-                
-                if remaining == 0:
-                    return {"success": True, "message": "All processes cleaned up gracefully", "processes_killed": processes_killed}
-                else:
-                    logging.info(f"{remaining} processes remain after graceful termination")
-        
-        # Force kill any remaining processes (especially those stuck in yt-dlp timeouts)
-        logging.info("Force killing remaining processes...")
-        result = subprocess.run(['taskkill', '/F', '/IM', 'YoutubetoPremiere.exe'], 
-                              capture_output=True, text=True, shell=True)
-        
-        if result.returncode == 0:
-            time.sleep(1)  # Wait a moment for processes to be killed
-            remaining_after_force = count_youtube_premiere_processes()
-            total_killed = process_count - remaining_after_force
-            
-            return {
-                "success": True, 
-                "message": f"Successfully killed {total_killed} processes", 
-                "processes_killed": total_killed,
-                "remaining": remaining_after_force
-            }
-        else:
-            return {"success": False, "error": f"Failed to kill processes: {result.stderr}"}
-        
-    except Exception as e:
-        logging.error(f"Error during cleanup: {e}")
-        return {"success": False, "error": str(e)}
-
-def check_port_usage(port=3001):
-    """Check if the specified port is in use"""
-    if sys.platform != 'win32':
-        return {"success": False, "error": "This function is only for Windows"}
-    
-    try:
-        result = subprocess.run(['netstat', '-ano', '|', 'findstr', f':{port}'], 
-                              capture_output=True, text=True, shell=True)
-        
-        if result.returncode == 0 and result.stdout.strip():
-            lines = result.stdout.strip().split('\n')
-            connections = []
-            for line in lines:
-                if f':{port}' in line:
-                    parts = line.split()
-                    if len(parts) >= 5:
-                        connections.append({
-                            'protocol': parts[0],
-                            'local_address': parts[1],
-                            'foreign_address': parts[2],
-                            'state': parts[3],
-                            'pid': parts[4]
-                        })
-            
-            return {"success": True, "in_use": True, "connections": connections}
-        else:
-            return {"success": True, "in_use": False, "connections": []}
-            
-    except Exception as e:
-        logging.error(f"Error checking port usage: {e}")
-        return {"success": False, "error": str(e)}
-
-def get_process_diagnostics():
-    """Get comprehensive process diagnostics"""
-    try:
-        diagnostics = {
-            "process_count": count_youtube_premiere_processes(),
-            "port_usage": check_port_usage(),
-            "timestamp": time.time()
-        }
-        
-        # Add detailed process info if available
-        if sys.platform == 'win32':
-            try:
-                result = subprocess.run(['wmic', 'process', 'where', 'name="YoutubetoPremiere.exe"', 
-                                       'get', 'ProcessId,CommandLine,CreationDate'], 
-                                      capture_output=True, text=True, shell=True)
-                if result.returncode == 0:
-                    diagnostics["detailed_processes"] = result.stdout
-            except:
-                pass
-        
-        return {"success": True, "diagnostics": diagnostics}
-        
-    except Exception as e:
-        logging.error(f"Error getting process diagnostics: {e}")
-        return {"success": False, "error": str(e)}

@@ -8,9 +8,9 @@ const getServerIP = async () => {
         try {
             const response = await fetch(`http://${address}:3001/get-ip`);
             if (response.ok) {
+                const data = await response.json();
                 console.log('Successfully connected to server at:', address);
-                localStorage.setItem('serverIP', address);
-                return address;
+                return data.ip;
             }
         } catch (error) {
             console.log(`Failed to connect to ${address}:`, error);
@@ -42,41 +42,19 @@ export async function setupVideoImportHandler(csInterface) {
         }
 
         socket = io(`http://${serverIP}:3001`, {
-            transports: ['polling'],  // Force polling only for CEP stability
-            upgrade: false,  // Disable WebSocket upgrade for CEP stability
-            rememberUpgrade: false,
+            transports: ['polling', 'websocket'],
             reconnection: true,
-            reconnectionAttempts: 5,  // Limit attempts to avoid connection flooding
-            reconnectionDelay: 3000,  // Longer delay between reconnections
-            reconnectionDelayMax: 15000,  // Max 15 second delay
-            timeout: 20000,  // Shorter timeout for faster failure detection
-            forceNew: false,  // Reuse existing connections when possible
-            autoConnect: true,
-            withCredentials: false,  // Disable credentials for localhost
+            reconnectionAttempts: Infinity,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
+            timeout: 20000,
+            forceNew: true,
+            upgrade: true,
+            rememberUpgrade: true,
             rejectUnauthorized: false,
-            query: { 
-                client_type: 'premiere',
-                version: '3.0.1',
-                transport: 'polling'
-            },
-            // Optimizations for CEP environment
-            pingTimeout: 60000,   // 1 minute ping timeout
-            pingInterval: 25000,  // 25 second ping interval  
-            jsonp: false,         // Disable JSONP for better security
-            closeOnBeforeunload: true,  // Clean close on page unload
-            // Optimize for Windows CEP
-            compression: false,   // Disable compression for reliability
-            perMessageDeflate: false,  // Disable per-message compression
-            maxHttpBufferSize: 1e6,    // 1MB buffer size
-            // Transport-specific settings
-            transportOptions: {
-                polling: {
-                    extraHeaders: {
-                        'User-Agent': 'Adobe-CEP-Extension',
-                        'Accept': 'application/json'
-                    }
-                }
-            }
+            autoConnect: true,
+            withCredentials: true,
+            query: { client_type: 'premiere' }
         });
 
         let pendingImports = new Map();
@@ -237,61 +215,6 @@ export async function setupVideoImportHandler(csInterface) {
             const url = data.url;
             if (url && pendingImports.has(url)) {
                 pendingImports.delete(url);
-            }
-        });
-
-        // HTTP fallback polling for import triggers when WebSocket fails
-        const pollForImportTriggers = async () => {
-            try {
-                // Always use localhost for HTTP fallback to avoid IP detection issues
-                const response = await fetch('http://localhost:3001/check-import-trigger');
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data.trigger && data.trigger.path) {
-                        console.log('HTTP fallback: Received import trigger for:', data.trigger.path);
-                        
-                        // Wait a bit to ensure the file is fully written
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                        
-                        // Verify file exists before import
-                        const fs = window.cep_node.require('fs');
-                        if (!fs.existsSync(data.trigger.path)) {
-                            console.error('HTTP fallback: File does not exist at path:', data.trigger.path);
-                            return;
-                        }
-
-                        console.log('HTTP fallback: Starting import for file:', data.trigger.path);
-                        const result = await importVideo(data.trigger.path);
-                        console.log('HTTP fallback: Import result:', result);
-                    } else {
-                        // Log occasionally to confirm polling is working
-                        if (Math.random() < 0.01) { // 1% of polls
-                            console.log('HTTP fallback: Polling active, no triggers pending');
-                        }
-                    }
-                } else {
-                    console.warn('HTTP fallback: Server responded with status:', response.status);
-                }
-            } catch (error) {
-                // Log first few errors to help debug, then go silent
-                if (!pollForImportTriggers.errorCount) pollForImportTriggers.errorCount = 0;
-                if (pollForImportTriggers.errorCount < 3) {
-                    console.log('HTTP fallback polling error (will go silent after 3):', error.message);
-                    pollForImportTriggers.errorCount++;
-                }
-            }
-        };
-
-        // Start polling for HTTP triggers every 1 second (faster response)
-        const pollInterval = setInterval(pollForImportTriggers, 1000);
-        
-        // Start polling immediately
-        pollForImportTriggers();
-
-        // Clean up polling when socket disconnects
-        socket.on('disconnect', () => {
-            if (pollInterval) {
-                clearInterval(pollInterval);
             }
         });
 
