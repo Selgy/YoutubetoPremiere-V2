@@ -12,6 +12,7 @@ import re
 import tempfile
 import subprocess
 import time
+import threading
 
 def register_routes(app, socketio, settings):
     connected_clients = set()
@@ -264,52 +265,79 @@ def register_routes(app, socketio, settings):
             # Check for clip parameters regardless of passed download_type
             current_time = data.get('currentTime')
             
-            # If currentTime is provided, treat as clip download
-            if current_time is not None:
-                # Ensure download_type is set to 'clip'
-                download_type = 'clip'
-                logging.info(f"Handling as clip download for time: {current_time}")
-                
-                # Convert to float and use settings for before/after times
-                current_time = float(current_time)
-                seconds_before = float(current_settings.get('secondsBefore', 15))
-                seconds_after = float(current_settings.get('secondsAfter', 15))
-                
-                # Calculate clip start and end times
-                clip_start = max(0, current_time - seconds_before)
-                clip_end = current_time + seconds_after
-                
-                logging.info(f"Clip parameters: start={clip_start}, end={clip_end}, duration={clip_end-clip_start}")
-                
-                # Process the video with clip parameters
-                result = handle_video_url(
-                    video_url=video_url, 
-                    download_type='clip',  # Explicit clip type
-                    current_download=current_download, 
-                    socketio=socketio,
-                    clip_start=clip_start,
-                    clip_end=clip_end,
-                    settings=current_settings,
-                    cookies=cookies,
-                    user_agent=user_agent
-                )
-            else:
-                # No clip parameters, process as regular video
-                logging.info(f"Handling as regular {download_type} download")
-                result = handle_video_url(
-                    video_url=video_url, 
-                    download_type=download_type, 
-                    current_download=current_download, 
-                    socketio=socketio,
-                    settings=current_settings,
-                    cookies=cookies,
-                    user_agent=user_agent
-                )
+            # Start the download asynchronously to avoid HTTP timeout
+            def async_download():
+                try:
+                    # Copy download_type to local scope
+                    local_download_type = download_type
+                    
+                    # If currentTime is provided, treat as clip download
+                    if current_time is not None:
+                        # Ensure download_type is set to 'clip'
+                        local_download_type = 'clip'
+                        logging.info(f"Handling as clip download for time: {current_time}")
+                        
+                        # Convert to float and use settings for before/after times
+                        current_time_float = float(current_time)
+                        seconds_before = float(current_settings.get('secondsBefore', 15))
+                        seconds_after = float(current_settings.get('secondsAfter', 15))
+                        
+                        # Calculate clip start and end times
+                        clip_start = max(0, current_time_float - seconds_before)
+                        clip_end = current_time_float + seconds_after
+                        
+                        logging.info(f"Clip parameters: start={clip_start}, end={clip_end}, duration={clip_end-clip_start}")
+                        
+                        # Process the video with clip parameters
+                        result = handle_video_url(
+                            video_url=video_url, 
+                            download_type='clip',  # Explicit clip type
+                            current_download=current_download, 
+                            socketio=socketio,
+                            clip_start=clip_start,
+                            clip_end=clip_end,
+                            settings=current_settings,
+                            cookies=cookies,
+                            user_agent=user_agent
+                        )
+                    else:
+                        # No clip parameters, process as regular download
+                        logging.info(f"Handling as regular {local_download_type} download")
+                        result = handle_video_url(
+                            video_url=video_url, 
+                            download_type=local_download_type, 
+                            current_download=current_download, 
+                            socketio=socketio,
+                            settings=current_settings,
+                            cookies=cookies,
+                            user_agent=user_agent
+                        )
+                    
+                    if 'error' in result:
+                        logging.error(f"Download failed: {result['error']}")
+                        socketio.emit('download-failed', {'error': result['error']})
+                    else:
+                        logging.info(f"Download completed successfully: {result}")
+                        socketio.emit('download-complete', {'result': result})
+                        
+                except Exception as e:
+                    error_message = f"Error in async download: {str(e)}"
+                    logging.error(error_message)
+                    socketio.emit('download-failed', {'error': error_message})
             
-            if 'error' in result:
-                return jsonify({'error': result['error']}), 400
-                
-            return jsonify({'success': True}), 200
+            # Start the download in a separate thread
+            download_thread = threading.Thread(target=async_download)
+            download_thread.daemon = True
+            download_thread.start()
+            
+            # Return immediately to avoid HTTP timeout
+            return jsonify({
+                'success': True, 
+                'message': 'Download started',
+                'url': video_url,
+                'type': download_type
+            }), 200
+            
         except Exception as e:
             error_message = f"Error handling video URL: {str(e)}"
             logging.error(error_message)

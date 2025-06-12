@@ -1027,7 +1027,9 @@ function initializeSocket() {
                     setTimeout(() => resetButtonState(button), 3000);
                 }
             });
-            if (data.message) {
+            if (data.error) {
+                showNotification(data.error, 'error');
+            } else if (data.message) {
                 showNotification(data.message, 'error');
             }
         });
@@ -1351,6 +1353,9 @@ function sendURL(downloadType, additionalData = {}) {
                     if (status !== 200) {
                         throw new Error(data.error || 'Échec du traitement de la vidéo');
                     }
+                    // Download has been started successfully on the server
+                    // The actual progress will be tracked via WebSocket events
+                    console.log('YTP: Download request accepted by server:', data.message);
                 })
                 .catch(error => {
                     console.error('Error:', error);

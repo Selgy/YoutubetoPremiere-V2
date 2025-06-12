@@ -16,7 +16,13 @@ declare const window: Window & {
     };
   };
   __adobe_cep__: any;
+  CSInterface: any;
 };
+
+declare class CSInterface {
+  constructor();
+  evalScript(script: string, callback: (result: string) => void): void;
+}
 
 // Get the local IP address from the server
 const getLocalIP = async () => {
@@ -188,6 +194,62 @@ const Main = () => {
 
       socket.on('error', (error: any) => {
         console.log('Socket error:', error.message);
+      });
+
+      // Add missing event handlers for video import
+      socket.on('import_video', async (data: any) => {
+        console.log('Received import_video command:', data);
+        try {
+          const path = data.path;
+          if (!path) {
+            console.error('No path provided for import');
+            socket.emit('import_complete', { success: false, error: 'No path provided' });
+            return;
+          }
+
+          // Import the video using CEP ExtendScript
+          const success = await importVideoToPremiere(path);
+          
+          if (success) {
+            console.log('Successfully imported video:', path);
+            socket.emit('import_complete', { success: true, path: path });
+            showNotification('Vidéo importée avec succès', 'success');
+          } else {
+            console.error('Failed to import video:', path);
+            socket.emit('import_complete', { success: false, path: path, error: 'Import failed' });
+            showNotification('Échec de l\'importation vidéo', 'error');
+          }
+                 } catch (error) {
+           console.error('Error importing video:', error);
+           socket.emit('import_complete', { success: false, error: String(error) });
+           showNotification('Erreur lors de l\'importation', 'error');
+         }
+      });
+
+      socket.on('download_started', (data: any) => {
+        console.log('Download started:', data);
+        showNotification('Téléchargement commencé', 'info');
+      });
+
+      socket.on('download-complete', (data: any) => {
+        console.log('Download completed:', data);
+        showNotification('Téléchargement terminé', 'success');
+      });
+
+      socket.on('download-failed', (data: any) => {
+        console.log('Download failed:', data);
+        showNotification(`Échec du téléchargement: ${data.error || 'Erreur inconnue'}`, 'error');
+      });
+
+      socket.on('request_project_path', async () => {
+        console.log('Server requesting project path');
+        try {
+          const projectPath = await getPremiereProjectPath();
+          socket.emit('project_path_response', { path: projectPath });
+                 } catch (error) {
+           console.error('Error getting project path:', error);
+           socket.emit('project_path_response', { error: String(error) });
+         }
       });
     };
 
@@ -471,8 +533,90 @@ const Main = () => {
   };
 
   const showNotification = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
-    // Simple console log instead of toast notification
-    console.log(`${type.toUpperCase()}: ${message}`);
+    console.log(`[${type.toUpperCase()}] ${message}`);
+    // You can add visual notification logic here if needed
+  };
+
+  // Premiere Pro import functions
+  const importVideoToPremiere = async (filePath: string): Promise<boolean> => {
+    try {
+      if (!isCEPEnvironment) {
+        console.error('Cannot import video: Not in CEP environment');
+        return false;
+      }
+
+      // ExtendScript to import video file
+      const script = `
+        try {
+          if (!app.isDocumentOpen()) {
+            alert('No project is open in Premiere Pro');
+            'false';
+          } else {
+            var success = app.project.importFiles(['${filePath.replace(/\\/g, '\\\\')}'], true, app.project.rootItem, false);
+            if (success) {
+              'true';
+            } else {
+              'false';
+            }
+          }
+        } catch (e) {
+          'false';
+        }
+      `;
+
+      const result = await executeExtendScript(script);
+      return result === 'true';
+    } catch (error) {
+      console.error('Error importing video to Premiere:', error);
+      return false;
+    }
+  };
+
+  const getPremiereProjectPath = async (): Promise<string | null> => {
+    try {
+      if (!isCEPEnvironment) {
+        console.error('Cannot get project path: Not in CEP environment');
+        return null;
+      }
+
+      // ExtendScript to get project path
+      const script = `
+        try {
+          if (!app.isDocumentOpen()) {
+            'NO_PROJECT';
+          } else {
+            app.project.path || 'UNSAVED_PROJECT';
+          }
+        } catch (e) {
+          'ERROR';
+        }
+      `;
+
+      const result = await executeExtendScript(script);
+      return result && result !== 'NO_PROJECT' && result !== 'UNSAVED_PROJECT' && result !== 'ERROR' ? result : null;
+    } catch (error) {
+      console.error('Error getting Premiere project path:', error);
+      return null;
+    }
+  };
+
+  const executeExtendScript = async (script: string): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      try {
+        if (!isCEPEnvironment || !window.__adobe_cep__) {
+          reject(new Error('CEP environment not available'));
+          return;
+        }
+
+        // Use CEP evalScript to execute ExtendScript
+        const csInterface = new CSInterface();
+        csInterface.evalScript(script, (result: string) => {
+          resolve(result);
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
   };
 
   if (isLoading) {
