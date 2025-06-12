@@ -1,11 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Youtube to Premiere Pro V2",
-<<<<<<< HEAD
   "version": "3.1.116",
-=======
-  "version": "3.0.0",
->>>>>>> ab4cceb737d33b669730f2cb3dacbf440f653b39
   "description": "Import YouTube videos directly into Adobe Premiere Pro",
   "permissions": [
     "activeTab",
