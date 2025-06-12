@@ -71,14 +71,14 @@ def register_routes(app, socketio, settings):
 
     @app.route('/get-version', methods=['GET'])
     def get_version():
-        return jsonify(version='3.0.4')
+        return jsonify(version='3.0.0')
 
     @app.route('/check-updates', methods=['GET'])
     def check_updates():
         """Check for available updates from GitHub releases"""
         try:
             # Current version
-            current_version = '3.0.4'
+            current_version = '3.0.0'
             
             # Get client type from query parameter
             client_type = request.args.get('client_type', 'unknown')
