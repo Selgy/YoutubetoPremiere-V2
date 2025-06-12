@@ -277,7 +277,8 @@ async function checkForUpdates() {
             });
         });
         
-        const response = await fetch('http://localhost:3001/check-updates', {
+        // Add client_type parameter to identify this as Chrome extension
+        const response = await fetch('http://localhost:3001/check-updates?client_type=chrome', {
             method: 'GET',
             timeout: 5000
         });
@@ -306,6 +307,13 @@ async function checkForUpdates() {
             
             updateInfo = data;
             showUpdateNotification(data);
+            
+            // Also show a more visible notification via content script
+            notifyContentScript('UPDATE_AVAILABLE', {
+                currentVersion: data.current_version,
+                latestVersion: data.latest_version,
+                releaseNotes: data.release_notes
+            });
         } else {
             console.log('YTP Popup: No updates available');
         }

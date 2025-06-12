@@ -80,6 +80,9 @@ def register_routes(app, socketio, settings):
             # Current version
             current_version = '3.0.127'
             
+            # Get client type from query parameter
+            client_type = request.args.get('client_type', 'unknown')
+            
             # Detect OS
             system = platform.system().lower()
             machine = platform.machine().lower()
@@ -144,10 +147,17 @@ def register_routes(app, socketio, settings):
                         download_urls['mac_intel'] = f"{base_url}/YouTubetoPremiere-macOS.pkg"
                         download_url = download_urls.get(os_type)
                     
+                    # Log the update check for this client type
+                    if is_newer:
+                        logging.info(f"Update available for {client_type}: v{current_version} -> v{latest_version}")
+                    else:
+                        logging.info(f"No update needed for {client_type}: v{current_version} is current")
+                    
                     return jsonify({
                         'current_version': current_version,
                         'latest_version': latest_version,
                         'has_update': is_newer,
+                        'client_type': client_type,
                         'os_type': os_type,
                         'download_url': download_url,
                         'all_download_urls': download_urls,
@@ -161,6 +171,7 @@ def register_routes(app, socketio, settings):
                         'current_version': current_version,
                         'latest_version': current_version,
                         'has_update': False,
+                        'client_type': client_type,
                         'os_type': os_type,
                         'success': True,
                         'message': 'Repository not found. You have the latest available version.'
@@ -168,6 +179,7 @@ def register_routes(app, socketio, settings):
                 else:
                     return jsonify({
                         'current_version': current_version,
+                        'client_type': client_type,
                         'success': False,
                         'error': f'GitHub API returned status {response.status_code}'
                     })
@@ -178,6 +190,7 @@ def register_routes(app, socketio, settings):
                     'current_version': current_version,
                     'latest_version': current_version,
                     'has_update': False,
+                    'client_type': client_type,
                     'os_type': os_type,
                     'success': True,
                     'message': 'Unable to check for updates. You may be offline or GitHub is unavailable.'
@@ -187,6 +200,7 @@ def register_routes(app, socketio, settings):
             logging.error(f"Error checking updates: {e}")
             return jsonify({
                 'current_version': current_version,
+                'client_type': client_type,
                 'success': False,
                 'error': str(e)
             }), 500
@@ -1002,6 +1016,31 @@ def register_routes(app, socketio, settings):
         except Exception as e:
             logging.error(f"Error triggering import: {e}")
             return jsonify({'error': str(e)}), 500
+
+    @app.route('/broadcast-update-notification', methods=['POST'])
+    def broadcast_update_notification():
+        """Broadcast update notification to all connected clients"""
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({'success': False, 'error': 'No data provided'}), 400
+            
+            # Broadcast to all connected clients
+            socketio.emit('update_available', {
+                'current_version': data.get('current_version'),
+                'latest_version': data.get('latest_version'),
+                'download_url': data.get('download_url'),
+                'release_notes': data.get('release_notes'),
+                'has_update': data.get('has_update', False)
+            })
+            
+            logging.info(f"Update notification broadcasted: v{data.get('current_version')} -> v{data.get('latest_version')}")
+            
+            return jsonify({'success': True}), 200
+            
+        except Exception as e:
+            logging.error(f"Error broadcasting update notification: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
 
 
     

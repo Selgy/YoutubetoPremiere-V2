@@ -246,10 +246,21 @@ const Main = () => {
         try {
           const projectPath = await getPremiereProjectPath();
           socket.emit('project_path_response', { path: projectPath });
-                 } catch (error) {
-           console.error('Error getting project path:', error);
-           socket.emit('project_path_response', { error: String(error) });
-         }
+        } catch (error) {
+          console.error('Error getting project path:', error);
+          socket.emit('project_path_response', { error: String(error) });
+        }
+      });
+
+      socket.on('update_available', (data: any) => {
+        console.log('Update available notification received:', data);
+        if (data.has_update) {
+          setUpdateInfo(data);
+          setLatestVersion(data.latest_version);
+          setUpdateAvailable(true);
+          setShowUpdateModal(true);
+          showNotification(`🚀 Version ${data.latest_version} disponible !`, 'info');
+        }
       });
     };
 
@@ -304,7 +315,8 @@ const Main = () => {
     
     setIsCheckingUpdates(true);
     try {
-      const response = await fetch(getServerURL('/check-updates'));
+      // Add client_type parameter to identify this as Premiere Pro extension
+      const response = await fetch(getServerURL('/check-updates?client_type=premiere'));
       const data = await response.json();
       
       if (data.success) {
@@ -314,7 +326,11 @@ const Main = () => {
         
         // Show modal if update available
         if (data.has_update) {
+          console.log(`Premiere Pro Extension: Update available - v${data.current_version} -> v${data.latest_version}`);
           setShowUpdateModal(true);
+          showNotification(`Nouvelle version ${data.latest_version} disponible !`, 'info');
+        } else {
+          console.log(`Premiere Pro Extension: No updates available - v${data.current_version} is current`);
         }
       } else {
         console.error('Error checking for updates:', data.error);

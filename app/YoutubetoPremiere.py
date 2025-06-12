@@ -754,6 +754,9 @@ def run_server():
     premiere_monitor_thread = threading.Thread(target=monitor_premiere_and_shutdown_wrapper)
     premiere_monitor_thread.daemon = True
     premiere_monitor_thread.start()
+    
+    # Start automatic update checker
+    start_update_checker()
 
     # Keep main thread alive
     while not should_shutdown:
@@ -926,6 +929,98 @@ def check_server_already_running():
     except Exception as e:
         logging.warning(f"Error checking if server is running: {e}")
         return False
+
+def check_and_broadcast_updates():
+    """Check for updates periodically and broadcast to all connected clients"""
+    def version_tuple(v):
+        return tuple(map(int, (v.split("."))))
+    
+    current_version = '3.0.127'
+    last_check_time = 0
+    last_notified_version = None
+    
+    while True:
+        try:
+            current_time = time.time()
+            # Check every 6 hours (21600 seconds)
+            if current_time - last_check_time >= 21600:
+                logging.info("Performing automatic update check...")
+                
+                github_api_url = 'https://api.github.com/repos/Selgy/YoutubetoPremiere-V2/releases/latest'
+                response = requests.get(github_api_url, timeout=10)
+                
+                if response.status_code == 200:
+                    release_data = response.json()
+                    latest_version = release_data.get('tag_name', '').lstrip('v')
+                    
+                    try:
+                        is_newer = version_tuple(latest_version) > version_tuple(current_version)
+                    except:
+                        is_newer = latest_version != current_version
+                    
+                    if is_newer and latest_version != last_notified_version:
+                        # New update available, broadcast to all clients
+                        logging.info(f"Broadcasting update notification: v{current_version} -> v{latest_version}")
+                        
+                        # Get download URLs
+                        system = platform.system().lower()
+                        machine = platform.machine().lower()
+                        
+                        download_urls = {}
+                        assets = release_data.get('assets', [])
+                        
+                        for asset in assets:
+                            asset_name = asset.get('name', '')
+                            browser_download_url = asset.get('browser_download_url', '')
+                            
+                            if 'Windows' in asset_name and asset_name.endswith('.exe'):
+                                download_urls['windows'] = browser_download_url
+                            elif 'macOS' in asset_name and asset_name.endswith('.pkg'):
+                                download_urls['mac_arm64'] = browser_download_url
+                                download_urls['mac_intel'] = browser_download_url
+                        
+                        # Determine current OS
+                        if system == 'darwin':
+                            if 'arm' in machine or 'aarch64' in machine:
+                                os_type = 'mac_arm64'
+                            else:
+                                os_type = 'mac_intel'
+                        elif system == 'windows':
+                            os_type = 'windows'
+                        else:
+                            os_type = 'unknown'
+                        
+                        download_url = download_urls.get(os_type)
+                        
+                        # Broadcast to all connected clients
+                        socketio.emit('update_available', {
+                            'current_version': current_version,
+                            'latest_version': latest_version,
+                            'download_url': download_url,
+                            'release_notes': release_data.get('body', ''),
+                            'has_update': True,
+                            'auto_check': True
+                        })
+                        
+                        last_notified_version = latest_version
+                        logging.info(f"Update notification sent to all clients: v{latest_version}")
+                    
+                    else:
+                        logging.info(f"No new updates available (current: v{current_version}, latest: v{latest_version})")
+                
+                last_check_time = current_time
+                
+        except Exception as e:
+            logging.error(f"Error in automatic update check: {e}")
+        
+        # Sleep for 1 hour before checking again
+        time.sleep(3600)
+
+def start_update_checker():
+    """Start the automatic update checker in a daemon thread"""
+    update_thread = threading.Thread(target=check_and_broadcast_updates, daemon=True)
+    update_thread.start()
+    logging.info("Automatic update checker started")
 
 def main():
     """Main function"""

@@ -999,38 +999,19 @@ function initializeSocket() {
 
         socket.on('download-failed', (data) => {
             console.log('Download failed:', data);
-            // Reset all downloading states and show error
-            Object.keys(buttonStates).forEach(type => {
-                buttonStates[type].isDownloading = false;
-                const button = document.getElementById(
-                    type === 'premiere' ? 'send-to-premiere-button' :
-                    type === 'clip' ? 'clip-button' : 'audio-button'
-                );
-                if (button && button.classList.contains('downloading')) {
-                    button.classList.remove('downloading', 'loading');
-                    button.classList.add('failure');
-                    const progressText = button.querySelector('.progress-text');
-                    if (progressText) {
-                        progressText.innerHTML = '';
-                        const icon = document.createElement('span');
-                        icon.className = 'button-icon';
-                        if (button.id === 'send-to-premiere-button') {
-                            icon.textContent = 'movie';
-                        } else if (button.id === 'clip-button') {
-                            icon.textContent = 'content_cut';
-                        } else if (button.id === 'audio-button') {
-                            icon.textContent = 'music_note';
-                        }
-                        progressText.appendChild(icon);
-                        progressText.appendChild(document.createTextNode('Erreur'));
-                    }
-                    setTimeout(() => resetButtonState(button), 3000);
-                }
-            });
-            if (data.error) {
-                showNotification(data.error, 'error');
-            } else if (data.message) {
-                showNotification(data.message, 'error');
+            resetButtonStates();
+            showNotification('Échec du téléchargement', 'error');
+        });
+
+        socket.on('update_available', (data) => {
+            console.log('Update available notification received via WebSocket:', data);
+            if (data.has_update && data.auto_check) {
+                // Show update notification on page for automatic checks
+                showUpdateNotificationOnPage({
+                    currentVersion: data.current_version,
+                    latestVersion: data.latest_version,
+                    releaseNotes: data.release_notes
+                });
             }
         });
 
@@ -2155,5 +2136,250 @@ setInterval(() => {
         }, 500);
     }
 }, 1000);
+
+// Handle messages from popup
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === 'YTP_POPUP_MESSAGE') {
+        console.log('YTP: Received message from popup:', message);
+        
+        switch (message.action) {
+            case 'TOGGLE_PANEL':
+                togglePanel();
+                sendResponse({ success: true });
+                break;
+            case 'TOGGLE_PIN':
+                togglePin();
+                sendResponse({ success: true });
+                break;
+            case 'UPDATE_POSITION':
+                if (message.data && message.data.position) {
+                    updatePosition(message.data.position);
+                }
+                sendResponse({ success: true });
+                break;
+            case 'UPDATE_AVAILABLE':
+                showUpdateNotificationOnPage(message.data);
+                sendResponse({ success: true });
+                break;
+            default:
+                sendResponse({ success: false, error: 'Unknown action' });
+        }
+    }
+});
+
+function showNotification(message, type = 'info') {
+    // Remove existing notifications
+    const existingNotifications = document.querySelectorAll('.ytp-notification');
+    existingNotifications.forEach(notification => notification.remove());
+
+    const notification = document.createElement('div');
+    notification.className = 'ytp-notification';
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 15px 20px;
+        border-radius: 8px;
+        color: white;
+        font-family: Arial, sans-serif;
+        font-size: 14px;
+        font-weight: 500;
+        z-index: 10000;
+        max-width: 300px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        animation: slideIn 0.3s ease-out;
+        transition: transform 0.3s ease;
+    `;
+
+    // Set background color based on type
+    const colors = {
+        'success': '#4CAF50',
+        'error': '#f44336',
+        'info': '#2196F3',
+        'warning': '#ff9800'
+    };
+    notification.style.backgroundColor = colors[type] || colors['info'];
+
+    notification.textContent = message;
+    document.body.appendChild(notification);
+
+    // Auto-remove after 5 seconds for non-error messages
+    if (type !== 'error') {
+        setTimeout(() => {
+            if (notification.parentNode) {
+                notification.style.transform = 'translateX(100%)';
+                setTimeout(() => {
+                    if (notification.parentNode) {
+                        notification.remove();
+                    }
+                }, 300);
+            }
+        }, 5000);
+    }
+
+    // Add click to dismiss
+    notification.addEventListener('click', () => {
+        notification.style.transform = 'translateX(100%)';
+        setTimeout(() => {
+            if (notification.parentNode) {
+                notification.remove();
+            }
+        }, 300);
+    });
+}
+
+function showUpdateNotificationOnPage(updateData) {
+    // Remove any existing update notification
+    const existingUpdateNotif = document.querySelector('.ytp-update-notification');
+    if (existingUpdateNotif) {
+        existingUpdateNotif.remove();
+    }
+
+    const notification = document.createElement('div');
+    notification.className = 'ytp-update-notification';
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 20px;
+        border-radius: 12px;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        font-size: 14px;
+        z-index: 10001;
+        max-width: 350px;
+        box-shadow: 0 8px 32px rgba(102, 126, 234, 0.4);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        animation: slideInFromRight 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+        cursor: pointer;
+    `;
+
+    const title = document.createElement('div');
+    title.style.cssText = `
+        font-weight: 600;
+        font-size: 16px;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    `;
+    title.innerHTML = `
+        <span style="font-size: 20px;">🚀</span>
+        Nouvelle mise à jour disponible !
+    `;
+
+    const content = document.createElement('div');
+    content.style.cssText = `
+        margin-bottom: 15px;
+        line-height: 1.4;
+        opacity: 0.9;
+    `;
+    content.innerHTML = `
+        <div style="margin-bottom: 4px;">
+            Version <strong>${updateData.latestVersion}</strong> est disponible
+        </div>
+        <div style="font-size: 12px; opacity: 0.7;">
+            Version actuelle : ${updateData.currentVersion}
+        </div>
+    `;
+
+    const buttonContainer = document.createElement('div');
+    buttonContainer.style.cssText = `
+        display: flex;
+        gap: 10px;
+        margin-top: 15px;
+    `;
+
+    const downloadBtn = document.createElement('button');
+    downloadBtn.style.cssText = `
+        background: rgba(255, 255, 255, 0.9);
+        color: #667eea;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-weight: 600;
+        font-size: 12px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        flex: 1;
+    `;
+    downloadBtn.textContent = 'Télécharger';
+    downloadBtn.onmouseover = () => {
+        downloadBtn.style.background = 'white';
+        downloadBtn.style.transform = 'translateY(-1px)';
+    };
+    downloadBtn.onmouseout = () => {
+        downloadBtn.style.background = 'rgba(255, 255, 255, 0.9)';
+        downloadBtn.style.transform = 'translateY(0)';
+    };
+    downloadBtn.onclick = (e) => {
+        e.stopPropagation();
+        // Open Chrome Web Store or update page
+        window.open('chrome://extensions/', '_blank');
+        notification.remove();
+    };
+
+    const dismissBtn = document.createElement('button');
+    dismissBtn.style.cssText = `
+        background: transparent;
+        color: rgba(255, 255, 255, 0.7);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-size: 12px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        flex: 1;
+    `;
+    dismissBtn.textContent = 'Plus tard';
+    dismissBtn.onmouseover = () => {
+        dismissBtn.style.background = 'rgba(255, 255, 255, 0.1)';
+        dismissBtn.style.color = 'white';
+    };
+    dismissBtn.onmouseout = () => {
+        dismissBtn.style.background = 'transparent';
+        dismissBtn.style.color = 'rgba(255, 255, 255, 0.7)';
+    };
+    dismissBtn.onclick = (e) => {
+        e.stopPropagation();
+        notification.style.transform = 'translateX(100%)';
+        setTimeout(() => notification.remove(), 300);
+    };
+
+    buttonContainer.appendChild(downloadBtn);
+    buttonContainer.appendChild(dismissBtn);
+
+    notification.appendChild(title);
+    notification.appendChild(content);
+    notification.appendChild(buttonContainer);
+
+    // Add CSS animation
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes slideInFromRight {
+            0% {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            100% {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+    `;
+    document.head.appendChild(style);
+
+    document.body.appendChild(notification);
+
+    // Auto-dismiss after 30 seconds
+    setTimeout(() => {
+        if (notification.parentNode) {
+            notification.style.transform = 'translateX(100%)';
+            setTimeout(() => notification.remove(), 300);
+        }
+    }, 30000);
+}
 
  
