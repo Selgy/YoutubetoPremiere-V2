@@ -1,7 +1,7 @@
 from flask import request, jsonify, send_file
 import logging
 import json
-from video_processing import handle_video_url, get_audio_language_options
+from video_processing import handle_video_url, get_audio_language_options, set_emit_function
 from utils import play_notification_sound, save_license_key, get_license_key, load_settings, save_settings, save_download_path, open_sounds_folder
 import os
 import sys
@@ -15,6 +15,13 @@ import subprocess
 def register_routes(app, socketio, settings):
     connected_clients = set()
     current_download = {'process': None, 'ydl': None, 'cancel_callback': None}
+    
+    # Import emit_to_client_type from the main module
+    # We need to get this from the calling context since it's defined in YoutubetoPremiere.py
+    from YoutubetoPremiere import emit_to_client_type
+    
+    # Set the emit function for video_processing to use
+    set_emit_function(emit_to_client_type)
     
     def validate_youtube_url(url):
         """Validate that the URL is from a YouTube domain"""

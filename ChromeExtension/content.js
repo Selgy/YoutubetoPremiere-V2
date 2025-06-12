@@ -843,7 +843,8 @@ function initializeSocket() {
             rememberUpgrade: false,
             maxHttpBufferSize: 1e8,
             pingTimeout: 60000,
-            pingInterval: 25000
+            pingInterval: 25000,
+            query: { client_type: 'chrome' }
         });
 
         socket.on('connect', () => {

@@ -135,7 +135,7 @@ const Main = () => {
       rejectUnauthorized: false,
       autoConnect: true,
       withCredentials: true,
-      query: { client_type: 'chrome' }
+      query: { client_type: 'premiere' }
     });
 
     let retryCount = 0;
@@ -172,6 +172,43 @@ const Main = () => {
         console.log(`Retrying after error (attempt ${retryCount})`);
         socket.connect();
       }, Math.min(1000 * Math.pow(2, retryCount % 10), 10000));
+    });
+
+    // Add handlers for download and import events
+    socket.on('download_started', (data) => {
+      console.log('Download started:', data.url);
+      showNotification('Download started', 'info');
+    });
+
+    socket.on('progress', (data) => {
+      console.log('Download progress:', data);
+      if (data.progress) {
+        showNotification(`Download progress: ${data.progress}%`, 'info');
+      }
+    });
+
+    socket.on('complete', (data) => {
+      console.log('Download complete:', data);
+      showNotification('Download completed successfully!', 'success');
+    });
+
+    socket.on('download_error', (data) => {
+      console.error('Download error:', data);
+      showNotification(data.message || 'Download failed', 'error');
+    });
+
+    socket.on('import_complete', (data) => {
+      console.log('Import complete:', data);
+      if (data.success) {
+        showNotification('Video imported successfully!', 'success');
+      } else {
+        showNotification(data.error || 'Import failed', 'error');
+      }
+    });
+
+    socket.on('import_failed', (data) => {
+      console.error('Import failed:', data);
+      showNotification(data.error || 'Import failed', 'error');
     });
 
     // Force initial connection
@@ -364,8 +401,48 @@ const Main = () => {
   };
 
   const showNotification = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
-    // Simple console log instead of toast notification
     console.log(`${type.toUpperCase()}: ${message}`);
+    
+    // Create a simple notification toast
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: ${type === 'success' ? '#22c55e' : type === 'error' ? '#ef4444' : '#3b82f6'};
+      color: white;
+      padding: 12px 16px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      z-index: 9999;
+      font-size: 14px;
+      font-weight: 500;
+      max-width: 350px;
+      word-wrap: break-word;
+      opacity: 0;
+      transform: translateX(100%);
+      transition: all 0.3s ease;
+    `;
+    notification.textContent = message;
+    
+    document.body.appendChild(notification);
+    
+    // Animate in
+    setTimeout(() => {
+      notification.style.opacity = '1';
+      notification.style.transform = 'translateX(0)';
+    }, 10);
+    
+    // Auto remove after 4 seconds
+    setTimeout(() => {
+      notification.style.opacity = '0';
+      notification.style.transform = 'translateX(100%)';
+      setTimeout(() => {
+        if (notification.parentNode) {
+          notification.remove();
+        }
+      }, 300);
+    }, 4000);
   };
 
   if (isLoading) {

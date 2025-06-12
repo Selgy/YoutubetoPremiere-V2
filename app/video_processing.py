@@ -25,6 +25,23 @@ import shutil
 from yt_dlp.utils import download_range_func  # Importer la fonction correcte
 import urllib.parse as urlparse
 
+# Global variable to store emit_to_client_type function
+_emit_to_client_type = None
+
+def set_emit_function(emit_function):
+    """Set the emit_to_client_type function for targeted client emissions"""
+    global _emit_to_client_type
+    _emit_to_client_type = emit_function
+
+def emit_targeted(event, data, client_type=None, socketio=None):
+    """Emit event to specific client type if available, otherwise broadcast"""
+    if _emit_to_client_type and client_type:
+        _emit_to_client_type(event, data, client_type)
+    elif socketio:
+        socketio.emit(event, data)
+    else:
+        logging.warning(f"Could not emit event {event}: no emission method available")
+
 
 
 def create_cookies_file(cookies_list):
@@ -685,7 +702,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                         percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
                         percentage = percentage.replace(' ', '').replace('%', '')
                         logging.info(f'Clip Progress: {percentage}%')
-                        socketio.emit('progress', {'progress': percentage, 'type': 'clip'})
+                        emit_targeted('progress', {'progress': percentage, 'type': 'clip'}, 'chrome', socketio)
                 except Exception as e:
                     logging.error(f"Error in clip progress hook: {e}")
 
@@ -876,20 +893,20 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                 logging.info(f"Metadata added: {video_file_path}")
                 
                 # Emit events
-                socketio.emit('complete', {'type': 'clip', 'message': 'Clip téléchargé avec succès'})
-                socketio.emit('download-complete', {'url': video_url, 'path': video_file_path})
-                socketio.emit('download_complete')
+                emit_targeted('complete', {'type': 'clip', 'message': 'Clip téléchargé avec succès'}, 'chrome', socketio)
+                emit_targeted('download-complete', {'url': video_url, 'path': video_file_path}, 'chrome', socketio)
+                emit_targeted('import_video', {'path': video_file_path}, 'premiere', socketio)
                 return {"success": True, "path": video_file_path}
             except subprocess.CalledProcessError as e:
                 logging.error(f"Error adding metadata: {e.stderr}")
                 # Continue anyway, as the clip itself is fine
-                socketio.emit('download-complete', {'url': video_url, 'path': video_file_path})
-                socketio.emit('download_complete')
+                emit_targeted('download-complete', {'url': video_url, 'path': video_file_path}, 'chrome', socketio)
+                emit_targeted('import_video', {'path': video_file_path}, 'premiere', socketio)
                 return {"success": True, "path": video_file_path}
         else:
             error_message = "Clip download failed - output file not found"
             logging.error(error_message)
-            socketio.emit('download-failed', {'message': error_message})
+            emit_targeted('download-failed', {'message': error_message}, 'chrome', socketio)
             return {"error": error_message}
 
     except Exception as e:
@@ -936,7 +953,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                         percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
                         percentage = percentage.replace(' ', '').replace('%', '')
                         logging.info(f'Progress: {percentage}%')
-                        socketio.emit('progress', {'progress': percentage, 'type': 'full'})
+                        emit_targeted('progress', {'progress': percentage, 'type': 'full'}, 'chrome', socketio)
                 except Exception as e:
                     logging.error(f"Error in progress hook: {e}")
 
@@ -1234,10 +1251,9 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     os.replace(f'{actual_file}_with_metadata.mp4', actual_file)
                     
                     logging.info(f"Video downloaded and processed: {actual_file}")
-                    socketio.emit('import_video', {'path': actual_file})
+                    emit_targeted('import_video', {'path': actual_file}, 'premiere', socketio)
                     # Emit both formats to ensure compatibility
-                    socketio.emit('download-complete', {'url': video_url, 'path': actual_file})  # Hyphenated format for Chrome extension
-                    socketio.emit('download_complete')  # Underscore format for other clients
+                    emit_targeted('download-complete', {'url': video_url, 'path': actual_file}, 'chrome', socketio)  # Hyphenated format for Chrome extension
                     
                     return actual_file
                 except subprocess.CalledProcessError as e:
@@ -1245,9 +1261,8 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     logging.error(f"FFmpeg stderr: {e.stderr if hasattr(e, 'stderr') else 'No stderr'}")
                     # Still return the file even if metadata failed
                     logging.info(f"Returning file without metadata: {actual_file}")
-                    socketio.emit('import_video', {'path': actual_file})
-                    socketio.emit('download-complete', {'url': video_url, 'path': actual_file})
-                    socketio.emit('download_complete')
+                    emit_targeted('import_video', {'path': actual_file}, 'premiere', socketio)
+                    emit_targeted('download-complete', {'url': video_url, 'path': actual_file}, 'chrome', socketio)
                     return actual_file
             else:
                 logging.error(f"No suitable file found. Expected: {final_path}")
@@ -1271,7 +1286,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             error_message = "Download failed due to Windows output stream issue. This is a known yt-dlp issue on Windows. Please try again or restart the application."
             logging.error("Windows stdout/stderr pipe error detected - recommending restart")
         
-        socketio.emit('download-failed', {'message': error_message})
+        emit_targeted('download-failed', {'message': error_message}, 'chrome', socketio)
         return None
 
 def download_audio(video_url, download_path, ffmpeg_path, socketio, current_download=None, settings=None, cookies=None, user_agent=None):
@@ -1356,11 +1371,11 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                         percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
                         percentage = percentage.replace(' ', '').replace('%', '')
                         logging.info(f'Progress: {percentage}%')
-                        socketio.emit('progress', {'progress': percentage, 'type': 'audio'})
+                        emit_targeted('progress', {'progress': percentage, 'type': 'audio'}, 'chrome', socketio)
                 except Exception as e:
                     logging.error(f"Error in progress hook: {e}")
             elif d['status'] == 'finished':
-                socketio.emit('progress', {'progress': '100', 'type': 'audio'})
+                emit_targeted('progress', {'progress': '100', 'type': 'audio'}, 'chrome', socketio)
 
         # Configure yt-dlp options with retries and timeouts
         ydl_opts = {
@@ -1527,10 +1542,9 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
 
                 # Emit both completion events before returning
                 if socketio:
-                    socketio.emit('import_video', {'path': output_path})
+                    emit_targeted('import_video', {'path': output_path}, 'premiere', socketio)
                     # Emit both formats to ensure compatibility
-                    socketio.emit('download-complete', {'url': video_url, 'path': output_path})  # Hyphenated format for Chrome extension
-                    socketio.emit('download_complete')  # Underscore format for other clients
+                    emit_targeted('download-complete', {'url': video_url, 'path': output_path}, 'chrome', socketio)  # Hyphenated format for Chrome extension
 
                 return output_path
 
@@ -1539,13 +1553,13 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                 logging.error(f"Exception type: {type(e)}")
                 logging.error(f"Exception traceback: {traceback.format_exc()}")
                 if socketio:
-                    socketio.emit('download-failed', {'message': f'Error downloading audio: {str(e)}'})
+                    emit_targeted('download-failed', {'message': f'Error downloading audio: {str(e)}'}, 'chrome', socketio)
                 return None
 
     except Exception as e:
         logging.error(f"Error in download_audio: {str(e)}")
         if socketio:
-            socketio.emit('download-failed', {'message': str(e)})
+            emit_targeted('download-failed', {'message': str(e)}, 'chrome', socketio)
         return None
 
 def format_timestamp(seconds):
