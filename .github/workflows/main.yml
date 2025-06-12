@@ -411,7 +411,7 @@ jobs:
             --hidden-import=engineio.async_drivers.threading `
             --hidden-import=flask --hidden-import=flask_cors --hidden-import=flask_socketio `
             --hidden-import=yt_dlp --hidden-import=psutil `
-            --add-data "app/sounds/notification_sound.mp3;." `
+            --add-data "app/sounds;sounds" `
             --add-binary "ffmpeg.exe;." `
             app/YoutubetoPremiere.py
           
@@ -425,6 +425,15 @@ jobs:
             echo "Build verification successful - dist\YoutubetoPremiere exists"
             echo "Build contents:"
             Get-ChildItem "dist\YoutubetoPremiere" | Select-Object -First 10 | ForEach-Object { echo "  $($_.Name)" }
+            
+            # Verify sounds directory is included
+            if (Test-Path "dist\YoutubetoPremiere\sounds") {
+              echo "✅ Sounds directory found in build"
+              echo "Sound files included:"
+              Get-ChildItem "dist\YoutubetoPremiere\sounds" | ForEach-Object { echo "  $($_.Name)" }
+            } else {
+              echo "❌ WARNING: Sounds directory not found in build"
+            }
           } else {
             echo "ERROR: Build verification failed - dist\YoutubetoPremiere not found"
             exit 1
@@ -496,6 +505,15 @@ jobs:
             exit 1
           }
           
+          # Verify sounds directory is properly copied
+          if (Test-Path "./dist/cep/exec/sounds") {
+            echo "✅ Sounds directory found in CEP extension"
+            echo "Sound files in CEP extension:"
+            Get-ChildItem "./dist/cep/exec/sounds" | ForEach-Object { echo "  $($_.Name)" }
+          } else {
+            echo "❌ WARNING: Sounds directory not found in CEP extension"
+          }
+          
           # Show CEP extension structure
           echo "CEP extension directory structure:"
           Get-ChildItem "./dist/cep" -Recurse | Where-Object { $_.PSIsContainer -eq $false } | Select-Object -First 15 | ForEach-Object { 
@@ -503,8 +521,6 @@ jobs:
             echo "  $relativePath"
           }
         shell: powershell
-
-
 
       - name: Create Windows Installer
         run: |
