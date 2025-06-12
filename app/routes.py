@@ -73,14 +73,14 @@ def register_routes(app, socketio, settings):
 
     @app.route('/get-version', methods=['GET'])
     def get_version():
-        return jsonify(version='3.0.1')
+        return jsonify(version='3.0.2')
 
     @app.route('/check-updates', methods=['GET'])
     def check_updates():
         """Check for available updates from GitHub releases"""
         try:
             # Current version
-            current_version = '3.0.1'
+            current_version = '3.0.2'
             
             # Detect OS
             system = platform.system().lower()
