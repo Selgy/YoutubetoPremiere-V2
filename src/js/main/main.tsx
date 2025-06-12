@@ -61,7 +61,11 @@ const Main = () => {
   const [updateInfo, setUpdateInfo] = useState<any>(null);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
+<<<<<<< HEAD
   const currentVersion = '3.1.116';
+=======
+  const currentVersion = '3.0.0';
+>>>>>>> ab4cceb737d33b669730f2cb3dacbf440f653b39
   const [currentPage, setCurrentPage] = useState('main');
   const [serverIP, setServerIP] = useState('localhost');
   const [isCEPEnvironment, setIsCEPEnvironment] = useState(false);
