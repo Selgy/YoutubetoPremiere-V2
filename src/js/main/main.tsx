@@ -4,7 +4,7 @@ import Settings from './Settings';
 import io from 'socket.io-client';
 import CSInterface from '../lib/cep/csinterface';
 import { SystemPath } from '../lib/cep/csinterface';
-import { AppLauncher } from '../lib/utils/app-launcher';
+import { AppLauncher } from '../lib/utils';
 
 declare const window: Window & {
   cep: any;
@@ -62,7 +62,7 @@ const Main = () => {
   const [updateInfo, setUpdateInfo] = useState<any>(null);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const currentVersion = '3.0.2';
+  const currentVersion = '3.0.15';
   const [currentPage, setCurrentPage] = useState('main');
   const [serverIP, setServerIP] = useState('localhost');
   const [isCEPEnvironment, setIsCEPEnvironment] = useState(false);
