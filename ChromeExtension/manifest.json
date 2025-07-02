@@ -1,61 +1,61 @@
 {
-  "manifest_version": 3,
-  "name": "Youtube to Premiere Pro V2",
-  "version": "3.0.2",
-  "description": "Import YouTube videos directly into Adobe Premiere Pro",
-  "permissions": [
-    "activeTab",
-    "storage",
-    "downloads",
-    "cookies"
-  ],
-  "host_permissions": [
-    "https://www.youtube.com/*",
-    "https://youtu.be/*",
-    "https://youtube.com/*",
-    "https://m.youtube.com/*",
-    "https://accounts.google.com/*",
-    "https://*.google.com/*",
-    "https://localhost:3002/*",
-    "http://localhost:3002/*",
-    "https://127.0.0.1:3002/*",
-    "http://127.0.0.1:3002/*"
-  ],
-  "action": {
-    "default_icon": {
-      "48": "icon.png"
-    },
-    "default_popup": "popup.html",
-    "default_title": "YouTube to Premiere - Paramètres"
-  },
-  "background": {
-    "service_worker": "background.js"
-  },
-  "content_scripts": [
-    {
-      "matches": [
-        "https://www.youtube.com/*",
-        "https://youtube.com/*"
-      ],
-      "js": [
-        "socket.io.min.js",
-        "content.js"
-      ],
-      "run_at": "document_idle"
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "icon.png"
-      ],
-      "matches": [
-        "https://www.youtube.com/*",
-        "https://youtube.com/*"
-      ]
-    }
-  ],
-  "icons": {
-    "48": "icon.png"
-  }
+    "manifest_version":  3,
+    "name":  "Youtube to Premiere Pro V2",
+    "version": "3.0.15",
+    "description":  "Import YouTube videos directly into Adobe Premiere Pro",
+    "permissions":  [
+                        "activeTab",
+                        "storage",
+                        "downloads",
+                        "cookies"
+                    ],
+    "host_permissions":  [
+                             "https://www.youtube.com/*",
+                             "https://youtu.be/*",
+                             "https://youtube.com/*",
+                             "https://m.youtube.com/*",
+                             "https://accounts.google.com/*",
+                             "https://*.google.com/*",
+                             "https://localhost:3002/*",
+                             "http://localhost:3002/*",
+                             "https://127.0.0.1:3002/*",
+                             "http://127.0.0.1:3002/*"
+                         ],
+    "action":  {
+                   "default_icon":  {
+                                        "48":  "icon.png"
+                                    },
+                   "default_popup":  "popup.html",
+                   "default_title":  "YouTube to Premiere - Paramètres"
+               },
+    "background":  {
+                       "service_worker":  "background.js"
+                   },
+    "content_scripts":  [
+                            {
+                                "matches":  [
+                                                "https://www.youtube.com/*",
+                                                "https://youtube.com/*"
+                                            ],
+                                "js":  [
+                                           "socket.io.min.js",
+                                           "content.js"
+                                       ],
+                                "run_at":  "document_idle"
+                            }
+                        ],
+    "web_accessible_resources":  [
+                                     {
+                                         "resources":  [
+                                                           "icon.png"
+                                                       ],
+                                         "matches":  [
+                                                         "https://www.youtube.com/*",
+                                                         "https://youtube.com/*"
+                                                     ]
+                                     }
+                                 ],
+    "icons":  {
+                  "48":  "icon.png"
+              }
 }

@@ -1,7 +1,7 @@
 // background.js
 
 // Debug: Version check
-console.log('YTP: Background script loaded - Version 3.0.3 with Enhanced Cookie Extraction');
+console.log('YTP: Background script loaded - Version 3.0.15 with Enhanced Cookie Extraction');
 
 chrome.action.onClicked.addListener((tab) => {
     // Perform action when the extension icon is clicked
@@ -178,3 +178,4 @@ async function getYouTubeCookies() {
         return [];
     }
 }
+
