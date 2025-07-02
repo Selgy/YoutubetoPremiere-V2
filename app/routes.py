@@ -203,6 +203,83 @@ def register_routes(app, socketio, settings):
                 logging.error(f"Error saving settings: {e}")
                 return jsonify(success=False, error=str(e)), 500
 
+    @app.route('/send-url', methods=['POST'])
+    def send_url_route():
+        """Legacy endpoint for Chrome extension compatibility"""
+        try:
+            data = request.json
+            if data is None:
+                logging.error("No JSON data received in send-url request")
+                return jsonify({'error': 'No JSON data received'}), 400
+                
+            # Support both old and new formats
+            video_url = data.get('url') or data.get('videoUrl')
+            cookies = data.get('cookies', [])
+            user_agent = data.get('userAgent', '')
+            download_type = data.get('type') or data.get('downloadType', 'full')
+            
+            logging.info(f"Legacy send-url endpoint called with URL: {video_url}")
+            logging.info(f"Received cookies: {len(cookies)} cookies")
+            logging.info(f"Download type: {download_type}")
+            
+            if not video_url:
+                return jsonify({'error': 'No URL provided'}), 400
+                
+            # Validate the URL is from YouTube
+            if not validate_youtube_url(video_url):
+                return jsonify({'error': 'Invalid YouTube URL'}), 400
+            
+            # Load current settings
+            current_settings = load_settings()
+            
+            # Emit start event to all connected clients
+            socketio.emit('download_started', {'url': video_url})
+            
+            # Check for clip parameters from old format
+            current_time = data.get('currentTime')
+            
+            if current_time is not None:
+                # Handle clip request with old format
+                download_type = 'clip'
+                current_time = float(current_time)
+                seconds_before = float(current_settings.get('secondsBefore', 15))
+                seconds_after = float(current_settings.get('secondsAfter', 15))
+                
+                clip_start = max(0, current_time - seconds_before)
+                clip_end = current_time + seconds_after
+                
+                result = handle_video_url(
+                    video_url=video_url, 
+                    download_type='clip',
+                    current_download=current_download, 
+                    socketio=socketio,
+                    clip_start=clip_start,
+                    clip_end=clip_end,
+                    settings=current_settings,
+                    cookies=cookies,
+                    user_agent=user_agent
+                )
+            else:
+                # Use the same logic as handle_video_url_route for consistency
+                result = handle_video_url(
+                    video_url=video_url, 
+                    download_type=download_type,
+                    current_download=current_download, 
+                    socketio=socketio,
+                    settings=current_settings,
+                    cookies=cookies,  # Now using actual cookies from Chrome extension
+                    user_agent=user_agent
+                )
+            
+            if 'error' in result:
+                return jsonify({'error': result['error']}), 400
+                
+            return jsonify({'success': True}), 200
+        except Exception as e:
+            error_message = f"Error handling legacy send-url: {str(e)}"
+            logging.error(error_message)
+            return jsonify({'error': error_message}), 500
+
     @app.route('/handle-video-url', methods=['POST'])
     def handle_video_url_route():
         try:

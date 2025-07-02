@@ -55,7 +55,7 @@ def load_settings():
     
     # Set up FFmpeg using the init module function
     try:
-        from init import find_ffmpeg as init_find_ffmpeg
+        from app_init import find_ffmpeg as init_find_ffmpeg
         settings['ffmpeg_path'] = init_find_ffmpeg()
         if settings['ffmpeg_path']:
             # Add ffmpeg directory to PATH

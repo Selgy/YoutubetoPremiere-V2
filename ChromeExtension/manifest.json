@@ -16,10 +16,10 @@
     "https://m.youtube.com/*",
     "https://accounts.google.com/*",
     "https://*.google.com/*",
-    "https://localhost:3001/*",
-    "http://localhost:3001/*",
-    "https://127.0.0.1:3001/*",
-    "http://127.0.0.1:3001/*"
+    "https://localhost:3002/*",
+    "http://localhost:3002/*",
+    "https://127.0.0.1:3002/*",
+    "http://127.0.0.1:3002/*"
   ],
   "action": {
     "default_icon": {

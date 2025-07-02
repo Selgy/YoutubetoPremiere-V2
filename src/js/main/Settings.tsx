@@ -34,7 +34,7 @@ const Settings = ({ onBack }: SettingsProps) => {
   const saveSettings = async (newSettings: typeof settings) => {
     try {
       // First get current settings from server
-      const response = await fetch(`http://${serverIP}:3001/settings`);
+      const response = await fetch(`http://${serverIP}:3002/settings`);
       let settingsToSave = newSettings;
       
       if (response.ok) {
@@ -47,7 +47,7 @@ const Settings = ({ onBack }: SettingsProps) => {
       setSettings(settingsToSave);
       localStorage.setItem('settings', JSON.stringify(settingsToSave));
 
-      const saveResponse = await fetch(`http://${serverIP}:3001/settings`, {
+      const saveResponse = await fetch(`http://${serverIP}:3002/settings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -91,7 +91,7 @@ const Settings = ({ onBack }: SettingsProps) => {
     
     setIsTestPlaying(true);
     try {
-      const response = await fetch(`http://${serverIP}:3001/test-sound`, {
+      const response = await fetch(`http://${serverIP}:3002/test-sound`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -116,7 +116,7 @@ const Settings = ({ onBack }: SettingsProps) => {
     // Load settings from server
     const loadSettings = async () => {
       try {
-        const response = await fetch(`http://${serverIP}:3001/settings`);
+        const response = await fetch(`http://${serverIP}:3002/settings`);
         if (response.ok) {
           const serverSettings = await response.json();
           setSettings(serverSettings);
@@ -129,7 +129,7 @@ const Settings = ({ onBack }: SettingsProps) => {
     loadSettings();
 
     // Fetch available sounds
-    fetch(`http://${serverIP}:3001/available-sounds`)
+    fetch(`http://${serverIP}:3002/available-sounds`)
       .then(response => response.json())
       .then(data => {
         if (data.sounds && data.sounds.length > 0) {
@@ -147,7 +147,7 @@ const Settings = ({ onBack }: SettingsProps) => {
       console.log('Opening logs folder...');
       console.log('Server IP:', serverIP);
       
-      const response = await fetch(`http://${serverIP}:3001/open-logs-folder`, {
+      const response = await fetch(`http://${serverIP}:3002/open-logs-folder`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -179,7 +179,7 @@ const Settings = ({ onBack }: SettingsProps) => {
       console.log('Opening sounds folder...');
       console.log('Server IP:', serverIP);
       
-      const response = await fetch(`http://${serverIP}:3001/open-sounds-folder`, {
+      const response = await fetch(`http://${serverIP}:3002/open-sounds-folder`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -195,7 +195,7 @@ const Settings = ({ onBack }: SettingsProps) => {
         
         // Refresh available sounds after opening the folder
         setTimeout(() => {
-          fetch(`http://${serverIP}:3001/available-sounds`)
+          fetch(`http://${serverIP}:3002/available-sounds`)
             .then(response => response.json())
             .then(data => {
               if (data.sounds && data.sounds.length > 0) {

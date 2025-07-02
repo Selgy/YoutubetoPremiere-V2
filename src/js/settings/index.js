@@ -12,7 +12,7 @@ let isProcessing = false;
 // Function to check if server is already running
 async function isServerRunning() {
     try {
-        const response = await fetch('http://localhost:3001/health', {
+        const response = await fetch('http://localhost:3002/health', {
             method: 'GET',
             timeout: 1000
         });
@@ -416,14 +416,16 @@ async function startPythonServer() {
             const { exec } = window.cep_node.require('child_process');
             
             if (process.platform === 'win32') {
-                // Windows-specific command using start command
-                const cmd = `start /B "" "${PythonExecutablePath}" --verbose`;
+                // Use spawn instead of exec for better window hiding control
+                const { spawn } = window.cep_node.require('child_process');
                 
-                console.log('Executing Windows command:', cmd);
-                PythonServerProcess = exec(cmd, {
+                console.log('Starting Python server from:', PythonExecutablePath);
+                PythonServerProcess = spawn(PythonExecutablePath, ['--verbose'], {
                     cwd: path.dirname(PythonExecutablePath),
                     env: serverEnv,
-                    windowsHide: false // Show window for debugging
+                    detached: false,
+                    windowsHide: true,  // Hide the window completely
+                    stdio: ['ignore', 'pipe', 'pipe']  // Capture stdout/stderr but ignore stdin
                 });
             } else if (process.platform === 'darwin') {
                 // macOS-specific command - direct execution
@@ -437,7 +439,7 @@ async function startPythonServer() {
                 });
             }
             
-            // Handle process events for exec
+            // Handle process events
             if (PythonServerProcess) {
                 // Handle standard output and error
                 if (PythonServerProcess.stdout) {
@@ -459,13 +461,17 @@ async function startPythonServer() {
                     handleProcessPermissionError(err, PythonExecutablePath, exec, path, extensionRoot);
                 });
                 
-                PythonServerProcess.on('exit', (code) => {
-                    if (code !== 0) {
+                PythonServerProcess.on('exit', (code, signal) => {
+                    if (code !== 0 && code !== null) {
                         console.error(`Python server process exited with code ${code}`);
                     } else {
                         console.log('Python server process exited successfully');
                     }
                     PythonServerProcess = null;
+                });
+                
+                PythonServerProcess.on('close', (code, signal) => {
+                    console.log(`Python server process closed (code: ${code}, signal: ${signal})`);
                 });
             }
 

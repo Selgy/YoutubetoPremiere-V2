@@ -61,6 +61,9 @@ const config: CEP_Config = {
     jsxBin: "off",
     sourceMap: true,
   },
+  // NOTE: ZXP signing requires ZXPSignCmd to be installed
+  // For development, use: yarn build:dev (without ZXP packaging)
+  // For production with signing, install Adobe Extension SDK first
   zxp: {
     country: "FR",
     province: "CA",

@@ -36,6 +36,7 @@ export const evalES = (script: string, isGlobal = false): Promise<string> => {
 
 import type { Scripts } from "@esTypes/index";
 import type { EventTS } from "../../../shared/universals";
+import { initializeCEP } from "./init-cep";
 
 type ArgTypes<F extends Function> = F extends (...args: infer A) => any
   ? A
@@ -81,50 +82,31 @@ export const evalTS = <
         return `${JSON.stringify(arg)}`;
       })
       .join(",");
-
-    // First verify ExtendScript environment
     csi.evalScript(
-      `try {
-        if (typeof $ === 'undefined') {
-          throw new Error('ExtendScript environment not initialized');
-        }
-        if (typeof $._ext === 'undefined') {
-          throw new Error('$._ext namespace not initialized');
-        }
-        if (typeof $._ext.${functionName} !== 'function') {
-          throw new Error('Function ${functionName} not found in $._ext namespace');
-        }
-        var result = $._ext.${functionName}(${formattedArgs});
-        JSON.stringify(result);
-      } catch(e) {
-        e.fileName = new File(e.fileName || '').fsName;
-        JSON.stringify({
-          error: true,
-          message: e.toString(),
-          fileName: e.fileName,
-          line: e.line
-        });
-      }`,
+      `try{
+          var host = typeof $ !== 'undefined' ? $ : window;
+          var res = host["${ns}"].${functionName}(${formattedArgs});
+          JSON.stringify(res);
+        }catch(e){
+          e.fileName = new File(e.fileName).fsName;
+          JSON.stringify(e);
+        }`,
       (res: string) => {
         try {
-          if (!res) {
-            reject(new Error('No response from ExtendScript'));
-            return;
-          }
-
+          //@ts-ignore
+          if (res === "undefined") return resolve();
           const parsed = JSON.parse(res);
-          
-          // Check if we got an error object
-          if (parsed && parsed.error) {
-            console.error('ExtendScript error:', parsed);
-            reject(new Error(parsed.message));
-            return;
+          if (
+            typeof parsed.name === "string" &&
+            (<string>parsed.name).toLowerCase().includes("error")
+          ) {
+            console.error(parsed.message);
+            reject(parsed);
+          } else {
+            resolve(parsed);
           }
-
-          resolve(parsed);
         } catch (error) {
-          console.error('Error parsing ExtendScript result:', error);
-          reject(error);
+          reject(res);
         }
       }
     );
@@ -222,14 +204,8 @@ export const dispatchTS = <Key extends string & keyof EventTS>(
 export const initBolt = (log = true) => {
   if (window.cep) {
     const extRoot = csi.getSystemPath("extension");
-    
-    // First try to load the main ExtendScript file
     const jsxSrc = `${extRoot}/jsx/index.js`;
     const jsxBinSrc = `${extRoot}/jsx/index.jsxbin`;
-    
-    // Then load our import video script
-    const importVideoSrc = `${extRoot}/js/settings/importVideo.jsx`;
-    
     if (fs.existsSync(jsxSrc)) {
       if (log) console.log(jsxSrc);
       evalFile(jsxSrc);
@@ -237,14 +213,7 @@ export const initBolt = (log = true) => {
       if (log) console.log(jsxBinSrc);
       evalFile(jsxBinSrc);
     }
-    
-    // Load the import video script
-    if (fs.existsSync(importVideoSrc)) {
-      if (log) console.log(importVideoSrc);
-      evalFile(importVideoSrc);
-    } else {
-      console.error('Import video script not found:', importVideoSrc);
-    }
+    initializeCEP();
   }
 };
 

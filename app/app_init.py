@@ -17,13 +17,50 @@ logger = logging.getLogger('YoutubetoPremiere')
 
 def get_extension_path():
     """Determine the path to the extension directory."""
-    # First, check for installed CEP extension (prioritize this for production)
-    cep_extension_path = "/Library/Application Support/Adobe/CEP/extensions/com.selgy.youtubetopremiere"
-    if os.path.exists(cep_extension_path) and os.path.exists(os.path.join(cep_extension_path, 'manifest.xml')):
-        logger.info(f"Found installed CEP extension: {cep_extension_path}")
-        return cep_extension_path
     
-    # Fall back to development path detection
+    # 1. Check current working directory (CEP often sets this correctly)
+    working_dir = os.getcwd()
+    
+    # If we're already in an exec directory, the parent is the extension root
+    if working_dir.endswith('exec'):
+        extension_root = os.path.dirname(working_dir)
+        if os.path.exists(os.path.join(extension_root, 'CSXS')) or os.path.exists(os.path.join(extension_root, 'manifest.xml')):
+            logger.info(f"Detected CEP extension from working directory: {extension_root}")
+            return extension_root
+    
+    # 2. Check for Windows CEP extension paths
+    if platform.system() == 'Windows':
+        cep_paths = [
+            os.path.join(os.path.expanduser('~'), 'AppData', 'Roaming', 'Adobe', 'CEP', 'extensions'),
+            os.path.join(os.environ.get('APPDATA', ''), 'Adobe', 'CEP', 'extensions'),
+        ]
+        
+        for base_path in cep_paths:
+            if os.path.exists(base_path):
+                for ext_dir in os.listdir(base_path):
+                    if 'Y2P' in ext_dir or 'youtube' in ext_dir.lower() or 'youtubetopremiere' in ext_dir.lower():
+                        full_path = os.path.join(base_path, ext_dir)
+                        if os.path.exists(os.path.join(full_path, 'exec')):
+                            logger.info(f"Found Windows CEP extension: {full_path}")
+                            return full_path
+    
+    # 3. Check for macOS CEP extension paths
+    elif platform.system() == 'Darwin':
+        cep_paths = [
+            "/Library/Application Support/Adobe/CEP/extensions",
+            os.path.expanduser("~/Library/Application Support/Adobe/CEP/extensions"),
+        ]
+        
+        for base_path in cep_paths:
+            if os.path.exists(base_path):
+                for ext_dir in os.listdir(base_path):
+                    if 'Y2P' in ext_dir or 'youtube' in ext_dir.lower() or 'youtubetopremiere' in ext_dir.lower():
+                        full_path = os.path.join(base_path, ext_dir)
+                        if os.path.exists(os.path.join(full_path, 'exec')):
+                            logger.info(f"Found macOS CEP extension: {full_path}")
+                            return full_path
+    
+    # 4. Fall back to development path detection
     # Get the directory where this script is located
     script_dir = os.path.dirname(os.path.abspath(__file__))
     
@@ -103,10 +140,16 @@ def find_ffmpeg():
     
     # Look in multiple possible locations in order of preference
     possible_locations = [
+        os.path.join(exec_dir, ffmpeg_name),               # Direct exec directory (highest priority)
         os.path.join(exec_dir, '_internal', ffmpeg_name),  # PyInstaller _internal directory
-        os.path.join(exec_dir, ffmpeg_name),               # Direct exec directory
         os.path.join(extension_path, ffmpeg_name),         # Extension root
+        os.path.join(extension_path, 'exec', ffmpeg_name), # Explicit exec subfolder
     ]
+    
+    # Add current working directory if it's an exec directory
+    working_dir = os.getcwd()
+    if working_dir.endswith('exec'):
+        possible_locations.insert(0, os.path.join(working_dir, ffmpeg_name))
     
     for ffmpeg_path in possible_locations:
         logger.info(f"Checking for ffmpeg at: {ffmpeg_path}")
@@ -114,9 +157,12 @@ def find_ffmpeg():
         if os.path.exists(ffmpeg_path):
             # For Windows systems, use a more robust check (avoiding execution)
             if system == 'Windows':
-                if os.path.getsize(ffmpeg_path) > 1000000:  # File is large enough to be ffmpeg
-                    logger.info(f"Found ffmpeg (Windows): {ffmpeg_path}")
+                file_size = os.path.getsize(ffmpeg_path)
+                if file_size > 1000000:  # File is large enough to be ffmpeg
+                    logger.info(f"Found ffmpeg (Windows): {ffmpeg_path} (size: {file_size} bytes)")
                     return ffmpeg_path
+                else:
+                    logger.warning(f"Found ffmpeg at {ffmpeg_path} but size is suspiciously small: {file_size} bytes")
             # For Unix systems, check executable permission
             else:
                 if os.access(ffmpeg_path, os.X_OK):
@@ -130,27 +176,28 @@ def find_ffmpeg():
     # Try to find ffmpeg in PATH
     try:
         if system == 'Windows':
-            # On Windows, check for ffmpeg in standard locations
-            for path in [
-                os.path.join(exec_dir, '_internal', 'ffmpeg.exe'),  # Check in _internal subdirectory
-                os.path.join(os.path.dirname(exec_dir), 'exec', 'ffmpeg.exe'),  # Check in parent's exec dir
-                os.path.join(os.getenv('ProgramFiles'), 'ffmpeg', 'bin', 'ffmpeg.exe'),
-                os.path.join(os.getenv('ProgramFiles(x86)'), 'ffmpeg', 'bin', 'ffmpeg.exe'),
-                # Add more common Windows locations here
-            ]:
-                if os.path.exists(path) and os.path.getsize(path) > 1000000:
-                    logger.info(f"Found ffmpeg in system path: {path}")
-                    return path
-            
             # Check PATH - but on Windows, use a more robust approach
             try:
                 result = subprocess.run(['where', 'ffmpeg'], capture_output=True, text=True, shell=True)
                 if result.returncode == 0:
                     ffmpeg_path = result.stdout.strip().split('\n')[0]
-                    logger.info(f"Found ffmpeg in PATH: {ffmpeg_path}")
-                    return ffmpeg_path
+                    if os.path.exists(ffmpeg_path) and os.path.getsize(ffmpeg_path) > 1000000:
+                        logger.info(f"Found ffmpeg in PATH: {ffmpeg_path}")
+                        return ffmpeg_path
             except Exception as e:
                 logger.warning(f"Error checking for ffmpeg using 'where': {str(e)}")
+                
+            # Additional Windows-specific fallback locations
+            fallback_paths = []
+            if os.getenv('ProgramFiles'):
+                fallback_paths.append(os.path.join(os.getenv('ProgramFiles'), 'ffmpeg', 'bin', 'ffmpeg.exe'))
+            if os.getenv('ProgramFiles(x86)'):
+                fallback_paths.append(os.path.join(os.getenv('ProgramFiles(x86)'), 'ffmpeg', 'bin', 'ffmpeg.exe'))
+                
+            for path in fallback_paths:
+                if os.path.exists(path) and os.path.getsize(path) > 1000000:
+                    logger.info(f"Found ffmpeg in fallback location: {path}")
+                    return path
         else:
             # On macOS/Linux
             result = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True)
@@ -160,12 +207,6 @@ def find_ffmpeg():
                 return ffmpeg_path
     except Exception as e:
         logger.warning(f"Error checking for ffmpeg in PATH: {str(e)}")
-    
-    # If we got here, no ffmpeg was found in standard locations.
-    # For Windows, do one last check if the bundled ffmpeg.exe exists without testing it
-    if system == 'Windows' and os.path.exists(ffmpeg_path):
-        logger.warning("Using ffmpeg without validation - may not work correctly")
-        return ffmpeg_path
     
     logger.warning("ffmpeg not found! Video processing may not work correctly.")
     return None

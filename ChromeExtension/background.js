@@ -30,7 +30,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         chrome.tabs.query({ active: true, currentWindow: true })
             .then(function (tabs) {
                 let url = tabs[0].url;
-                return fetch('http://localhost:3001/send-url', {
+                return fetch('http://localhost:3002/send-url', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'

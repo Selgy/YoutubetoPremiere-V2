@@ -6,7 +6,7 @@ const getServerIP = async () => {
     
     for (const address of possibleAddresses) {
         try {
-            const response = await fetch(`http://${address}:3001/get-ip`);
+            const response = await fetch(`http://${address}:3002/get-ip`);
             if (response.ok) {
                 const data = await response.json();
                 console.log('Successfully connected to server at:', address);
@@ -41,7 +41,7 @@ export async function setupVideoImportHandler(csInterface) {
             socket.close();
         }
 
-        socket = io(`http://${serverIP}:3001`, {
+        socket = io(`http://${serverIP}:3002`, {
             transports: ['polling', 'websocket'],
             reconnection: true,
             reconnectionAttempts: Infinity,
@@ -117,7 +117,29 @@ export async function setupVideoImportHandler(csInterface) {
                 let response;
                 let success = false;
 
-                if (typeof result === 'boolean' || result === 'true' || result === 'false') {
+                // Handle JSON string response from ExtendScript
+                if (typeof result === 'string') {
+                    try {
+                        const parsedResult = JSON.parse(result);
+                        success = parsedResult.success === true;
+                        response = {
+                            success: success,
+                            path: parsedResult.path || videoPath,
+                            projectItem: parsedResult.projectItem,
+                            error: success ? undefined : (parsedResult.error || 'Import failed')
+                        };
+                    } catch (parseError) {
+                        console.error('Failed to parse ExtendScript result:', parseError);
+                        // Fallback: try boolean string parsing
+                        success = result === 'true';
+                        response = {
+                            success: success,
+                            path: videoPath,
+                            projectItem: null,
+                            error: success ? undefined : 'Failed to parse import result'
+                        };
+                    }
+                } else if (typeof result === 'boolean' || result === 'true' || result === 'false') {
                     success = result === true || result === 'true';
                     response = {
                         success: success,

@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import './styles.css';
+import './main.scss';
 import Settings from './Settings';
 import io from 'socket.io-client';
 import CSInterface from '../lib/cep/csinterface';
 import { SystemPath } from '../lib/cep/csinterface';
+import { AppLauncher } from '../lib/utils/app-launcher';
 
 declare const window: Window & {
   cep: any;
@@ -16,7 +17,7 @@ const getLocalIP = async () => {
   
   for (const address of possibleAddresses) {
     try {
-      const response = await fetch(`http://${address}:3001/get-ip`);
+      const response = await fetch(`http://${address}:3002/get-ip`);
       if (response.ok) {
         const data = await response.json();
         console.log('Successfully connected to server at:', address);
@@ -65,6 +66,7 @@ const Main = () => {
   const [currentPage, setCurrentPage] = useState('main');
   const [serverIP, setServerIP] = useState('localhost');
   const [isCEPEnvironment, setIsCEPEnvironment] = useState(false);
+  const [appLauncher] = useState(() => AppLauncher.getInstance());
 
   useEffect(() => {
     const checkCEPEnvironment = () => {
@@ -79,6 +81,47 @@ const Main = () => {
     
     checkCEPEnvironment();
   }, []);
+
+  useEffect(() => {
+    const startPythonApp = async () => {
+      if (!isCEPEnvironment) {
+        console.log('Not in CEP environment, skipping app start');
+        return;
+      }
+
+      try {
+        console.log('Starting Python application...');
+        const started = await appLauncher.startApp();
+        
+        if (started) {
+          console.log('Waiting for server to be ready...');
+          const serverReady = await appLauncher.waitForServer();
+          
+          if (serverReady) {
+            console.log('Python application started and server is ready!');
+            setServerIP('localhost');
+          } else {
+            console.error('Server failed to start within timeout');
+          }
+        } else {
+          console.error('Failed to start Python application');
+        }
+      } catch (error) {
+        console.error('Error starting Python application:', error);
+      }
+    };
+
+    if (isCEPEnvironment) {
+      startPythonApp();
+    }
+
+    // Cleanup: stop app when component unmounts
+    return () => {
+      if (isCEPEnvironment && appLauncher.isRunning()) {
+        appLauncher.stopApp();
+      }
+    };
+  }, [isCEPEnvironment, appLauncher]);
 
   useEffect(() => {
     const initializeConnection = async () => {
@@ -96,7 +139,7 @@ const Main = () => {
     const checkLicenseAndStart = async () => {
       setIsLoading(true);
       try {
-        const response = await fetch(`http://${serverIP}:3001/check-license`);
+        const response = await fetch(`http://${serverIP}:3002/check-license`);
         const data = await response.json();
         
         if (data.isValid) {
@@ -123,7 +166,7 @@ const Main = () => {
   useEffect(() => {
     if (serverIP === 'localhost') return;
 
-    const socket = io(`http://${serverIP}:3001`, {
+    const socket = io(`http://${serverIP}:3002`, {
       transports: ['polling', 'websocket'],
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
@@ -146,7 +189,7 @@ const Main = () => {
       retryCount = 0;
     });
 
-    socket.on('connect_error', (error) => {
+    socket.on('connect_error', (error: any) => {
       console.error('Connection error:', error);
       retryCount++;
       
@@ -156,7 +199,7 @@ const Main = () => {
       }, Math.min(1000 * Math.pow(2, retryCount % 10), 10000));
     });
 
-    socket.on('disconnect', (reason) => {
+    socket.on('disconnect', (reason: any) => {
       console.log('Disconnected:', reason);
       if (reason === 'io server disconnect' || reason === 'transport close') {
         setTimeout(() => {
@@ -166,7 +209,7 @@ const Main = () => {
       }
     });
 
-    socket.on('error', (error) => {
+    socket.on('error', (error: any) => {
       console.error('Socket error:', error);
       setTimeout(() => {
         console.log(`Retrying after error (attempt ${retryCount})`);
@@ -174,41 +217,29 @@ const Main = () => {
       }, Math.min(1000 * Math.pow(2, retryCount % 10), 10000));
     });
 
-    // Add handlers for download and import events
-    socket.on('download_started', (data) => {
+    // Add handlers for download and import events (no notifications - Chrome extension handles UI feedback)
+    socket.on('download_started', (data: any) => {
       console.log('Download started:', data.url);
-      showNotification('Download started', 'info');
     });
 
-    socket.on('progress', (data) => {
+    socket.on('progress', (data: any) => {
       console.log('Download progress:', data);
-      if (data.progress) {
-        showNotification(`Download progress: ${data.progress}%`, 'info');
-      }
     });
 
-    socket.on('complete', (data) => {
+    socket.on('complete', (data: any) => {
       console.log('Download complete:', data);
-      showNotification('Download completed successfully!', 'success');
     });
 
-    socket.on('download_error', (data) => {
+    socket.on('download_error', (data: any) => {
       console.error('Download error:', data);
-      showNotification(data.message || 'Download failed', 'error');
     });
 
-    socket.on('import_complete', (data) => {
+    socket.on('import_complete', (data: any) => {
       console.log('Import complete:', data);
-      if (data.success) {
-        showNotification('Video imported successfully!', 'success');
-      } else {
-        showNotification(data.error || 'Import failed', 'error');
-      }
     });
 
-    socket.on('import_failed', (data) => {
+    socket.on('import_failed', (data: any) => {
       console.error('Import failed:', data);
-      showNotification(data.error || 'Import failed', 'error');
     });
 
     // Force initial connection
@@ -224,7 +255,7 @@ const Main = () => {
     
     setIsCheckingUpdates(true);
     try {
-      const response = await fetch(`http://${serverIP}:3001/check-updates`);
+      const response = await fetch(`http://${serverIP}:3002/check-updates`);
       const data = await response.json();
       
       if (data.success) {
@@ -259,7 +290,7 @@ const Main = () => {
     setErrorMessage('');
     
     try {
-      const response = await fetch(`http://${serverIP}:3001/validate-license`, {
+      const response = await fetch(`http://${serverIP}:3002/validate-license`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -287,7 +318,7 @@ const Main = () => {
 
   const loadSettings = async () => {
     try {
-      const response = await fetch(`http://${serverIP}:3001/settings`);
+      const response = await fetch(`http://${serverIP}:3002/settings`);
       if (response.ok) {
         const serverSettings = await response.json();
         setSettings(serverSettings);
@@ -322,7 +353,7 @@ const Main = () => {
         licenseKey: settings.licenseKey
       };
 
-      const saveResponse = await fetch(`http://${serverIP}:3001/settings`, {
+      const saveResponse = await fetch(`http://${serverIP}:3002/settings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -382,7 +413,7 @@ const Main = () => {
     setSettings(newSettings);
     
     try {
-      const response = await fetch(`http://${serverIP}:3001/settings`, {
+      const response = await fetch(`http://${serverIP}:3002/settings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -552,24 +583,24 @@ const Main = () => {
                 Download Path:
               </label>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-3">
               <input
                 type="text"
                 value={settings.downloadPath}
                 onChange={handleDownloadPathChange}
-                placeholder="If left empty, the video will be saved in a folder next to the currently open Premiere Pro project."
-                className="input-base flex-1"
+                placeholder="Leave empty to use default project folder"
+                className="input-base flex-1 min-w-0"
               />
               <button
                 onClick={handleFolderSelect}
-                className="btn flex items-center gap-2 px-4"
+                className="btn flex items-center gap-2 px-4 flex-shrink-0"
                 style={{
                   background: 'linear-gradient(135deg, #2e2f77 0%, #4e52ff 100%)',
-                  minWidth: 'auto'
+                  minWidth: 'max-content'
                 }}
               >
                 <span className="material-symbols-outlined">folder_open</span>
-                <span>Browse</span>
+                <span className="hidden sm:inline">Browse</span>
               </button>
             </div>
             <p className="text-sm text-gray-400 mt-2 flex items-center gap-1">

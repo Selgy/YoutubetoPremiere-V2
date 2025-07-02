@@ -14,7 +14,7 @@ import re
 import subprocess
 import requests
 from pathlib import Path
-from init import init
+import app_init
 import tempfile
 from datetime import datetime
 
@@ -267,8 +267,8 @@ if not ffmpeg_found:
     logging.error("FFmpeg not found in any of the expected locations")
 
 # Check if the server is already running before starting
-if check_server_running(3001):
-    logging.info("Server already running on port 3001. Exiting.")
+if check_server_running(3002):
+    logging.info("Server already running on port 3002. Exiting.")
     print("YoutubetoPremiere server is already running.")
     # Don't exit immediately if running in development mode
     if not getattr(sys, 'frozen', False):
@@ -288,19 +288,20 @@ try:
     socketio = SocketIO(app, 
         cors_allowed_origins="*",
         async_mode='threading',
-        ping_timeout=120,
-        ping_interval=25000,
-        max_http_buffer_size=100 * 1024 * 1024,  # 100MB
+        ping_timeout=60,  # Reduced from 120 to avoid long-hanging connections
+        ping_interval=25,  # Reduced from 25000 to 25 seconds for more frequent pings
+        max_http_buffer_size=50 * 1024 * 1024,  # Reduced from 100MB to 50MB
         transports=['websocket', 'polling'],
         logger=False,
         engineio_logger=False,
-        always_connect=True,
+        always_connect=False,  # Changed to False to avoid automatic connections
         reconnection=True,
-        reconnection_attempts=-1,  # Use -1 for unlimited reconnection attempts
+        reconnection_attempts=5,  # Limited to 5 attempts instead of unlimited
         reconnection_delay=1000,
         reconnection_delay_max=5000,
         allow_upgrades=True,
-        cookie=None
+        cookie=None,
+        manage_session=False  # Added to avoid session management issues
     )
 
     logging.info("Flask and SocketIO initialized successfully")
@@ -311,11 +312,26 @@ except Exception as e:
 # Register error handlers
 @app.errorhandler(404)
 def not_found_error(error):
-    return jsonify({'error': 'Not found'}), 404
+    try:
+        return jsonify({'error': 'Not found'}), 404
+    except Exception as e:
+        return "Not found", 404
 
 @app.errorhandler(500)
 def internal_error(error):
-    return jsonify({'error': 'Internal server error'}), 500
+    try:
+        return jsonify({'error': 'Internal server error'}), 500
+    except Exception as e:
+        return "Internal server error", 500
+
+# Add handler for Werkzeug assertion errors
+@app.errorhandler(AssertionError)
+def handle_assertion_error(error):
+    app_logger.error(f'Assertion error: {str(error)}')
+    try:
+        return jsonify({'error': 'Request processing error'}), 500
+    except:
+        return "Request processing error", 500
 
 # Enable CORS
 @app.after_request
@@ -334,65 +350,110 @@ def options_handler(path=None):
 
 @socketio.on_error()
 def error_handler(e):
-    app_logger.error(f'SocketIO error: {str(e)}')
-    # Attempt to notify client of error
     try:
-        socketio.emit('server_error', {'error': str(e)})
-    except:
-        pass
+        app_logger.error(f'🔥 SocketIO error: {str(e)}')
+        app_logger.error(f'🔥 Error type: {type(e).__name__}')
+        if hasattr(request, "sid") and request.sid:
+            app_logger.error(f'🔥 Request SID: {request.sid[:8]}...')
+    except Exception as log_error:
+        # Fallback logging if request context is not available
+        print(f'SocketIO error (context unavailable): {str(e)}')
 
 @socketio.on_error_default
 def default_error_handler(e):
-    app_logger.error(f'SocketIO default error: {str(e)}')
-    # Attempt to notify client of error
     try:
-        socketio.emit('server_error', {'error': str(e)})
-    except:
-        pass
+        app_logger.error(f'🔥 SocketIO default error: {str(e)}')
+        app_logger.error(f'🔥 Default error type: {type(e).__name__}')
+        if hasattr(request, "sid") and request.sid:
+            app_logger.error(f'🔥 Request SID: {request.sid[:8]}...')
+    except Exception as log_error:
+        # Fallback logging if request context is not available
+        print(f'SocketIO default error (context unavailable): {str(e)}')
+
+# Add pre-connection debugging
+@app.before_request
+def log_request_info():
+    if request.path.startswith('/socket.io/'):
+        app_logger.info(f'🌐 SocketIO request: {request.method} {request.path}')
+        app_logger.info(f'🌐 Headers: User-Agent={request.headers.get("User-Agent", "unknown")[:50]}...')
+        app_logger.info(f'🌐 Query params: {dict(request.args)}')
+        app_logger.info(f'🌐 Remote addr: {request.environ.get("REMOTE_ADDR", "unknown")}')
 
 @socketio.on('connect')
 def handle_connect():
-    sid = request.sid
-    client_type = request.args.get('client_type', 'unknown')
-    # Don't log client IP for privacy reasons
-    
-    # Validate client type
-    if client_type not in ['chrome', 'premiere']:
-        client_type = 'unknown'
-        app_logger.warning(f'Connection with unspecified client type')
-    
-    # For tracking connections, we'll use 'anonymous' instead of IP
-    client_key = f'client_{len(connected_clients[client_type])}'
-    
-    # Add new connection
-    connected_clients[client_type][client_key] = sid
-    
-    app_logger.info(f'Client connected - Type: {client_type}')
-    socketio.emit('connection_status', {'status': 'connected'}, room=sid)
+    try:
+        sid = request.sid
+        client_type = request.args.get('client_type', 'unknown')
+        # Don't log client IP for privacy reasons
+        
+        app_logger.info(f'🔌 New connection attempt - SID: {sid[:8]}...')
+        app_logger.info(f'🔌 Raw request.args: {dict(request.args)}')
+        app_logger.info(f'🔌 client_type parameter: "{client_type}"')
+        
+        # Validate client type
+        if client_type not in ['chrome', 'premiere']:
+            original_client_type = client_type
+            client_type = 'unknown'
+            app_logger.warning(f'⚠️ Invalid client type "{original_client_type}", setting to "unknown"')
+        else:
+            app_logger.info(f'✅ Valid client type: "{client_type}"')
+        
+        # For tracking connections, use SID as key to avoid conflicts
+        client_key = sid
+        
+        # Remove any existing entries with the same SID first (in case of reconnection)
+        for ctype, clients in connected_clients.items():
+            if sid in clients:
+                del clients[sid]
+                app_logger.info(f'🔄 Removed old entry for SID {sid[:8]}... from {ctype}')
+        
+        # Add new connection
+        connected_clients[client_type][client_key] = sid
+        
+        app_logger.info(f'✅ Client connected - Type: {client_type}, SID: {sid[:8]}..., Key: {client_key}')
+        app_logger.info(f'📊 Current connected clients: chrome={len(connected_clients["chrome"])}, premiere={len(connected_clients["premiere"])}, unknown={len(connected_clients["unknown"])}')
+        app_logger.info(f'🔍 DEBUG: connected_clients structure: {dict([(k, list(v.keys())) for k, v in connected_clients.items()])}')
+        
+        # Send connection status safely
+        try:
+            socketio.emit('connection_status', {'status': 'connected', 'client_type': client_type}, room=sid)
+        except Exception as emit_error:
+            app_logger.warning(f'Could not send connection_status to {sid[:8]}...: {emit_error}')
+            
+    except Exception as e:
+        app_logger.error(f'Error in handle_connect: {str(e)}', exc_info=True)
 
 @socketio.on('disconnect')
 def handle_disconnect():
     """Handle client disconnection"""
-    sid = request.sid
-    
-    # Remove from appropriate client list - find by SID instead of IP
-    for client_type, clients in connected_clients.items():
-        for client_key, client_sid in list(clients.items()):
-            if client_sid == sid:
-                del clients[client_key]
-                logging.info(f'Client disconnected - Type: {client_type}, SID: {sid}')
+    try:
+        sid = request.sid
+        
+        # Remove from appropriate client list - since we now use SID as key, this is simpler
+        for client_type, clients in connected_clients.items():
+            if sid in clients:
+                del clients[sid]
+                app_logger.info(f'🔌 Client disconnected - Type: {client_type}, SID: {sid[:8]}...')
+                app_logger.info(f'📊 Remaining connected clients: chrome={len(connected_clients["chrome"])}, premiere={len(connected_clients["premiere"])}, unknown={len(connected_clients["unknown"])}')
                 return
-    
-    # If we get here, the client wasn't found in our tracking
-    logging.info(f'Unknown client disconnected - SID: {sid}')
+        
+        # If we get here, the client wasn't found in our tracking
+        app_logger.warning(f'⚠️ Unknown client disconnected - SID: {sid[:8]}... (not found in tracking)')
+        
+    except Exception as e:
+        app_logger.error(f'Error in handle_disconnect: {str(e)}', exc_info=True)
 
 @socketio.on('connection_check')
 def handle_connection_check(data):
     """Handle connection check requests from clients"""
     try:
+        client_type = request.args.get('client_type')
+        sid = request.sid
+        app_logger.info(f'🔍 CONNECTION_CHECK: Client type={client_type}, SID={sid[:8]}..., Data={data}')
+        
         # This simply responds with a status "ok" message
-        # No need to log every connection check
-        emit_to_client_type('connection_status', {'status': 'ok'}, request.args.get('client_type'))
+        socketio.emit('connection_status', {'status': 'ok', 'client_type': client_type}, room=sid)
+        app_logger.info(f'📤 SENT connection_status to SID {sid[:8]}... (type: {client_type})')
     except Exception as e:
         app_logger.error(f'Error in handle_connection_check: {str(e)}')
 
@@ -400,18 +461,66 @@ def emit_to_client_type(event, data, client_type=None):
     """Emit event to specific client type or all if client_type is None"""
     if client_type:
         # Only emit to clients of the specified type
-        for sid in connected_clients[client_type].values():
+        connected_clients_count = len(connected_clients[client_type])
+        app_logger.info(f'🔍 DEBUG: Checking {client_type} clients - found {connected_clients_count} connected')
+        app_logger.info(f'🔍 DEBUG: All connected clients: {dict([(k, len(v)) for k, v in connected_clients.items()])}')
+        app_logger.info(f'🔍 DEBUG: {client_type} client SIDs: {list(connected_clients[client_type].keys())}')
+        
+        if connected_clients_count == 0:
+            app_logger.warning(f'⚠️ No {client_type} clients connected to send {event} event!')
+            app_logger.info(f'🔍 DEBUG: Available client types: {list(connected_clients.keys())}')
+            app_logger.info(f'🔍 DEBUG: Full connected_clients structure: {connected_clients}')
+            return
+            
+        app_logger.info(f'📡 Found {connected_clients_count} {client_type} clients connected')
+        # Make a copy of SIDs to avoid modification during iteration
+        client_sids = list(connected_clients[client_type].keys())
+        successful_sends = 0
+        
+        for sid in client_sids:
             try:
+                # Check if SID still exists (might have been removed during iteration)
+                if sid not in connected_clients[client_type]:
+                    continue
+                    
                 socketio.emit(event, data, room=sid)
-                # Reduced to debug level to minimize logs
-                if event != 'connection_status': # Don't log frequent connection status updates
+                successful_sends += 1
+                
+                # Log progress and percentage events at INFO level for debugging
+                if event in ['progress', 'percentage']:
+                    app_logger.info(f'📤 SENT {event} to {client_type} client (SID: {sid[:8]}...): {data}')
+                    
+                    # Also send legacy format for old scripts compatibility
+                    if event == 'progress' and 'progress' in data:
+                        try:
+                            legacy_data = {'percentage': str(data['progress']) + '%'}
+                            socketio.emit('percentage', legacy_data, room=sid)
+                            app_logger.info(f'📤 SENT legacy percentage to {client_type} client: {legacy_data}')
+                        except Exception as legacy_error:
+                            app_logger.warning(f'Could not send legacy percentage: {legacy_error}')
+                            
+                elif event != 'connection_status': # Don't log frequent connection status updates
                     app_logger.debug(f'Emitting {event} to {client_type} client')
+                    
             except Exception as e:
-                app_logger.error(f'Error emitting to client: {str(e)}')
+                app_logger.error(f'Error emitting to client SID {sid[:8]}...: {str(e)}')
+                # Remove the problematic SID
+                try:
+                    if sid in connected_clients[client_type]:
+                        del connected_clients[client_type][sid]
+                        app_logger.info(f'🧹 Removed problematic SID {sid[:8]}... from {client_type}')
+                except Exception as cleanup_error:
+                    app_logger.error(f'Error cleaning up SID {sid[:8]}...: {cleanup_error}')
+        
+        if successful_sends > 0:
+            app_logger.info(f'📡 Successfully sent {event} to {successful_sends}/{len(client_sids)} {client_type} clients')
     else:
         # For backwards compatibility, emit to all if no type specified
         socketio.emit(event, data)
-        app_logger.debug(f'Broadcasting {event}')
+        if event in ['progress', 'percentage']:
+            app_logger.info(f'📤 BROADCAST {event}: {data}')
+        else:
+            app_logger.debug(f'Broadcasting {event}')
 
 @socketio.on('progress')
 
@@ -493,12 +602,12 @@ def run_server():
     register_routes(app, socketio, settings)
 
     # Start server without exposing IP addresses
-    logging.info(f'Starting server on all interfaces on port 3001')
+    logging.info(f'Starting server on all interfaces on port 3002')
 
     server_thread = threading.Thread(target=lambda: socketio.run(
         app, 
         host='0.0.0.0',  # Bind to all available interfaces
-        port=3001,
+        port=3002,
         debug=False,
         use_reloader=False
     ))
@@ -589,20 +698,42 @@ def run_extendscript(script):
 def progress_hook(d, socketio):
     if d['status'] == 'downloading':
         try:
-            percentage = d.get('_percent_str', '0%')
-            percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
-            # Log progress less frequently - only at certain milestones
-            if percentage.strip() in ['0%', '25%', '50%', '75%', '100%']:
-                app_logger.info(f'Download progress: {percentage}')
-            # Emit only to chrome clients
-            emit_to_client_type('percentage', {'percentage': percentage}, 'chrome')
+            import time
+            
+            # Progress throttling variables for this function
+            if not hasattr(progress_hook, 'last_progress_time'):
+                progress_hook.last_progress_time = 0
+                progress_hook.last_progress_value = 0
+            
+            percentage_str = d.get('_percent_str', '0%')
+            percentage_str = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage_str)
+            percentage_str = percentage_str.replace(' ', '').replace('%', '')
+            
+            if percentage_str.isdigit():
+                percentage = int(percentage_str)
+                current_time = time.time()
+                
+                # Throttle progress updates: send every 0.5s OR if progress increased by 5% OR for key values
+                time_elapsed = current_time - progress_hook.last_progress_time
+                progress_diff = percentage - progress_hook.last_progress_value
+                is_key_percentage = percentage in [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100]
+                
+                if (time_elapsed >= 0.5 or progress_diff >= 5 or is_key_percentage or percentage == 0):
+                    logging.info(f'Download progress: {percentage}%')
+                    # Emit to chrome clients with consistent event format
+                    emit_to_client_type('progress', {'progress': str(percentage), 'type': 'full'}, 'chrome')
+                    progress_hook.last_progress_time = current_time
+                    progress_hook.last_progress_value = percentage
+                else:
+                    logging.info(f'Skipping Progress: {percentage}% (throttled)')
+            
         except Exception as e:
             app_logger.error(f"Error in progress hook: {e}")
 
 def setup_environment():
     """Set up the application environment"""
     # Initialize all requirements
-    config = init()
+    config = app_init.init()
     
     # Set environment variables
     if config['ffmpeg_path']:
@@ -647,6 +778,10 @@ def setup_environment():
 def main():
     """Main entry point"""
     try:
+        # Set up environment first
+        config = setup_environment()
+        logging.info(f"Environment setup complete. FFmpeg path: {config.get('ffmpeg_path')}")
+        
         # Start the server
         run_server()
     except KeyboardInterrupt:

@@ -9,6 +9,12 @@ async function getCookiesForServer() {
     return new Promise((resolve) => {
         console.log('YTP: Getting YouTube cookies for server');
         
+        // Check extension validity before accessing Chrome APIs
+        if (!validateExtensionContext()) {
+            resolve({ cookies: [], error: 'Extension context invalidated' });
+            return;
+        }
+        
         try {
             chrome.runtime.sendMessage({
                 type: 'GET_YOUTUBE_COOKIES'
@@ -19,12 +25,21 @@ async function getCookiesForServer() {
                     return;
                 }
                 
+                // Check extension validity again in callback
+                if (!validateExtensionContext()) {
+                    resolve({ cookies: [], error: 'Extension context invalidated' });
+                    return;
+                }
+                
                 const cookies = response ? response.cookies || [] : [];
                 console.log('YTP: Retrieved', cookies.length, 'cookies for server');
                 resolve({ cookies: cookies });
             });
         } catch (error) {
             console.error('YTP: Error getting cookies for server:', error);
+            if (error.message.includes('Extension context invalidated')) {
+                handleExtensionInvalidation();
+            }
             resolve({ cookies: [], error: error.message });
         }
     });
@@ -40,7 +55,8 @@ async function checkYouTubeAuth() {
     return {
         isLoggedIn: authCookies.length > 0,
         cookieCount: cookiesData.cookies.length,
-        authCookieCount: authCookies.length
+        authCookieCount: authCookies.length,
+        cookies: cookiesData.cookies
     };
 }
 
@@ -79,7 +95,6 @@ function promptUserLogin() {
 
 // Handle YouTube cookies requests from settings panel (legacy - si nécessaire)
 window.addEventListener('message', async (event) => {
-    console.log('YTP: Content script received message:', event.data);
     
     if (event.data.type === 'REQUEST_YOUTUBE_COOKIES' && event.data.source === 'YTP_SETTINGS') {
         console.log('YTP: Processing YouTube cookies request');
@@ -190,6 +205,12 @@ styleSheet.textContent = `
         background: linear-gradient(135deg, #2e2f77 0%, #4e52ff 100%);
         pointer-events: auto;
         animation: pulse 2s infinite;
+    }
+
+    .download-button.success {
+        background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+        animation: none;
     }
 
     .download-button .progress-text {
@@ -785,11 +806,21 @@ const buttonStates = {
     audio: { isDownloading: false }
 };
 
+console.log('🎯 [INIT] ButtonStates initialized:', JSON.stringify(buttonStates));
+
 // Visibility state
 let buttonsVisible = localStorage.getItem('ytp-buttons-visible') !== 'false';
 
-// Socket connection
+// Global variables
 let socket = null;
+let reconnectAttempts = 0;
+let maxReconnectAttempts = 3; // Reduced to limit spam when server is unavailable
+let reconnectInterval = 2000;
+let isExtensionValid = true;
+
+// Observer instances to disconnect on invalidation
+let mainMutationObserver = null;
+let ytPlayerObserver = null;
 
 // Function to check if we're on a video or shorts page
 function isVideoPage() {
@@ -803,6 +834,9 @@ function isVideoPage() {
 
 // Function to show/hide the floating container based on page type
 function updateButtonsVisibility() {
+    // Check extension validity before accessing Chrome APIs
+    if (!validateExtensionContext()) return;
+    
     const floatingContainer = document.querySelector('#ytp-floating-container');
     
     if (floatingContainer) {
@@ -814,8 +848,20 @@ function updateButtonsVisibility() {
                            // Check if YouTube player is in fullscreen
                            document.querySelector('.ytp-fullscreen');
         
-        // Check auto-hide setting
-        chrome.storage.local.get(['ytp-auto-hide'], (result) => {
+        // Check auto-hide setting safely
+        safeStorageGet(['ytp-auto-hide'], (result) => {
+            if (!result) {
+                // Fallback: use default behavior if storage unavailable
+                if (isVideoPage() && !isFullscreen) {
+                    floatingContainer.style.display = 'block';
+                    floatingContainer.style.visibility = 'visible';
+                } else {
+                    floatingContainer.style.display = 'none';
+                    floatingContainer.style.visibility = 'hidden';
+                }
+                return;
+            }
+            
             const autoHide = result['ytp-auto-hide'] !== false; // Default to true
             
             if (isVideoPage() && (!isFullscreen || !autoHide)) {
@@ -829,58 +875,315 @@ function updateButtonsVisibility() {
     }
 }
 
-function initializeSocket() {
-    if (socket && socket.connected) {
-        return;
-    }
-
+// Safe version of updateButtonsVisibility for use in observers
+function updateButtonsVisibilitySafely() {
+    // Stop immediately if extension is invalidated
+    if (invalidationHandled || !isExtensionValid) return;
+    
     try {
-        socket = io('http://localhost:3001', {
-            transports: ['polling', 'websocket'],
-            timeout: 10000,
-            forceNew: true,
+        if (!validateExtensionContext()) return;
+        updateButtonsVisibility();
+    } catch (error) {
+        // Silently handle errors to prevent spam
+        if (error.message.includes('Extension context invalidated')) {
+            handleExtensionInvalidation();
+        }
+    }
+}
+
+// Safe version for handling Chrome storage operations
+function safeStorageSet(items, callback = null) {
+    try {
+        if (!validateExtensionContext()) {
+            if (callback) callback();
+            return;
+        }
+        chrome.storage.local.set(items, () => {
+            if (!validateExtensionContext()) {
+                if (callback) callback();
+                return;
+            }
+            if (callback) callback();
+        });
+    } catch (error) {
+        // Silently handle storage errors to prevent spam
+        if (error.message.includes('Extension context invalidated')) {
+            handleExtensionInvalidation();
+        }
+        if (callback) callback();
+    }
+}
+
+function safeStorageGet(keys, callback) {
+    try {
+        if (!validateExtensionContext()) {
+            // Silently fail with empty result if extension context is invalid
+            callback({});
+            return;
+        }
+        chrome.storage.local.get(keys, (result) => {
+            if (!validateExtensionContext()) {
+                callback({});
+                return;
+            }
+            callback(result);
+        });
+    } catch (error) {
+        // Silently handle storage errors to prevent spam
+        if (error.message.includes('Extension context invalidated')) {
+            handleExtensionInvalidation();
+        }
+        // Return empty result to continue execution
+        callback({});
+    }
+}
+
+// Safe version for Chrome runtime messaging
+function safeRuntimeSendMessage(message, callback = null) {
+    try {
+        if (!validateExtensionContext()) {
+            if (callback) callback(null);
+            return;
+        }
+        chrome.runtime.sendMessage(message, (response) => {
+            if (chrome.runtime.lastError) {
+                // Handle expected errors (like popup not open)
+                if (callback) callback(null);
+                return;
+            }
+            if (!validateExtensionContext()) {
+                if (callback) callback(null);
+                return;
+            }
+            if (callback) callback(response);
+        });
+    } catch (error) {
+        // Silently handle runtime messaging errors to prevent spam
+        if (error.message.includes('Extension context invalidated')) {
+            handleExtensionInvalidation();
+        }
+        if (callback) callback(null);
+    }
+}
+
+function initializeSocket() {
+    try {
+        // Silently initialize socket connection
+        
+        // Check if extension context is still valid
+        try {
+            chrome.runtime.id;
+            isExtensionValid = true;
+        } catch (error) {
+            // Silently handle extension context invalidation
+            isExtensionValid = false;
+            handleExtensionInvalidation();
+            return;
+        }
+        
+        if (socket) {
+            socket.disconnect();
+            socket = null;
+        }
+        
+        socket = io('http://localhost:3002', {
+            transports: ['websocket', 'polling'],
             upgrade: true,
             rememberUpgrade: false,
-            maxHttpBufferSize: 1e8,
-            pingTimeout: 60000,
-            pingInterval: 25000,
-            query: { client_type: 'chrome' }
+            timeout: 10000,
+            forceNew: true,
+            autoConnect: false,
+            query: {
+                client_type: 'chrome'
+            }
+        });
+        
+        console.log('🔌 [SOCKET] Initializing connection with client_type=chrome');
+
+        socket.on('connect_error', (error) => {
+            // Only log connection errors if not expected (when Premiere is closed)
+            if (!error.message.includes('ECONNREFUSED') && !error.message.includes('websocket error')) {
+                console.error('❌ [SOCKET] Connection ERROR:', error.message);
+            }
+        });
+
+        socket.on('disconnect', (reason) => {
+            // Only log unexpected disconnections, not when server is simply not available
+            if (reason !== 'transport close' && reason !== 'transport error') {
+                console.log('🔌 [SOCKET] Disconnected from server, reason:', reason);
+            }
+            
+            // Only attempt reconnection if extension is still valid and disconnect wasn't intentional
+            // Also, increase reconnection interval to reduce spam
+            if (isExtensionValid && reason !== 'io client disconnect' && reconnectAttempts < maxReconnectAttempts) {
+                const delayMs = Math.min(reconnectInterval * Math.pow(2, reconnectAttempts), 30000); // Exponential backoff, max 30s
+                setTimeout(() => {
+                    if (validateExtensionContext()) {
+                        attemptReconnection();
+                    }
+                }, delayMs);
+            }
         });
 
         socket.on('connect', () => {
-            console.log('Connected to server');
+            // Log successful connection
+            console.log('🔌 [SOCKET] Successfully connected to Python server on port 3002');
+            reconnectAttempts = 0;
+            
+            // Check extension validity on connect
+            try {
+                chrome.runtime.id;
+                isExtensionValid = true;
+                
+                // Send a test message to confirm client type registration
+                socket.emit('connection_check', { test: 'chrome_client_test' });
+                
+            } catch (error) {
+                // Silently handle extension context invalidation on connect
+                isExtensionValid = false;
+                handleExtensionInvalidation();
+                return;
+            }
         });
 
-        socket.on('connect_error', (error) => {
-            console.log('Connection error:', error);
-            // Retry connection after a delay
-            setTimeout(() => {
-                if (!socket.connected) {
-                    console.log('Attempting to reconnect...');
-                    socket.connect();
-                }
-            }, 2000);
-        });
-
-        socket.on('reconnect', (attemptNumber) => {
-            console.log('Reconnected successfully on attempt:', attemptNumber);
-        });
-
+        // Enhanced progress handling with extension validation
         socket.on('progress', (data) => {
-            console.log('Progress data:', data);
+            // Check extension validity before processing
+            if (!validateExtensionContext()) return;
+            
+            // Check if this is a timecode message and route appropriately
+            const progressText = data.progress || data.message || '';
+            const isTimecode = progressText.includes(':') || progressText.includes('Clip:');
+            
+            if (isTimecode) {
+                // For timecode messages, this is ALWAYS for the clip button
+                updateProgressSafely({
+                    ...data,
+                    type: 'clip'
+                });
+            } else {
+                // For non-timecode progress, show all progress updates immediately
+                // The server already handles throttling, so no need to throttle again
+                updateProgressSafely(data);
+            }
+        });
+
+        socket.on('percentage', (data) => {
+            // Check extension validity before processing
+            if (!validateExtensionContext()) return;
+            
+            // Check if this is a timecode message (contains ':' and text) or a percentage
+            const percentageText = data.percentage || '';
+            const isTimecode = percentageText.includes(':') || percentageText.includes('Clip:');
+            
+            let targetType;
+            
+            if (isTimecode) {
+                // For timecode messages, this is ALWAYS for the clip button
+                targetType = 'clip';
+                
+                updateProgressSafely({
+                    message: percentageText,
+                    type: targetType
+                });
+            } else {
+                // For numeric percentages, determine which button is downloading
+                let activeButtonType = null;
+                for (const [checkType, state] of Object.entries(buttonStates)) {
+                    if (state.isDownloading) {
+                        activeButtonType = checkType;
+                        break;
+                    }
+                }
+                
+                targetType = activeButtonType || data.type || 'full';
+                
+                // Convert percentage and show as progress
+                const percentage = percentageText.replace('%', '');
+                
+                updateProgressSafely({
+                    progress: percentage,
+                    type: targetType
+                });
+            }
+        });
+
+        socket.on('complete', (data) => {
+            if (!validateExtensionContext()) return;
+            handleDownloadComplete(data);
+        });
+
+        socket.on('download-complete', (data) => {
+            if (!validateExtensionContext()) return;
+            handleDownloadComplete(data);
+        });
+
+        // Add listener for import_complete as well
+        socket.on('import_complete', (data) => {
+            if (!validateExtensionContext()) return;
+            if (data.success) {
+                // Don't assume type 'full' - let handleDownloadComplete determine from path or use generic handling
+                handleDownloadComplete({success: true, path: data.path});
+            }
+        });
+
+        socket.on('download-failed', (data) => {
+            console.log('YTP: Download failed:', data);
+            if (!validateExtensionContext()) return;
+            resetAllButtons();
+            
+            let errorMessage = data.message || data.error || 'Erreur de téléchargement inconnue';
+            
+            // Check for specific error types and provide better messages
+            if (errorMessage.includes('403') || errorMessage.includes('Forbidden')) {
+                errorMessage = 'Erreur d\'authentification YouTube (403). Veuillez vous reconnecter à YouTube et réessayer.';
+                // Show additional help for 403 errors
+                setTimeout(() => {
+                    showNotification('Conseil: Rafraîchissez la page YouTube et assurez-vous d\'être connecté.', 'info', 8000);
+                }, 2000);
+            } else if (errorMessage.includes('age') || errorMessage.includes('restriction')) {
+                errorMessage = 'Cette vidéo est soumise à une restriction d\'âge. Veuillez vous connecter à YouTube.';
+            } else if (errorMessage.includes('private') || errorMessage.includes('members-only')) {
+                errorMessage = 'Cette vidéo est privée ou réservée aux membres.';
+            } else if (errorMessage.includes('geo') || errorMessage.includes('region')) {
+                errorMessage = 'Cette vidéo n\'est pas disponible dans votre région.';
+            } else if (errorMessage.includes('unavailable') || errorMessage.includes('removed')) {
+                errorMessage = 'Cette vidéo n\'est plus disponible.';
+            }
+            
+            showNotification(errorMessage, 'error', 10000);
+        });
+
+        socket.on('error', (data) => {
+            // Silently handle server errors to prevent console spam
+            if (!validateExtensionContext()) return;
+            resetAllButtons();
+            showNotification(data.message || 'Erreur du serveur', 'error');
+        });
+            
+        // Handle processing status updates (especially useful for clips)
+        socket.on('processing', (data) => {
+            console.log('📊 [SOCKET] Processing event received:', JSON.stringify(data));
+            if (!validateExtensionContext()) return;
             
             const buttonType = data.type === 'full' ? 'premiere' : data.type;
+            console.log('📊 [PROCESSING] Button type determined:', buttonType, 'from data.type:', data.type);
+            
             const button = document.getElementById(
                 buttonType === 'premiere' ? 'send-to-premiere-button' :
                 buttonType === 'clip' ? 'clip-button' : 'audio-button'
             );
 
             if (button && buttonStates[buttonType].isDownloading) {
+                console.log('📊 [PROCESSING] Button found and is downloading:', button.id);
+                
+                // Transition from loading to downloading state smoothly
                 button.classList.remove('loading');
                 button.classList.add('downloading');
+                
                 const progressText = button.querySelector('.progress-text');
                 if (progressText) {
-                    // Clear content and re-add icon with progress
+                    console.log('📊 [PROCESSING] Updating progress text with message:', data.message);
                     progressText.innerHTML = '';
                     
                     const icon = document.createElement('span');
@@ -894,156 +1197,225 @@ function initializeSocket() {
                     }
                     
                     progressText.appendChild(icon);
-                    progressText.appendChild(document.createTextNode(`${data.progress}%`));
+                    const message = data.message || 'Traitement...';
+                    progressText.appendChild(document.createTextNode(' ' + message));
                 }
+            } else {
+                console.log('📊 [PROCESSING] Button not found or not downloading - button:', !!button, 'isDownloading:', buttonStates[buttonType]?.isDownloading);
             }
         });
 
-        socket.on('complete', (data) => {
-            console.log('Download complete:', data);
-            
-            const buttonType = data.type === 'full' ? 'premiere' : data.type;
-            const button = document.getElementById(
-                buttonType === 'premiere' ? 'send-to-premiere-button' :
-                buttonType === 'clip' ? 'clip-button' : 'audio-button'
-            );
-
-            if (button) {
-                button.classList.remove('downloading', 'loading');
-                button.classList.add('success');
-                const progressText = button.querySelector('.progress-text');
-                if (progressText) {
-                    // Clear content and show success with icon
-                    progressText.innerHTML = '';
-                    
-                    const icon = document.createElement('span');
-                    icon.className = 'button-icon';
-                    if (button.id === 'send-to-premiere-button') {
-                        icon.textContent = 'movie';
-                    } else if (button.id === 'clip-button') {
-                        icon.textContent = 'content_cut';
-                    } else if (button.id === 'audio-button') {
-                        icon.textContent = 'music_note';
-                    }
-                    
-                    progressText.appendChild(icon);
-                    progressText.appendChild(document.createTextNode('Succès !'));
-                }
-
-                setTimeout(() => {
-                    resetButtonState(button);
-                }, 2000);
-
-                if (data.message) {
-                    showNotification(data.message, 'success');
-                }
-            }
+        // Listen for connection status confirmation from server
+        socket.on('connection_status', (data) => {
+            // Silently handle connection status - no need to log
         });
 
-        socket.on('error', (data) => {
-            console.log('Download error:', data);
-            
-            const buttonType = data.type === 'full' ? 'premiere' : data.type;
-            const button = document.getElementById(
-                buttonType === 'premiere' ? 'send-to-premiere-button' :
-                buttonType === 'clip' ? 'clip-button' : 'audio-button'
-            );
-
-            if (button) {
-                button.classList.remove('downloading', 'loading');
-                button.classList.add('failure');
-                const progressText = button.querySelector('.progress-text');
-                if (progressText) {
-                    // Clear content and show error with icon
-                    progressText.innerHTML = '';
-                    
-                    const icon = document.createElement('span');
-                    icon.className = 'button-icon';
-                    if (button.id === 'send-to-premiere-button') {
-                        icon.textContent = 'movie';
-                    } else if (button.id === 'clip-button') {
-                        icon.textContent = 'content_cut';
-                    } else if (button.id === 'audio-button') {
-                        icon.textContent = 'music_note';
-                    }
-                    
-                    progressText.appendChild(icon);
-                    progressText.appendChild(document.createTextNode('Erreur'));
-                }
-
-                setTimeout(() => {
-                    button.classList.remove('failure');
-                    buttonStates[buttonType].isDownloading = false;
-                    resetButtonState(button);
-                }, 3000);
-
-                if (data.message) {
-                    showNotification(data.message, 'error');
-                }
-            }
+        // Handle ping from server (to keep connection alive)
+        socket.on('ping', (data) => {
+            // Silently handle pings - no need to log
         });
 
-        socket.on('download-complete', (data) => {
-            console.log('Download completed:', data);
-            // Reset all downloading states
-            Object.keys(buttonStates).forEach(type => {
-                buttonStates[type].isDownloading = false;
-                const button = document.getElementById(
-                    type === 'premiere' ? 'send-to-premiere-button' :
-                    type === 'clip' ? 'clip-button' : 'audio-button'
-                );
-                if (button && button.classList.contains('downloading')) {
-                    resetButtonState(button);
-                }
-            });
-        });
 
-        socket.on('download-failed', (data) => {
-            console.log('Download failed:', data);
-            // Reset all downloading states and show error
-            Object.keys(buttonStates).forEach(type => {
-                buttonStates[type].isDownloading = false;
-                const button = document.getElementById(
-                    type === 'premiere' ? 'send-to-premiere-button' :
-                    type === 'clip' ? 'clip-button' : 'audio-button'
-                );
-                if (button && button.classList.contains('downloading')) {
-                    button.classList.remove('downloading', 'loading');
-                    button.classList.add('failure');
-                    const progressText = button.querySelector('.progress-text');
-                    if (progressText) {
-                        progressText.innerHTML = '';
-                        const icon = document.createElement('span');
-                        icon.className = 'button-icon';
-                        if (button.id === 'send-to-premiere-button') {
-                            icon.textContent = 'movie';
-                        } else if (button.id === 'clip-button') {
-                            icon.textContent = 'content_cut';
-                        } else if (button.id === 'audio-button') {
-                            icon.textContent = 'music_note';
-                        }
-                        progressText.appendChild(icon);
-                        progressText.appendChild(document.createTextNode('Erreur'));
-                    }
-                    setTimeout(() => resetButtonState(button), 3000);
-                }
-            });
-            if (data.message) {
-                showNotification(data.message, 'error');
-            }
-        });
 
-        socket.on('disconnect', () => {
-            console.log('Disconnected from server');
-        });
+        // Connect the socket
+        socket.connect();
 
     } catch (error) {
-        console.error('Socket initialization error:', error);
+        // Silently handle socket initialization errors
+        if (error.message.includes('Extension context invalidated')) {
+            handleExtensionInvalidation();
+        }
     }
 }
 
-// Initialize socket when page loads
-setTimeout(initializeSocket, 1000);
+// Function to validate extension context
+function validateExtensionContext() {
+    // If already handled invalidation, don't check again
+    if (invalidationHandled) {
+        return false;
+    }
+    
+    try {
+        chrome.runtime.id;
+        isExtensionValid = true;
+        return true;
+    } catch (error) {
+        // Silently mark as invalid to prevent console spam
+        const wasValid = isExtensionValid;
+        isExtensionValid = false;
+        // Only call handleExtensionInvalidation once when context becomes invalid
+        if (wasValid && !invalidationHandled) {
+            handleExtensionInvalidation();
+        }
+        return false;
+    }
+}
+
+// Global flag to prevent repeated notifications
+let invalidationHandled = false;
+
+// Function to handle extension invalidation
+function handleExtensionInvalidation() {
+    // Only handle once to prevent spam
+    if (invalidationHandled) return;
+    invalidationHandled = true;
+    
+    // Silently clean up without any console messages
+    
+    // Disconnect all observers
+    try {
+        if (mainMutationObserver) {
+            mainMutationObserver.disconnect();
+            mainMutationObserver = null;
+        }
+        if (ytPlayerObserver) {
+            ytPlayerObserver.disconnect();
+            ytPlayerObserver = null;
+        }
+    } catch (e) {
+        // Silently handle observer disconnection errors
+    }
+    
+    // Disconnect socket
+    if (socket) {
+        try {
+            socket.disconnect();
+        } catch (e) {
+            // Silently handle socket disconnection errors
+        }
+        socket = null;
+    }
+    
+    // Reset all button states
+    try {
+        resetAllButtons();
+        // Only show notification once, and only if DOM elements are available
+        if (document.body && document.getElementById) {
+            showNotification(
+                'Extension rechargée. Rafraîchissez la page pour continuer.',
+                'info',
+                8000
+            );
+        }
+    } catch (error) {
+        // Silently handle cleanup errors
+    }
+}
+
+// Function to attempt reconnection
+function attemptReconnection() {
+    if (!validateExtensionContext()) return;
+    
+    reconnectAttempts++;
+    // Silently attempt reconnection without console spam
+    
+    try {
+        if (socket) {
+            socket.connect();
+        } else {
+            initializeSocket();
+        }
+    } catch (error) {
+        // Silently handle reconnection errors
+        if (reconnectAttempts >= maxReconnectAttempts) {
+            showNotification(
+                'Impossible de se reconnecter au serveur. Veuillez rafraîchir la page.',
+                'error',
+                10000
+            );
+        }
+    }
+}
+
+// Safe version of updateProgress that validates extension context
+function updateProgressSafely(data) {
+    try {
+        if (!validateExtensionContext()) return;
+        updateProgress(data);
+    } catch (error) {
+        // Silently handle progress update errors to prevent spam
+        if (error.message.includes('Extension context invalidated')) {
+            handleExtensionInvalidation();
+        }
+    }
+}
+
+// Enhanced updateProgress function with better error handling
+function updateProgress(data) {
+    try {
+        const buttonType = data.type === 'full' ? 'premiere' : data.type;
+        
+        const button = document.getElementById(
+            buttonType === 'premiere' ? 'send-to-premiere-button' :
+            buttonType === 'clip' ? 'clip-button' : 'audio-button'
+        );
+
+        if (button) {
+            // Ensure button is in downloading state when receiving progress
+            if (!button.classList.contains('downloading')) {
+                button.classList.remove('loading');
+                button.classList.add('downloading');
+                buttonStates[buttonType].isDownloading = true;
+            }
+            
+            const progressText = button.querySelector('.progress-text');
+            if (progressText) {
+                // Clear content and re-add icon with progress
+                progressText.innerHTML = '';
+                
+                const icon = document.createElement('span');
+                icon.className = 'button-icon';
+                if (button.id === 'send-to-premiere-button') {
+                    icon.textContent = 'movie';
+                } else if (button.id === 'clip-button') {
+                    icon.textContent = 'content_cut';
+                } else if (button.id === 'audio-button') {
+                    icon.textContent = 'music_note';
+                }
+                
+                // Add space and progress text
+                const progressSpan = document.createElement('span');
+                progressSpan.className = 'progress-value';
+                
+                // Show progress for all button types
+                // Priority: message > progress > default
+                if (data.message !== undefined && data.message !== null) {
+                    // For clip timecode messages, show them directly
+                    if (data.message.includes(':') || data.message.includes('Clip:')) {
+                        progressSpan.textContent = ` ${data.message}`;
+                    } else {
+                        progressSpan.textContent = ` ${data.message}`;
+                    }
+                } else if (data.progress !== undefined && data.progress !== null) {
+                    // Ensure progress is displayed as percentage
+                    const progressValue = data.progress.toString().replace('%', '');
+                    progressSpan.textContent = ` ${progressValue}%`;
+                } else {
+                    // Fallback based on button type
+                    if (buttonType === 'clip') {
+                        progressSpan.textContent = ' Traitement...';
+                    } else {
+                        progressSpan.textContent = ' En cours...';
+                    }
+                }
+                
+                progressText.appendChild(icon);
+                progressText.appendChild(progressSpan);
+            }
+        } else {
+            // Silently ignore if buttons don't exist yet (normal during page load)
+            // This happens when progress events arrive before buttons are created
+        }
+    } catch (error) {
+        // Only log unexpected errors, ignore extension context issues
+        if (!error.message.includes('Extension context invalidated')) {
+            console.error('🔄 [PROGRESS] Error in updateProgress:', error);
+        }
+        if (error.message.includes('Extension context invalidated')) {
+            handleExtensionInvalidation();
+        }
+    }
+}
 
 function createRipple(event, button) {
     // Remove any existing ripples
@@ -1160,11 +1532,23 @@ function resetButtonState(button) {
     const buttonType = button.dataset.type;
     buttonStates[buttonType].isDownloading = false;
     
+    // Clear any timeout
+    if (button.downloadTimeout) {
+        clearTimeout(button.downloadTimeout);
+        button.downloadTimeout = null;
+    }
+    
     // Reset both main and fallback buttons
     const allButtons = document.querySelectorAll(`[data-type="${buttonType}"]`);
     allButtons.forEach(btn => {
         btn.classList.remove('downloading', 'loading', 'success', 'failure');
         btn.dataset.downloading = 'false';
+        
+        // Clear any timeout on this button too
+        if (btn.downloadTimeout) {
+            clearTimeout(btn.downloadTimeout);
+            btn.downloadTimeout = null;
+        }
         
         // Restore original text with icon
         const progressText = btn.querySelector('.progress-text');
@@ -1247,14 +1631,36 @@ function sendURL(downloadType, additionalData = {}) {
     );
 
     if (button) {
+        // Always proceed with download but check authentication for warnings
+        enhancedAuthCheck().then(isAuthenticated => {
+            if (!isAuthenticated) {
+                // Show warning but continue with download
+                console.warn('YTP: Authentication warning - user may not be fully logged in');
+                showNotification(
+                    'Attention: Authentification YouTube incomplète. Le téléchargement peut échouer pour certaines vidéos privées ou avec restrictions d\'âge.',
+                    'warning',
+                    8000
+                );
+            }
+            
+            // Continue with download regardless of authentication status
+            proceedWithServerCheck();
+        }).catch(error => {
+            console.error('YTP: Auth check failed:', error);
+            // Proceed anyway but warn user
+            showNotification('Impossible de vérifier l\'authentification. Tentative de téléchargement...', 'warning', 5000);
+            proceedWithServerCheck();
+        });
+        
+        function proceedWithServerCheck() {
         // First check if server is running
-        fetch('http://localhost:3001/health')
+        fetch('http://localhost:3002/health')
         .then(response => {
             if (!response.ok) {
                 throw new Error('Server not running');
             }
             // If server is running, then check license
-            return fetch('http://localhost:3001/check-license');
+            return fetch('http://localhost:3002/check-license');
         })
         .then(response => response.json())
         .then(data => {
@@ -1271,6 +1677,18 @@ function sendURL(downloadType, additionalData = {}) {
             buttonStates[buttonType].isDownloading = true;
             button.classList.add('loading');
             button.dataset.downloading = 'true';
+                
+                // Add timeout to prevent infinite loading (5 minutes)
+                button.downloadTimeout = setTimeout(() => {
+                    console.warn('YTP: Download timeout reached for', buttonType);
+                    button.classList.remove('downloading', 'loading');
+                    button.classList.add('failure');
+                    buttonStates[buttonType].isDownloading = false;
+                    showNotification('Délai d\'attente dépassé pour le téléchargement. Veuillez réessayer.', 'error');
+                    setTimeout(() => {
+                        resetButtonState(button);
+                    }, 3000);
+                }, 300000); // 5 minutes timeout
             
             // Extract video ID from different YouTube URL formats
             let videoId = null;
@@ -1302,14 +1720,14 @@ function sendURL(downloadType, additionalData = {}) {
                 // Use the current page URL directly to preserve all parameters and context
                 currentVideoUrl = window.location.href;
                 
-                const serverUrl = 'http://localhost:3001/handle-video-url';
+                const serverUrl = 'http://localhost:3002/handle-video-url';
                 
-                // Récupérer les cookies YouTube avant d'envoyer la requête
+                // Always récupérer les cookies YouTube, même si l'authentification semble incomplète
                 getCookiesForServer().then(cookiesData => {
                     console.log('YTP: Cookies retrieved for server:', cookiesData.cookies.length, 'cookies');
                     
+                    // Log authentication status but don't block download
                     if (cookiesData.cookies.length > 0) {
-                        // Log authentication cookies for debugging
                         const authCookies = cookiesData.cookies.filter(cookie => 
                             ['SAPISID', 'APISID', 'HSID', 'SSID', 'LOGIN_INFO', '__Secure-3PAPISID', '__Secure-3PSID', 'SID'].includes(cookie.name)
                         );
@@ -1319,19 +1737,27 @@ function sendURL(downloadType, additionalData = {}) {
                         
                         if (authCookies.length === 0) {
                             console.warn('YTP: WARNING - No authentication cookies found! User may not be logged in.');
-                            showNotification('Attention: Aucun cookie d\'authentification trouvé. Veuillez vous connecter à YouTube.', 'warning', 8000);
+                            // Don't show notification here as we already showed one above
                         } else {
                             console.log('YTP: User appears authenticated - found', authCookies.length, 'auth cookies');
                         }
+                        
+                        // Log essential cookies for debugging
+                        const essentialCookies = cookiesData.cookies.filter(c => 
+                            ['LOGIN_INFO', '__Secure-3PAPISID', 'SAPISID'].includes(c.name)
+                        );
+                        essentialCookies.forEach(cookie => {
+                            console.log(`YTP: Essential cookie found: ${cookie.name} (domain: ${cookie.domain})`);
+                        });
                     } else {
-                        console.warn('YTP: No cookies retrieved!');
-                        showNotification('Attention: Aucun cookie trouvé. Veuillez vous connecter à YouTube.', 'warning', 8000);
+                        console.warn('YTP: No cookies retrieved! This may cause downloads to fail for private or age-restricted videos.');
                     }
                     
+                    // Always send the request with whatever cookies we have
                     const requestData = {
                         url: currentVideoUrl,
                         type: downloadType,
-                        cookies: cookiesData.cookies,
+                        cookies: cookiesData.cookies, // Always send cookies, even if empty
                         userAgent: navigator.userAgent,
                         ...additionalData
                     };
@@ -1355,8 +1781,17 @@ function sendURL(downloadType, additionalData = {}) {
                 })
                 .catch(error => {
                     console.error('Error:', error);
+                        
+                        // Clear timeout on error
+                        if (button.downloadTimeout) {
+                            clearTimeout(button.downloadTimeout);
+                            button.downloadTimeout = null;
+                        }
+                        
                     button.classList.remove('downloading', 'loading');
                     button.classList.add('failure');
+                        buttonStates[buttonType].isDownloading = false;
+                        
                     if (error.message === 'Failed to fetch') {
                         showNotification('Connexion au serveur échouée. Assurez-vous qu\'Adobe Premiere Pro est ouvert et que YoutubetoPremiere fonctionne.', 'error');
                     } else if (error.message === 'License validation failed') {
@@ -1366,7 +1801,6 @@ function sendURL(downloadType, additionalData = {}) {
                     }
                     setTimeout(() => {
                         button.classList.remove('failure');
-                        buttonStates[buttonType].isDownloading = false;
                         resetButtonState(button);
                     }, 1000);
                 });
@@ -1389,6 +1823,7 @@ function sendURL(downloadType, additionalData = {}) {
                 button.classList.remove('failure');
             }, 1000);
         });
+        }
     }
 }
 
@@ -1493,7 +1928,7 @@ function makeDraggable(container) {
     if (!container) return;
     
     // Load saved pin state first
-    chrome.storage.local.get(['ytp-panel-pinned'], (result) => {
+    safeStorageGet(['ytp-panel-pinned'], (result) => {
         isPinned = result['ytp-panel-pinned'] === true;
         
         // Then load saved position
@@ -1765,7 +2200,8 @@ function addButtons() {
             buttonsContainer.appendChild(createButton('clip-button', 'Clip', () => {
                 const videoPlayer = document.querySelector('video');
                 if (videoPlayer) {
-                    sendURL('clip', { currentTime: videoPlayer.currentTime });
+                    const currentTime = videoPlayer.currentTime;
+                    sendURL('clip', { currentTime });
                 }
             }));
             
@@ -1799,49 +2235,103 @@ function addButtons() {
         }
         
         // Update visibility based on current page
-        updateButtonsVisibility();
+        throttledUpdateVisibility();
     } else {
         setTimeout(addButtons, 1000);
     }
 }
 
+// Throttling variables for performance
+let lastUpdateTime = 0;
+let updatePending = false;
+const UPDATE_THROTTLE_MS = 250; // Maximum updates every 250ms
+
+// Throttled update function to prevent performance issues
+function throttledUpdateVisibility() {
+    // Stop if extension is invalidated
+    if (invalidationHandled || !isExtensionValid) return;
+    
+    const now = Date.now();
+    
+    if (now - lastUpdateTime >= UPDATE_THROTTLE_MS) {
+        // Immediate update if enough time has passed
+        lastUpdateTime = now;
+        updateButtonsVisibilitySafely();
+        updatePending = false;
+    } else if (!updatePending) {
+        // Schedule delayed update if one isn't already pending
+        updatePending = true;
+        setTimeout(() => {
+            // Check again before executing
+            if (invalidationHandled || !isExtensionValid) {
+                updatePending = false;
+                return;
+            }
+            lastUpdateTime = Date.now();
+            updateButtonsVisibilitySafely();
+            updatePending = false;
+        }, UPDATE_THROTTLE_MS - (now - lastUpdateTime));
+    }
+}
+
 // Simple observer to recreate buttons if they're removed
 const setupObservers = () => {
-    new MutationObserver(() => {
-        // Always update button visibility based on current page
-        updateButtonsVisibility();
+    // Disconnect existing observers first
+    if (mainMutationObserver) {
+        mainMutationObserver.disconnect();
+    }
+    if (ytPlayerObserver) {
+        ytPlayerObserver.disconnect();
+    }
+    
+    mainMutationObserver = new MutationObserver(() => {
+        // Stop if extension is invalidated
+        if (invalidationHandled || !isExtensionValid) return;
+        
+        // Throttled button visibility update to prevent performance issues
+        throttledUpdateVisibility();
         
         // Check if our container was removed and recreate if needed (only on video pages)
         if (isVideoPage() && (!document.getElementById('ytp-floating-container') || 
             !document.getElementById('ytp-main-container'))) {
             setTimeout(addButtons, 100);
         }
-    }).observe(document.body, { 
-        childList: true, 
-        subtree: true
     });
     
+    // Only observe if extension is still valid
+    if (!invalidationHandled && isExtensionValid) {
+        mainMutationObserver.observe(document.body, { 
+            childList: true, 
+            subtree: true
+        });
+    }
+    
     // Add fullscreen event listeners to hide/show buttons
-    document.addEventListener('fullscreenchange', updateButtonsVisibility);
-    document.addEventListener('webkitfullscreenchange', updateButtonsVisibility);
-    document.addEventListener('mozfullscreenchange', updateButtonsVisibility);
-    document.addEventListener('MSFullscreenChange', updateButtonsVisibility);
+    document.addEventListener('fullscreenchange', throttledUpdateVisibility);
+    document.addEventListener('webkitfullscreenchange', throttledUpdateVisibility);
+    document.addEventListener('mozfullscreenchange', throttledUpdateVisibility);
+    document.addEventListener('MSFullscreenChange', throttledUpdateVisibility);
     
     // Also listen for YouTube-specific fullscreen changes
-    const ytPlayerObserver = new MutationObserver(() => {
-        updateButtonsVisibility();
+    ytPlayerObserver = new MutationObserver(() => {
+        // Stop if extension is invalidated
+        if (invalidationHandled || !isExtensionValid) return;
+        throttledUpdateVisibility();
     });
     
     // Observe changes in the YouTube player for fullscreen class changes
     const checkForYtPlayer = () => {
+        // Stop if extension is invalidated
+        if (invalidationHandled || !isExtensionValid) return;
+        
         const ytPlayer = document.querySelector('#movie_player, .html5-video-player');
-        if (ytPlayer) {
+        if (ytPlayer && ytPlayerObserver) {
             ytPlayerObserver.observe(ytPlayer, { 
                 attributes: true, 
                 attributeFilter: ['class'],
                 subtree: false
             });
-        } else {
+        } else if (!invalidationHandled && isExtensionValid) {
             // If player not found, retry in a bit
             setTimeout(checkForYtPlayer, 1000);
         }
@@ -1855,38 +2345,48 @@ addButtons();
 setupObservers();
 
 // Message listener for popup communication
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === 'YTP_POPUP_MESSAGE') {
-        console.log('YTP: Received message from popup:', message);
+try {
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+        // Check extension validity before processing messages
+        if (!validateExtensionContext()) return;
         
-        switch (message.action) {
-            case 'TOGGLE_PANEL':
-                handleTogglePanel(message.data.visible);
-                break;
-            case 'TOGGLE_PIN':
-                handleTogglePin(message.data.pinned);
-                break;
-            case 'UPDATE_BUTTON_SIZE':
-                handleUpdateButtonSize(message.data.size);
-                break;
-            case 'UPDATE_AUTO_HIDE':
-                handleUpdateAutoHide(message.data.autoHide);
-                break;
-            case 'RESET_POSITION':
-                handleResetPosition(message.data);
-                break;
-            case 'CENTER_POSITION':
-                handleCenterPosition();
-                break;
-            case 'RESET_ALL_SETTINGS':
-                handleResetAllSettings(message.data);
-                break;
+        if (message.type === 'YTP_POPUP_MESSAGE') {
+            console.log('YTP: Received message from popup:', message);
+            
+            switch (message.action) {
+                case 'TOGGLE_PANEL':
+                    handleTogglePanel(message.data.visible);
+                    break;
+                case 'TOGGLE_PIN':
+                    handleTogglePin(message.data.pinned);
+                    break;
+                case 'UPDATE_BUTTON_SIZE':
+                    handleUpdateButtonSize(message.data.size);
+                    break;
+                case 'UPDATE_AUTO_HIDE':
+                    handleUpdateAutoHide(message.data.autoHide);
+                    break;
+                case 'RESET_POSITION':
+                    handleResetPosition(message.data);
+                    break;
+                case 'CENTER_POSITION':
+                    handleCenterPosition();
+                    break;
+                case 'RESET_ALL_SETTINGS':
+                    handleResetAllSettings(message.data);
+                    break;
+            }
+            
+            sendResponse({ success: true });
+            return true; // Keep message channel open for async response
         }
-        
-        sendResponse({ success: true });
-        return true; // Keep message channel open for async response
+    });
+} catch (error) {
+    console.error('YTP: Error setting up message listener:', error);
+    if (error.message.includes('Extension context invalidated')) {
+        handleExtensionInvalidation();
     }
-});
+}
 
 // Functions to handle popup messages
 function handleTogglePanel(visible) {
@@ -1901,7 +2401,7 @@ function handleTogglePanel(visible) {
         }
         
         // Save to storage
-        chrome.storage.local.set({ 'ytp-panel-visible': visible });
+        safeStorageSet({ 'ytp-panel-visible': visible });
         console.log('YTP: Panel visibility set to:', visible);
     }
 }
@@ -1938,7 +2438,7 @@ function handleTogglePin(pinned) {
         updateContainerPositioning(container);
         
         // Save both the pin state and the new position
-        chrome.storage.local.set({ 'ytp-panel-pinned': pinned });
+        safeStorageSet({ 'ytp-panel-pinned': pinned });
         localStorage.setItem('ytp-container-position', JSON.stringify(containerPosition));
         
         console.log('YTP: Panel pinned set to:', pinned);
@@ -1961,18 +2461,18 @@ function handleUpdateButtonSize(size) {
         }
         
         // Save to storage
-        chrome.storage.local.set({ 'ytp-button-size': size.toString() });
+        safeStorageSet({ 'ytp-button-size': size.toString() });
         console.log('YTP: Button size updated to:', size);
     }
 }
 
 function handleUpdateAutoHide(autoHide) {
     // Store auto-hide preference
-    chrome.storage.local.set({ 'ytp-auto-hide': autoHide });
+    safeStorageSet({ 'ytp-auto-hide': autoHide });
     console.log('YTP: Auto-hide set to:', autoHide);
     
     // Update visibility logic (this will be used in updateButtonsVisibility function)
-    updateButtonsVisibility();
+    throttledUpdateVisibility();
 }
 
 function handleResetPosition(position) {
@@ -2073,12 +2573,12 @@ function handleResetAllSettings(settings) {
 
 // Function to notify popup of changes
 function notifyPopup(action, data = {}) {
-    chrome.runtime.sendMessage({
+    safeRuntimeSendMessage({
         type: 'YTP_CONTENT_MESSAGE',
         action: action,
         data: data
     }, (response) => {
-        if (chrome.runtime.lastError) {
+        if (!response) {
             // Popup might not be open, that's okay
             console.log('YTP: Popup not responding (probably closed)');
         }
@@ -2087,7 +2587,7 @@ function notifyPopup(action, data = {}) {
 
 // Load settings from chrome.storage on initialization
 function loadSettingsFromStorage() {
-    chrome.storage.local.get([
+    safeStorageGet([
         'ytp-panel-visible',
         'ytp-panel-pinned',
         'ytp-button-size',
@@ -2129,7 +2629,7 @@ stopDrag = function() {
 document.addEventListener('yt-navigate-finish', () => {
     setTimeout(() => {
         // Update button visibility for any page change
-        updateButtonsVisibility();
+        throttledUpdateVisibility();
         
         // Only create buttons if we're on a video page and they don't exist
         if (isVideoPage() && !document.getElementById('ytp-floating-container')) {
@@ -2144,7 +2644,7 @@ setInterval(() => {
     if (window.location.href !== currentUrl) {
         currentUrl = window.location.href;
         setTimeout(() => {
-            updateButtonsVisibility();
+            throttledUpdateVisibility();
             if (isVideoPage() && !document.getElementById('ytp-floating-container')) {
                 addButtons();
             }
@@ -2152,4 +2652,258 @@ setInterval(() => {
     }
 }, 1000);
 
- 
+// Initialize socket when page loads (moved after function definitions)
+setTimeout(() => {
+    if (validateExtensionContext()) {
+        initializeSocket();
+    }
+}, 1000);
+
+// Handle download completion with success animation
+function handleDownloadComplete(data) {
+    console.log('🎯 [COMPLETE] HandleDownloadComplete called with:', JSON.stringify(data));
+    
+    let type = data.type;
+    let buttonType = null;
+    let button = null;
+    
+    // If type is specified, use it directly
+    if (type) {
+        buttonType = type === 'full' ? 'premiere' : type;
+        button = document.getElementById(
+            buttonType === 'premiere' ? 'send-to-premiere-button' :
+            buttonType === 'clip' ? 'clip-button' : 'audio-button'
+        );
+        console.log('🎯 [COMPLETE] Using specified type:', type, '-> buttonType:', buttonType);
+    }
+    
+    // If no type specified or button not found, find the downloading button
+    if (!button || !type) {
+        console.log('🎯 [COMPLETE] No type specified or button not found, searching for downloading button...');
+        
+        // Check which button is currently downloading
+        for (const [checkType, state] of Object.entries(buttonStates)) {
+            if (state.isDownloading) {
+                buttonType = checkType;
+                type = checkType === 'premiere' ? 'full' : checkType;
+                button = document.getElementById(
+                    buttonType === 'premiere' ? 'send-to-premiere-button' :
+                    buttonType === 'clip' ? 'clip-button' : 'audio-button'
+                );
+                console.log('🎯 [COMPLETE] Found downloading button:', buttonType, 'isDownloading:', state.isDownloading);
+                break;
+            }
+        }
+    }
+    
+    console.log('🎯 [COMPLETE] Final determination - type:', type, 'buttonType:', buttonType, 'button found:', !!button);
+    
+    // Debug: Log all button states for troubleshooting
+    console.log('🎯 [COMPLETE] Current button states:', Object.entries(buttonStates).map(([k,v]) => ({type: k, isDownloading: v.isDownloading})));
+
+    if (button) {
+        console.log('🎯 [COMPLETE] Button found:', button.id, 'current state:', {
+            classes: button.className,
+            isDownloading: buttonStates[buttonType]?.isDownloading,
+            textContent: button.textContent.substring(0, 50)
+        });
+        
+        // Clear any timeout
+        if (button.downloadTimeout) {
+            clearTimeout(button.downloadTimeout);
+            button.downloadTimeout = null;
+        }
+        
+        // Show success state
+        button.classList.remove('downloading', 'loading');
+        button.classList.add('success');
+        buttonStates[buttonType].isDownloading = false;
+        
+        const progressText = button.querySelector('.progress-text');
+        if (progressText) {
+            progressText.innerHTML = '';
+            
+            const icon = document.createElement('span');
+            icon.className = 'button-icon';
+            icon.textContent = 'check';
+            
+            progressText.appendChild(icon);
+            progressText.appendChild(document.createTextNode('Réussi'));
+        }
+        
+        // Reset after showing success
+        setTimeout(() => {
+            resetButtonState(button);
+        }, 2000);
+    } else {
+        // Fallback: reset all buttons if specific button not found
+        resetAllButtons();
+    }
+}
+
+// Function to reset all buttons to their default state
+function resetAllButtons() {
+    Object.keys(buttonStates).forEach(type => {
+        buttonStates[type].isDownloading = false;
+        const button = document.getElementById(
+            type === 'premiere' ? 'send-to-premiere-button' :
+            type === 'clip' ? 'clip-button' : 'audio-button'
+        );
+        if (button) {
+            // Clear any timeout
+            if (button.downloadTimeout) {
+                clearTimeout(button.downloadTimeout);
+                button.downloadTimeout = null;
+            }
+            resetButtonState(button);
+        }
+    });
+}
+
+// Check authentication status on page load
+async function checkAuthenticationStatus() {
+    // Skip auth check if extension is invalidated
+    if (invalidationHandled || !isExtensionValid) return;
+    
+    try {
+        const authStatus = await checkYouTubeAuth();
+        
+        if (!authStatus.isLoggedIn) {
+            // Only show notification on video pages where it's relevant
+            if (isVideoPage()) {
+                showNotification('Attention: Veuillez vous connecter à YouTube pour télécharger des vidéos.', 'warning', 10000);
+            }
+        }
+        // Success case is silent to reduce console spam
+    } catch (error) {
+        // Silently handle auth check errors to prevent console spam
+        // These are often network-related and don't affect core functionality
+    }
+}
+
+// Initialize the extension when the page loads
+document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => {
+        throttledUpdateVisibility();
+        if (isVideoPage()) {
+            addButtons();
+        }
+        // Only run auth checks on video pages to reduce unnecessary network calls
+        if (isVideoPage()) {
+            // Start monitoring YouTube resource errors
+            detectYouTubeResourceErrors();
+            // Enhanced authentication check (only on video pages)
+            enhancedAuthCheck();
+        }
+    }, 1000);
+});
+
+// Also run initialization when the page is ready (in case DOMContentLoaded already fired)
+if (document.readyState === 'loading') {
+    // DOMContentLoaded listener is already set above
+} else {
+    // DOM is already ready, run initialization
+    setTimeout(() => {
+        throttledUpdateVisibility();
+        if (isVideoPage()) {
+            addButtons();
+            // Only run auth checks on video pages to reduce unnecessary network calls
+            detectYouTubeResourceErrors();
+            enhancedAuthCheck();
+        }
+    }, 1000);
+} 
+
+// Enhanced YouTube resource error detection (disabled to prevent console interference)
+function detectYouTubeResourceErrors() {
+    // Simplified error detection without intercepting console.error
+    // This prevents interference with other extensions and debugging
+    
+    // Listen for network errors via window error events instead
+    let youtube403Count = 0;
+    let lastErrorTime = 0;
+    
+    // Monitor for 403 errors in a less intrusive way
+    const errorListener = (event) => {
+        // Skip if extension is invalidated
+        if (invalidationHandled || !isExtensionValid) return;
+        
+        if (event.error && event.error.message) {
+            const errorMsg = event.error.message.toLowerCase();
+            if (errorMsg.includes('403') && errorMsg.includes('googlevideo.com')) {
+                youtube403Count++;
+                lastErrorTime = Date.now();
+                
+                // If we see multiple 403 errors in a short time, suggest refresh
+                if (youtube403Count >= 3 && (Date.now() - lastErrorTime) < 30000) {
+                    setTimeout(() => {
+                        if (isVideoPage()) {
+                            showNotification(
+                                'Erreurs de streaming détectées. Rafraîchir la page pourrait aider.',
+                                'warning',
+                                10000
+                            );
+                        }
+                    }, 2000);
+                }
+            }
+        }
+    };
+    
+    // Only add listener if not already added
+    if (!window.ytpErrorListenerAdded) {
+        window.addEventListener('error', errorListener);
+        window.ytpErrorListenerAdded = true;
+    }
+    
+    // Reset counter periodically
+    setInterval(() => {
+        if (Date.now() - lastErrorTime > 60000) {
+            youtube403Count = 0;
+        }
+    }, 30000);
+}
+
+// Enhanced authentication status check
+async function enhancedAuthCheck() {
+    // Skip auth check if extension is invalidated
+    if (invalidationHandled || !isExtensionValid) return false;
+    
+    try {
+        const authStatus = await checkYouTubeAuth();
+        
+        if (!authStatus.isLoggedIn) {
+            // Only show notification if we're on a video page where downloads might happen
+            if (isVideoPage()) {
+                showNotification(
+                    'Non connecté à YouTube. Les téléchargements peuvent échouer.',
+                    'warning',
+                    8000
+                );
+            }
+            return false;
+        }
+        
+        // Check for specific auth cookies
+        const criticalCookies = ['LOGIN_INFO', 'SAPISID', 'SSID'];
+        const missingCookies = criticalCookies.filter(cookieName => 
+            !authStatus.cookies || !authStatus.cookies.some(cookie => cookie.name === cookieName)
+        );
+        
+        if (missingCookies.length > 0 && isVideoPage()) {
+            // Only show warning on video pages
+            showNotification(
+                'Authentification YouTube incomplète. Veuillez vous reconnecter.',
+                'warning',
+                6000
+            );
+            return false;
+        }
+        
+        return true;
+    } catch (error) {
+        // Silently handle auth check failures to prevent console spam
+        // These are often network-related and don't affect functionality
+        return false;
+    }
+} 

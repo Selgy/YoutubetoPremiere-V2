@@ -107,6 +107,27 @@ class Builder {
     }
   }
 
+  async buildCEPDev() {
+    this.log('🎨 Construction de l\'extension CEP (mode développement - sans signature ZXP)...');
+    
+    try {
+      // Build without ZXP packaging to avoid signing issues during development
+      const buildCommand = 'cross-env NODE_ENV=production vite build';
+      execSync(buildCommand, { 
+        stdio: this.verbose ? 'inherit' : 'pipe',
+        env: { 
+          ...process.env, 
+          NODE_ENV: 'production',
+          // Don't set ZXP_PACKAGE to avoid signing
+        }
+      });
+      this.log('Extension CEP construite avec succès (mode développement)');
+    } catch (error) {
+      this.log(`Erreur lors de la construction CEP dev: ${error.message}`, 'error');
+      throw error;
+    }
+  }
+
   async buildChrome() {
     this.log('🌐 Construction de l\'extension Chrome...');
     
@@ -192,8 +213,19 @@ class Builder {
           await this.buildCEP();
           await this.downloadFFmpeg();
           break;
+        case 'cep-dev':
+          await this.buildCEPDev();
+          await this.downloadFFmpeg();
+          break;
         case 'chrome':
           await this.buildChrome();
+          break;
+        case 'dev':
+          // Build all components for development (CEP without signing)
+          await this.buildPython();
+          await this.buildCEPDev();
+          await this.buildChrome();
+          await this.downloadFFmpeg();
           break;
         case 'all':
         default:

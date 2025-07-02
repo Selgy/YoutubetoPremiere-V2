@@ -2,7 +2,7 @@
 
 import { ns } from "../shared/shared";
 
-import * as ppro from "./ppro/ppro";
+import * as ppro from "./ppro/ppro"; 
 
 //@ts-ignore
 const host = typeof $ !== "undefined" ? $ : window;
@@ -54,13 +54,25 @@ const getAppNameSafely = (): ApplicationName | "unknown" => {
 };
 
 switch (getAppNameSafely()) {
+  
+  
+  
+  
+  
+  
+  
+  
   case "premierepro":
   case "premiereprobeta":
     host[ns] = ppro;
     break;
 }
 
-export type Scripts = typeof ppro
+const empty = {};
+// prettier-ignore
+export type Scripts = typeof empty
+  & typeof ppro 
+  ;
 
 // https://extendscript.docsforadobe.dev/interapplication-communication/bridgetalk-class.html?highlight=bridgetalk#appname
 type ApplicationName =
