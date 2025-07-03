@@ -769,7 +769,12 @@ const Main = () => {
                 Later
               </button>
               <button
-                onClick={handleDownloadUpdate}
+                onClick={() => {
+                  if (updateInfo?.download_url) {
+                    window.open(updateInfo.download_url, '_blank');
+                  }
+                  setShowUpdateModal(false);
+                }}
                 className="flex-1 btn flex items-center justify-center gap-2"
               >
                 <span className="material-symbols-outlined">download</span>

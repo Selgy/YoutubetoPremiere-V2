@@ -389,8 +389,17 @@ def get_ffmpeg_path():
         os.path.dirname(working_dir),
     ])
     
-    # Add macOS specific paths
+    # Add macOS specific paths including _internal
     if sys.platform == 'darwin':
+        # Add _internal paths for macOS PyInstaller builds
+        possible_locations.extend([
+            os.path.join(working_dir, '_internal'),
+            os.path.join(exec_from_working, '_internal') if 'exec_from_working' in locals() else None,
+        ])
+        
+        # Filter out None values
+        possible_locations = [loc for loc in possible_locations if loc is not None]
+        
         possible_locations.extend([
             '/usr/local/bin',
             '/opt/homebrew/bin',

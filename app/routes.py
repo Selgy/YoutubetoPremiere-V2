@@ -437,9 +437,11 @@ def register_routes(app, socketio, settings):
             
             sound_dirs = [
                 user_sounds_dir,                                      # user Documents directory (highest priority)
+                os.path.join(exec_path, '_internal', 'sounds'),       # PyInstaller _internal directory (macOS)
                 os.path.join(exec_path, 'sounds'),                    # next to executable
                 os.path.join(exec_path, 'exec', 'sounds'),            # in exec subdirectory  
                 os.path.join(bundle_path, 'sounds'),                  # bundled sounds (_MEIPASS)
+                os.path.join(bundle_path, '_internal', 'sounds'),     # bundled _internal sounds
                 os.path.join(os.path.dirname(exec_path), 'sounds'),   # parent directory
                 os.path.join(exec_path, 'app', 'sounds'),             # app subdirectory
                 os.path.join(os.path.dirname(exec_path), 'app', 'sounds')  # parent app directory

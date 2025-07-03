@@ -354,9 +354,11 @@ def play_notification_sound(volume=0.3, sound_type='notification_sound'):
     
     sound_dirs = [
         user_sounds_dir,                                      # user Documents directory (highest priority)
+        os.path.join(exec_path, '_internal', 'sounds'),       # PyInstaller _internal directory (macOS)
         os.path.join(exec_path, 'sounds'),                    # next to executable
         os.path.join(exec_path, 'exec', 'sounds'),            # in exec subdirectory  
         os.path.join(bundle_path, 'sounds'),                  # bundled sounds
+        os.path.join(bundle_path, '_internal', 'sounds'),     # bundled _internal sounds
         os.path.join(os.path.dirname(exec_path), 'sounds'),   # parent directory
         os.path.join(exec_path, 'app', 'sounds'),             # app subdirectory
         os.path.join(os.path.dirname(exec_path), 'app', 'sounds')  # parent app directory
@@ -580,8 +582,9 @@ def open_sounds_folder():
 
         # Look for sounds directory in the bundle/internal directory
         sounds_dirs = [
+            os.path.join(exec_path, '_internal', 'sounds'),  # exec/_internal/sounds (highest priority on macOS)
+            os.path.join(bundle_path, '_internal', 'sounds'), # bundle/_internal/sounds
             os.path.join(bundle_path, 'sounds'),  # _MEIPASS/sounds
-            os.path.join(exec_path, '_internal', 'sounds'),  # exec/_internal/sounds
             os.path.join(exec_path, 'sounds'),  # exec/sounds
         ]
         

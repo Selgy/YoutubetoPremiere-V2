@@ -100,10 +100,16 @@ def fix_executable_permissions():
     extension_path = get_extension_path()
     exec_dir = os.path.join(extension_path, 'exec')
     
-    # Check for executables
+    # Check for executables in multiple locations
     executables = [
         os.path.join(exec_dir, 'YoutubetoPremiere'),
-        os.path.join(exec_dir, 'ffmpeg')
+        os.path.join(exec_dir, 'ffmpeg'),
+        os.path.join(exec_dir, '_internal', 'ffmpeg'),
+        os.path.join(exec_dir, 'MacOS', 'ffmpeg'),
+        os.path.join(exec_dir, 'Contents', 'MacOS', 'ffmpeg'),
+        os.path.join(extension_path, 'ffmpeg'),
+        os.path.join(extension_path, 'MacOS', 'ffmpeg'),
+        os.path.join(extension_path, 'Contents', 'MacOS', 'ffmpeg'),
     ]
     
     for exe in executables:
@@ -145,6 +151,15 @@ def find_ffmpeg():
         os.path.join(extension_path, ffmpeg_name),         # Extension root
         os.path.join(extension_path, 'exec', ffmpeg_name), # Explicit exec subfolder
     ]
+    
+    # On macOS, add additional specific locations
+    if system == 'Darwin':
+        possible_locations.extend([
+            os.path.join(exec_dir, 'MacOS', ffmpeg_name),          # App bundle MacOS directory
+            os.path.join(exec_dir, 'Contents', 'MacOS', ffmpeg_name), # Full app bundle path
+            os.path.join(extension_path, 'MacOS', ffmpeg_name),    # Extension MacOS directory
+            os.path.join(extension_path, 'Contents', 'MacOS', ffmpeg_name), # Extension app bundle path
+        ])
     
     # Add current working directory if it's an exec directory
     working_dir = os.getcwd()

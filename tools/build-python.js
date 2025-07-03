@@ -121,6 +121,8 @@ if (hasSoundFiles()) {
         pyinstallerCmd.push('--add-data', 'app/sounds;sounds');
     } else {
         pyinstallerCmd.push('--add-data', 'app/sounds:sounds');
+        // On macOS, also add to _internal for better accessibility
+        pyinstallerCmd.push('--add-data', 'app/sounds:_internal/sounds');
     }
 }
 
