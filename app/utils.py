@@ -489,15 +489,21 @@ def get_temp_dir():
     """Get the temporary directory for files."""
     import os
     import tempfile
+    import sys
     
-    # First try to use a subdirectory in the same directory as the script
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    temp_dir = os.path.join(script_dir, "temp")
-    
-    # If that's not writable, use system temp directory
-    if not os.access(script_dir, os.W_OK):
+    # For PyInstaller executables, always use system temp directory
+    if getattr(sys, 'frozen', False):
         system_temp = tempfile.gettempdir()
         temp_dir = os.path.join(system_temp, "YoutubetoPremiere")
+    else:
+        # For development, try to use a subdirectory in the same directory as the script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        temp_dir = os.path.join(script_dir, "temp")
+        
+        # If that's not writable, use system temp directory
+        if not os.access(script_dir, os.W_OK):
+            system_temp = tempfile.gettempdir()
+            temp_dir = os.path.join(system_temp, "YoutubetoPremiere")
     
     # Create the directory if it doesn't exist
     os.makedirs(temp_dir, exist_ok=True)
