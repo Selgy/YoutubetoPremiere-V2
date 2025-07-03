@@ -380,14 +380,19 @@ jobs:
                  $progressPreference = 'SilentlyContinue'
                  Invoke-WebRequest -Uri $url -OutFile "ffmpeg.zip" -TimeoutSec 120 -UseBasicParsing
                 
-                if (Test-Path "ffmpeg.zip" -and (Get-Item "ffmpeg.zip").Length -gt 1MB) {
-                  echo "✅ FFmpeg downloaded successfully ($((Get-Item 'ffmpeg.zip').Length / 1MB) MB)"
-                  $success = $true
-                  break
-                } else {
-                  echo "❌ Downloaded file too small or missing"
-                  if (Test-Path "ffmpeg.zip") { Remove-Item "ffmpeg.zip" -Force }
-                }
+                                 if (Test-Path "ffmpeg.zip") {
+                   $fileSize = (Get-Item "ffmpeg.zip").Length
+                   if ($fileSize -gt 1MB) {
+                     echo "✅ FFmpeg downloaded successfully ($([math]::Round($fileSize / 1MB, 1)) MB)"
+                     $success = $true
+                     break
+                   } else {
+                     echo "❌ Downloaded file too small ($([math]::Round($fileSize / 1KB, 1)) KB)"
+                     Remove-Item "ffmpeg.zip" -Force
+                   }
+                 } else {
+                   echo "❌ Downloaded file missing"
+                 }
               }
               catch {
                 echo "❌ Download attempt $attempt failed: $($_.Exception.Message)"
