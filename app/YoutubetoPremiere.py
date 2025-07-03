@@ -386,9 +386,9 @@ def handle_connect():
         client_type = request.args.get('client_type', 'unknown')
         # Don't log client IP for privacy reasons
         
-        app_logger.info(f'🔌 New connection attempt - SID: {sid[:8]}...')
-        app_logger.info(f'🔌 Raw request.args: {dict(request.args)}')
-        app_logger.info(f'🔌 client_type parameter: "{client_type}"')
+        app_logger.info(f'[CONNECTED] New connection attempt - SID: {sid[:8]}...')
+        app_logger.info(f'[CONNECTED] Raw request.args: {dict(request.args)}')
+        app_logger.info(f'[CONNECTED] client_type parameter: "{client_type}"')
         
         # Validate client type
         if client_type not in ['chrome', 'premiere']:
@@ -396,7 +396,7 @@ def handle_connect():
             client_type = 'unknown'
             app_logger.warning(f'[WARN] Invalid client type "{original_client_type}", setting to "unknown"')
         else:
-                          app_logger.info(f'[INFO] Valid client type: "{client_type}"')
+            app_logger.info(f'[INFO] Valid client type: "{client_type}"')
         
         # For tracking connections, use SID as key to avoid conflicts
         client_key = sid
@@ -405,7 +405,7 @@ def handle_connect():
         for ctype, clients in connected_clients.items():
             if sid in clients:
                 del clients[sid]
-                app_logger.info(f'🔄 Removed old entry for SID {sid[:8]}... from {ctype}')
+                app_logger.info(f'[CLEANUP] Removed old entry for SID {sid[:8]}... from {ctype}')
         
         # Add new connection
         connected_clients[client_type][client_key] = sid
@@ -433,8 +433,8 @@ def handle_disconnect():
         for client_type, clients in connected_clients.items():
             if sid in clients:
                 del clients[sid]
-                app_logger.info(f'🔌 Client disconnected - Type: {client_type}, SID: {sid[:8]}...')
-                app_logger.info(f'📊 Remaining connected clients: chrome={len(connected_clients["chrome"])}, premiere={len(connected_clients["premiere"])}, unknown={len(connected_clients["unknown"])}')
+                app_logger.info(f'[DISCONNECTED] Client disconnected - Type: {client_type}, SID: {sid[:8]}...')
+                app_logger.info(f'[STATS] Remaining connected clients: chrome={len(connected_clients["chrome"])}, premiere={len(connected_clients["premiere"])}, unknown={len(connected_clients["unknown"])}')
                 return
         
         # If we get here, the client wasn't found in our tracking
@@ -508,7 +508,7 @@ def emit_to_client_type(event, data, client_type=None):
                 try:
                     if sid in connected_clients[client_type]:
                         del connected_clients[client_type][sid]
-                        app_logger.info(f'[CLEANUP] Removed problematic SID {sid[:8]}... from {client_type}')
+                        app_logger.info(f'[CLEANUP] Removed old entry for SID {sid[:8]}... from {ctype}')
                 except Exception as cleanup_error:
                     app_logger.error(f'Error cleaning up SID {sid[:8]}...: {cleanup_error}')
         

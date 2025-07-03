@@ -782,7 +782,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                     # Remove ANSI color codes if present
                     percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
                     percentage = percentage.strip()
-                    logging.info(f'📊 Clip Progress: {percentage}')
+                    logging.info(f'[PROGRESS] Clip Progress: {percentage}')
                     # No percentage emission for clips - just keep loading animation
                 except Exception as e:
                     logging.error(f"Error in clip progress hook: {e}")
@@ -970,7 +970,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     # Remove ANSI color codes if present
                     percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
                     percentage = percentage.strip()
-                    logging.info(f'📊 Video Progress: {percentage}')
+                    logging.info(f'[PROGRESS] Video Progress: {percentage}')
                     # Simple emission like the old version
                     socketio.emit('percentage', {'percentage': percentage})
                 except Exception as e:
@@ -1119,8 +1119,8 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
 
             # Download the video
             logging.info("Starting video download...")
-            logging.info(f"🎯 Progress hook configured: {progress_hook}")
-            logging.info(f"🎯 YT-DLP options include progress_hooks: {'progress_hooks' in ydl_opts}")
+            logging.info(f"[CONFIG] Progress hook configured: {progress_hook}")
+            logging.info(f"[CONFIG] YT-DLP options include progress_hooks: {'progress_hooks' in ydl_opts}")
             
             # Emit initial progress
             progress_data = {
@@ -1408,7 +1408,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                     # Remove ANSI color codes if present
                     percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
                     percentage = percentage.strip()
-                    logging.info(f'📊 Audio Progress: {percentage}')
+                    logging.info(f'[PROGRESS] Audio Progress: {percentage}')
                     # Simple emission like the old version
                     socketio.emit('percentage', {'percentage': percentage})
                 except Exception as e:
