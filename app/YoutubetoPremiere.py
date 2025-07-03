@@ -508,7 +508,7 @@ def emit_to_client_type(event, data, client_type=None):
                 try:
                     if sid in connected_clients[client_type]:
                         del connected_clients[client_type][sid]
-                        app_logger.info(f'[CLEANUP] Removed old entry for SID {sid[:8]}... from {ctype}')
+                        app_logger.info(f'[CLEANUP] Removed problematic SID {sid[:8]}... from {client_type}')
                 except Exception as cleanup_error:
                     app_logger.error(f'Error cleaning up SID {sid[:8]}...: {cleanup_error}')
         

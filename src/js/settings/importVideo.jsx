@@ -233,7 +233,14 @@
         }
     };
 
-    // Remove the wrapper function since we're handling the object format directly
-    $._ext.debug("importVideo.jsx initialization complete");
+    // Expose the function in the correct namespace for evalTS
+    if (typeof $["com.youtubetoPremiereV2.cep"] === 'undefined') {
+        $["com.youtubetoPremiereV2.cep"] = {};
+    }
+    
+    // Expose the function for evalTS to find
+    $["com.youtubetoPremiereV2.cep"].importVideoToSource = $._ext.importVideoToSource;
+
+    $._ext.debug("importVideo.jsx initialization complete - function exposed");
 })();
 
