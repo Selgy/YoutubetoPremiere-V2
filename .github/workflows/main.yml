@@ -371,14 +371,14 @@ jobs:
           foreach ($url in $ffmpegUrls) {
             echo "Trying to download from: $url"
             
-            # Try download with retry
-            for ($attempt = 1; $attempt -le 3; $attempt++) {
-              try {
-                echo "Download attempt $attempt/3..."
-                
-                # Use more robust download parameters
-                $progressPreference = 'SilentlyContinue'
-                Invoke-WebRequest -Uri $url -OutFile "ffmpeg.zip" -TimeoutSec 120 -MaximumRetryCount 2 -RetryIntervalSec 5
+                         # Try download with retry
+             for ($attempt = 1; $attempt -le 3; $attempt++) {
+               try {
+                 echo "Download attempt $attempt/3..."
+                 
+                 # Use compatible download parameters for PowerShell 5.1
+                 $progressPreference = 'SilentlyContinue'
+                 Invoke-WebRequest -Uri $url -OutFile "ffmpeg.zip" -TimeoutSec 120 -UseBasicParsing
                 
                 if (Test-Path "ffmpeg.zip" -and (Get-Item "ffmpeg.zip").Length -gt 1MB) {
                   echo "✅ FFmpeg downloaded successfully ($((Get-Item 'ffmpeg.zip').Length / 1MB) MB)"
