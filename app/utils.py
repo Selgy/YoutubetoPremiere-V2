@@ -558,19 +558,19 @@ def clear_temp_files(temp_dir=None, max_age_hours=24):
         logger.error(f"Error clearing temporary files: {str(e)}")
 
 def open_sounds_folder():
-    """Open the sounds folder in the file explorer. Creates a user-accessible folder if needed."""
+    """Open the sounds folder directly in the file explorer (_internal/sounds)."""
     import os
     import sys
     import subprocess
     import logging
-    import shutil
+    import platform
     
     logger = logging.getLogger('YoutubetoPremiere')
     
     try:
         logging.info("Opening sounds folder...")
         
-        # First, try to find an existing user-accessible sounds directory
+        # Find the _internal/sounds directory
         if getattr(sys, 'frozen', False):
             exec_path = os.path.dirname(sys.executable)
             bundle_path = getattr(sys, '_MEIPASS', exec_path)
@@ -578,79 +578,34 @@ def open_sounds_folder():
             exec_path = os.path.dirname(os.path.abspath(__file__))
             bundle_path = exec_path
 
-        # Define user-accessible locations (prioritize user directories)
-        user_docs = os.path.expanduser('~/Documents')
-        user_sounds_dir = os.path.join(user_docs, 'YoutubetoPremiere', 'sounds')
-        
-        # Check existing sounds directories in order of preference
-        possible_dirs = [
-            user_sounds_dir,  # User Documents - always accessible
-            os.path.join(exec_path, 'sounds'),  # Next to executable if accessible
+        # Look for sounds directory in the bundle/internal directory
+        sounds_dirs = [
+            os.path.join(bundle_path, 'sounds'),  # _MEIPASS/sounds
+            os.path.join(exec_path, '_internal', 'sounds'),  # exec/_internal/sounds
+            os.path.join(exec_path, 'sounds'),  # exec/sounds
         ]
         
-        # Add read-only fallback directories to copy from
-        source_dirs = [
-            os.path.join(exec_path, 'sounds'),
-            os.path.join(bundle_path, 'sounds'),
-            os.path.join(exec_path, 'exec', 'sounds'),
-            os.path.join(os.path.dirname(exec_path), 'app', 'sounds')
-        ]
-        
-        # Find the best target directory (writable)
-        target_dir = None
-        for dir_path in possible_dirs:
-            if os.path.exists(dir_path) and os.access(os.path.dirname(dir_path), os.W_OK):
-                target_dir = dir_path
-                break
-            elif os.access(os.path.dirname(dir_path) if os.path.exists(os.path.dirname(dir_path)) else os.path.dirname(os.path.dirname(dir_path)), os.W_OK):
-                target_dir = dir_path
+        sounds_dir = None
+        for dir_path in sounds_dirs:
+            if os.path.exists(dir_path):
+                sounds_dir = dir_path
+                logger.info(f"Found sounds directory: {sounds_dir}")
                 break
         
-        # If no writable location found, use Documents
-        if not target_dir:
-            target_dir = user_sounds_dir
-        
-        # Create the target directory if it doesn't exist
-        os.makedirs(target_dir, exist_ok=True)
-        logger.info(f"Using sounds directory: {target_dir}")
-        
-        # If the directory is empty or has only .gitkeep, copy default sounds
-        existing_sounds = [f for f in os.listdir(target_dir) if f.endswith(('.mp3', '.wav')) and f != '.gitkeep']
-        if not existing_sounds:
-            logger.info("No sound files found, copying default sounds...")
-            
-            # Find source directory with sound files
-            source_dir = None
-            for src_dir in source_dirs:
-                if os.path.exists(src_dir):
-                    sound_files = [f for f in os.listdir(src_dir) if f.endswith(('.mp3', '.wav'))]
-                    if sound_files:
-                        source_dir = src_dir
-                        logger.info(f"Found sound files in: {source_dir}")
-                        break
-            
-            # Copy sound files if we found them
-            if source_dir:
-                try:
-                    for filename in os.listdir(source_dir):
-                        if filename.endswith(('.mp3', '.wav')):
-                            src_file = os.path.join(source_dir, filename)
-                            dst_file = os.path.join(target_dir, filename)
-                            shutil.copy2(src_file, dst_file)
-                            logger.info(f"Copied sound file: {filename}")
-                except Exception as copy_error:
-                    logger.warning(f"Could not copy default sounds: {copy_error}")
+        if not sounds_dir:
+            logger.error("No sounds directory found")
+            raise Exception("Sounds directory not found")
         
         # Open the directory in file explorer
         if platform.system() == 'Windows':
-            subprocess.run(['explorer', target_dir], check=True)
+            subprocess.run(['explorer', sounds_dir], check=True)
         elif platform.system() == 'Darwin':  # macOS
-            subprocess.run(['open', target_dir], check=True)
+            subprocess.run(['open', sounds_dir], check=True)
         else:  # Linux and others
-            subprocess.run(['xdg-open', target_dir], check=True)
+            subprocess.run(['xdg-open', sounds_dir], check=True)
         
-        logger.info(f"Opened sounds folder: {target_dir}")
-        return target_dir
+        logger.info(f"Opened sounds folder: {sounds_dir}")
+        return sounds_dir
         
     except Exception as e:
         logger.error(f"Error opening sounds folder: {str(e)}")
