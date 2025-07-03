@@ -341,17 +341,21 @@ def play_notification_sound(volume=0.3, sound_type='notification_sound'):
 
     # Get the correct base path whether running as exe or script
     if getattr(sys, 'frozen', False):
-        base_path = os.path.dirname(sys.executable)
+        # For PyInstaller, use _MEIPASS for bundled resources and executable directory for external resources
+        bundle_path = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+        exec_path = os.path.dirname(sys.executable)
     else:
-        base_path = os.path.dirname(os.path.abspath(__file__))
+        bundle_path = os.path.dirname(os.path.abspath(__file__))
+        exec_path = bundle_path
     
-    # Define possible sound directories
+    # Define possible sound directories (prioritize external sounds over bundled ones)
     sound_dirs = [
-        os.path.join(base_path, 'sounds'),
-        os.path.join(os.path.dirname(base_path), 'sounds'),
-        os.path.join(base_path, 'app', 'sounds'),
-        os.path.join(base_path, 'exec', 'sounds'),
-        os.path.join(os.path.dirname(base_path), 'app', 'sounds')
+        os.path.join(exec_path, 'sounds'),                    # next to executable
+        os.path.join(exec_path, 'exec', 'sounds'),            # in exec subdirectory  
+        os.path.join(bundle_path, 'sounds'),                  # bundled sounds
+        os.path.join(os.path.dirname(exec_path), 'sounds'),   # parent directory
+        os.path.join(exec_path, 'app', 'sounds'),             # app subdirectory
+        os.path.join(os.path.dirname(exec_path), 'app', 'sounds')  # parent app directory
     ]
     
     # Find first existing sounds directory

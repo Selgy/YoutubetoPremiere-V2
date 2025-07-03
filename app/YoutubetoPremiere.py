@@ -394,9 +394,9 @@ def handle_connect():
         if client_type not in ['chrome', 'premiere']:
             original_client_type = client_type
             client_type = 'unknown'
-            app_logger.warning(f'⚠️ Invalid client type "{original_client_type}", setting to "unknown"')
+            app_logger.warning(f'[WARN] Invalid client type "{original_client_type}", setting to "unknown"')
         else:
-            app_logger.info(f'✅ Valid client type: "{client_type}"')
+                          app_logger.info(f'[INFO] Valid client type: "{client_type}"')
         
         # For tracking connections, use SID as key to avoid conflicts
         client_key = sid
@@ -410,9 +410,9 @@ def handle_connect():
         # Add new connection
         connected_clients[client_type][client_key] = sid
         
-        app_logger.info(f'✅ Client connected - Type: {client_type}, SID: {sid[:8]}..., Key: {client_key}')
-        app_logger.info(f'📊 Current connected clients: chrome={len(connected_clients["chrome"])}, premiere={len(connected_clients["premiere"])}, unknown={len(connected_clients["unknown"])}')
-        app_logger.info(f'🔍 DEBUG: connected_clients structure: {dict([(k, list(v.keys())) for k, v in connected_clients.items()])}')
+        app_logger.info(f'[CONNECTED] Client connected - Type: {client_type}, SID: {sid[:8]}..., Key: {client_key}')
+        app_logger.info(f'[STATS] Current connected clients: chrome={len(connected_clients["chrome"])}, premiere={len(connected_clients["premiere"])}, unknown={len(connected_clients["unknown"])}')
+        app_logger.info(f'[DEBUG] connected_clients structure: {dict([(k, list(v.keys())) for k, v in connected_clients.items()])}')
         
         # Send connection status safely
         try:
@@ -438,7 +438,7 @@ def handle_disconnect():
                 return
         
         # If we get here, the client wasn't found in our tracking
-        app_logger.warning(f'⚠️ Unknown client disconnected - SID: {sid[:8]}... (not found in tracking)')
+        app_logger.warning(f'[WARN] Unknown client disconnected - SID: {sid[:8]}... (not found in tracking)')
         
     except Exception as e:
         app_logger.error(f'Error in handle_disconnect: {str(e)}', exc_info=True)
@@ -449,11 +449,11 @@ def handle_connection_check(data):
     try:
         client_type = request.args.get('client_type')
         sid = request.sid
-        app_logger.info(f'🔍 CONNECTION_CHECK: Client type={client_type}, SID={sid[:8]}..., Data={data}')
+        app_logger.info(f'[CHECK] CONNECTION_CHECK: Client type={client_type}, SID={sid[:8]}..., Data={data}')
         
         # This simply responds with a status "ok" message
         socketio.emit('connection_status', {'status': 'ok', 'client_type': client_type}, room=sid)
-        app_logger.info(f'📤 SENT connection_status to SID {sid[:8]}... (type: {client_type})')
+        app_logger.info(f'[SENT] connection_status to SID {sid[:8]}... (type: {client_type})')
     except Exception as e:
         app_logger.error(f'Error in handle_connection_check: {str(e)}')
 
@@ -462,17 +462,17 @@ def emit_to_client_type(event, data, client_type=None):
     if client_type:
         # Only emit to clients of the specified type
         connected_clients_count = len(connected_clients[client_type])
-        app_logger.info(f'🔍 DEBUG: Checking {client_type} clients - found {connected_clients_count} connected')
-        app_logger.info(f'🔍 DEBUG: All connected clients: {dict([(k, len(v)) for k, v in connected_clients.items()])}')
-        app_logger.info(f'🔍 DEBUG: {client_type} client SIDs: {list(connected_clients[client_type].keys())}')
+        app_logger.info(f'[DEBUG] Checking {client_type} clients - found {connected_clients_count} connected')
+        app_logger.info(f'[DEBUG] All connected clients: {dict([(k, len(v)) for k, v in connected_clients.items()])}')
+        app_logger.info(f'[DEBUG] {client_type} client SIDs: {list(connected_clients[client_type].keys())}')
         
         if connected_clients_count == 0:
-            app_logger.warning(f'⚠️ No {client_type} clients connected to send {event} event!')
-            app_logger.info(f'🔍 DEBUG: Available client types: {list(connected_clients.keys())}')
-            app_logger.info(f'🔍 DEBUG: Full connected_clients structure: {connected_clients}')
+            app_logger.warning(f'[WARN] No {client_type} clients connected to send {event} event!')
+            app_logger.info(f'[DEBUG] Available client types: {list(connected_clients.keys())}')
+            app_logger.info(f'[DEBUG] Full connected_clients structure: {connected_clients}')
             return
             
-        app_logger.info(f'📡 Found {connected_clients_count} {client_type} clients connected')
+        app_logger.info(f'[INFO] Found {connected_clients_count} {client_type} clients connected')
         # Make a copy of SIDs to avoid modification during iteration
         client_sids = list(connected_clients[client_type].keys())
         successful_sends = 0
@@ -488,14 +488,14 @@ def emit_to_client_type(event, data, client_type=None):
                 
                 # Log progress and percentage events at INFO level for debugging
                 if event in ['progress', 'percentage']:
-                    app_logger.info(f'📤 SENT {event} to {client_type} client (SID: {sid[:8]}...): {data}')
+                    app_logger.info(f'[SENT] {event} to {client_type} client (SID: {sid[:8]}...): {data}')
                     
                     # Also send legacy format for old scripts compatibility
                     if event == 'progress' and 'progress' in data:
                         try:
                             legacy_data = {'percentage': str(data['progress']) + '%'}
                             socketio.emit('percentage', legacy_data, room=sid)
-                            app_logger.info(f'📤 SENT legacy percentage to {client_type} client: {legacy_data}')
+                            app_logger.info(f'[SENT] legacy percentage to {client_type} client: {legacy_data}')
                         except Exception as legacy_error:
                             app_logger.warning(f'Could not send legacy percentage: {legacy_error}')
                             
@@ -508,17 +508,17 @@ def emit_to_client_type(event, data, client_type=None):
                 try:
                     if sid in connected_clients[client_type]:
                         del connected_clients[client_type][sid]
-                        app_logger.info(f'🧹 Removed problematic SID {sid[:8]}... from {client_type}')
+                        app_logger.info(f'[CLEANUP] Removed problematic SID {sid[:8]}... from {client_type}')
                 except Exception as cleanup_error:
                     app_logger.error(f'Error cleaning up SID {sid[:8]}...: {cleanup_error}')
         
         if successful_sends > 0:
-            app_logger.info(f'📡 Successfully sent {event} to {successful_sends}/{len(client_sids)} {client_type} clients')
+            app_logger.info(f'[RESULT] Successfully sent {event} to {successful_sends}/{len(client_sids)} {client_type} clients')
     else:
         # For backwards compatibility, emit to all if no type specified
         socketio.emit(event, data)
         if event in ['progress', 'percentage']:
-            app_logger.info(f'📤 BROADCAST {event}: {data}')
+            app_logger.info(f'[BROADCAST] {event}: {data}')
         else:
             app_logger.debug(f'Broadcasting {event}')
 

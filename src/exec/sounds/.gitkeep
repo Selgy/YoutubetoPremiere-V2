@@ -1,2 +1,1 @@
-# Placeholder file to ensure directory is not empty during builds
-# This prevents the vite-cep-plugin from failing when copying empty directories 
+# This file ensures the directory is not empty

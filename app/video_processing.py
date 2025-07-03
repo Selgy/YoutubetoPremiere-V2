@@ -787,7 +787,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                 except Exception as e:
                     logging.error(f"Error in clip progress hook: {e}")
             elif d['status'] == 'finished':
-                logging.info('✅ Clip download finished')
+                logging.info('[FINISHED] Clip download finished')
                 # No percentage emission for clips - animation will stop when complete
 
         # Configure yt-dlp options with robust settings for clip download
@@ -976,7 +976,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 except Exception as e:
                     logging.error(f"Error in progress hook: {e}")
             elif d['status'] == 'finished':
-                logging.info('✅ Video download finished')
+                logging.info('[FINISHED] Video download finished')
                 socketio.emit('percentage', {'percentage': '100%'})
 
         # Get preferred audio language from settings
@@ -1131,7 +1131,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             }
             socketio.emit('progress', progress_data)
             socketio.emit('percentage', {'percentage': '0%'})
-            logging.info(f"📤 SENT initial progress events: progress={progress_data}")
+            logging.info(f"[SENT] initial progress events: progress={progress_data}")
             
             # Configure stdout/stderr to prevent Windows pipe issues
             import contextlib
@@ -1414,7 +1414,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                 except Exception as e:
                     logging.error(f"Error in audio progress hook: {e}")
             elif d['status'] == 'finished':
-                logging.info('✅ Audio download finished')
+                logging.info('[FINISHED] Audio download finished')
                 socketio.emit('percentage', {'percentage': '100%'})
 
         # Configure yt-dlp options with robust settings for audio download
