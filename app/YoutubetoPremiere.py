@@ -164,7 +164,7 @@ def is_port_in_use(port, host='localhost'):
         except socket.error:
             return True
 
-def check_server_running(port=3001):
+def check_server_running(port=3002):
     """Check if server is already running by testing if the port is in use and if API responds"""
     # First check if port is in use
     if not is_port_in_use(port):

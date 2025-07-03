@@ -152,13 +152,20 @@ def find_ffmpeg():
         os.path.join(extension_path, 'exec', ffmpeg_name), # Explicit exec subfolder
     ]
     
-    # On macOS, add additional specific locations
+    # On macOS, add additional specific locations including CEP-specific paths
     if system == 'Darwin':
         possible_locations.extend([
             os.path.join(exec_dir, 'MacOS', ffmpeg_name),          # App bundle MacOS directory
             os.path.join(exec_dir, 'Contents', 'MacOS', ffmpeg_name), # Full app bundle path
             os.path.join(extension_path, 'MacOS', ffmpeg_name),    # Extension MacOS directory
             os.path.join(extension_path, 'Contents', 'MacOS', ffmpeg_name), # Extension app bundle path
+            # Additional macOS CEP-specific locations
+            os.path.join(exec_dir, 'Resources', ffmpeg_name),      # PyInstaller Resources directory
+            os.path.join(exec_dir, 'Frameworks', ffmpeg_name),     # App bundle Frameworks
+            os.path.join(extension_path, 'Resources', ffmpeg_name), # Extension Resources
+            # Common macOS application paths
+            '/Applications/YoutubetoPremiere.app/Contents/MacOS/ffmpeg',
+            '/Applications/YoutubetoPremiere.app/Contents/Resources/ffmpeg',
         ])
     
     # Add current working directory if it's an exec directory
@@ -214,12 +221,74 @@ def find_ffmpeg():
                     logger.info(f"Found ffmpeg in fallback location: {path}")
                     return path
         else:
-            # On macOS/Linux
-            result = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True)
-            if result.returncode == 0:
-                ffmpeg_path = result.stdout.strip()
-                logger.info(f"Found ffmpeg in PATH: {ffmpeg_path}")
-                return ffmpeg_path
+            # On macOS/Linux - try multiple ways to find ffmpeg
+            try:
+                # First try 'which' command
+                result = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True)
+                if result.returncode == 0 and result.stdout.strip():
+                    ffmpeg_path = result.stdout.strip()
+                    # Verify the found ffmpeg actually works
+                    try:
+                        test_result = subprocess.run([ffmpeg_path, '-version'], 
+                                                   capture_output=True, text=True, timeout=5)
+                        if test_result.returncode == 0 and 'ffmpeg version' in test_result.stdout:
+                            logger.info(f"Found working ffmpeg in PATH: {ffmpeg_path}")
+                            return ffmpeg_path
+                    except:
+                        logger.warning(f"Found ffmpeg in PATH but it doesn't work: {ffmpeg_path}")
+                
+                # If 'which' fails or ffmpeg doesn't work, try 'whereis'
+                result = subprocess.run(['whereis', 'ffmpeg'], capture_output=True, text=True)
+                if result.returncode == 0 and result.stdout.strip():
+                    # Parse whereis output which looks like "ffmpeg: /usr/bin/ffmpeg"
+                    output_parts = result.stdout.strip().split()
+                    for part in output_parts[1:]:  # Skip the first part which is "ffmpeg:"
+                        if os.path.exists(part) and os.access(part, os.X_OK):
+                            try:
+                                test_result = subprocess.run([part, '-version'], 
+                                                           capture_output=True, text=True, timeout=5)
+                                if test_result.returncode == 0 and 'ffmpeg version' in test_result.stdout:
+                                    logger.info(f"Found working ffmpeg via whereis: {part}")
+                                    return part
+                            except:
+                                continue
+                
+                # If still not found, try common homebrew paths on macOS
+                if system == 'Darwin':
+                    homebrew_paths = [
+                        '/opt/homebrew/bin/ffmpeg',  # Apple Silicon Homebrew
+                        '/usr/local/bin/ffmpeg',     # Intel Homebrew
+                        '/usr/local/Cellar/ffmpeg/*/bin/ffmpeg',
+                        '/opt/homebrew/Cellar/ffmpeg/*/bin/ffmpeg'
+                    ]
+                    
+                    import glob
+                    for pattern in homebrew_paths:
+                        if '*' in pattern:
+                            matches = glob.glob(pattern)
+                            for match in matches:
+                                if os.path.exists(match) and os.access(match, os.X_OK):
+                                    try:
+                                        test_result = subprocess.run([match, '-version'], 
+                                                                   capture_output=True, text=True, timeout=5)
+                                        if test_result.returncode == 0 and 'ffmpeg version' in test_result.stdout:
+                                            logger.info(f"Found working ffmpeg in Homebrew: {match}")
+                                            return match
+                                    except:
+                                        continue
+                        else:
+                            if os.path.exists(pattern) and os.access(pattern, os.X_OK):
+                                try:
+                                    test_result = subprocess.run([pattern, '-version'], 
+                                                               capture_output=True, text=True, timeout=5)
+                                    if test_result.returncode == 0 and 'ffmpeg version' in test_result.stdout:
+                                        logger.info(f"Found working ffmpeg in Homebrew: {pattern}")
+                                        return pattern
+                                except:
+                                    continue
+                                    
+            except Exception as e:
+                logger.warning(f"Error checking for ffmpeg in PATH: {str(e)}")
     except Exception as e:
         logger.warning(f"Error checking for ffmpeg in PATH: {str(e)}")
     

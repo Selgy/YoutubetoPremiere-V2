@@ -477,25 +477,67 @@ def get_ffmpeg_path():
                 continue
     
     # If not found in standard paths, try looking for ffmpeg in PATH
-    if sys.platform == 'darwin':
-        try:
+    try:
+        # Try multiple methods to find ffmpeg in PATH
+        if sys.platform == 'darwin':
             # On macOS, try running ffmpeg directly as it might be in PATH
             result = subprocess.run(['ffmpeg', '-version'], 
                                  stdout=subprocess.PIPE, 
                                  stderr=subprocess.PIPE,
                                  timeout=5)
-            if result.returncode == 0:
-                logging.info("Found ffmpeg in PATH")
+            if result.returncode == 0 and 'ffmpeg version' in result.stdout.decode():
+                logging.info("Found working ffmpeg in PATH")
                 return 'ffmpeg'  # Return just 'ffmpeg' to use PATH resolution
-        except Exception as e:
-            logging.warning(f"Error checking ffmpeg in PATH: {str(e)}")
+            
+            # If direct execution fails, try 'which' command
+            which_result = subprocess.run(['which', 'ffmpeg'], 
+                                        stdout=subprocess.PIPE, 
+                                        stderr=subprocess.PIPE,
+                                        text=True)
+            if which_result.returncode == 0 and which_result.stdout.strip():
+                ffmpeg_in_path = which_result.stdout.strip()
+                # Verify this ffmpeg works
+                test_result = subprocess.run([ffmpeg_in_path, '-version'],
+                                           stdout=subprocess.PIPE,
+                                           stderr=subprocess.PIPE,
+                                           timeout=5)
+                if test_result.returncode == 0:
+                    logging.info(f"Found working ffmpeg via which: {ffmpeg_in_path}")
+                    return ffmpeg_in_path
+                    
+        elif sys.platform == 'win32':
+            # On Windows, try 'where' command
+            where_result = subprocess.run(['where', 'ffmpeg'], 
+                                        shell=True,
+                                        stdout=subprocess.PIPE, 
+                                        stderr=subprocess.PIPE,
+                                        text=True)
+            if where_result.returncode == 0 and where_result.stdout.strip():
+                ffmpeg_in_path = where_result.stdout.strip().split('\n')[0]
+                if os.path.exists(ffmpeg_in_path) and os.path.getsize(ffmpeg_in_path) > 1000000:
+                    logging.info(f"Found ffmpeg via where: {ffmpeg_in_path}")
+                    return ffmpeg_in_path
+        
+    except Exception as e:
+        logging.warning(f"Error checking ffmpeg in PATH: {str(e)}")
 
     logging.error("FFmpeg not found in any of the expected locations")
     logging.error(f"Searched locations: {possible_locations}")
+    
+    # Try the app_init module's find_ffmpeg as last resort
+    try:
+        from app_init import find_ffmpeg as init_find_ffmpeg
+        init_ffmpeg = init_find_ffmpeg()
+        if init_ffmpeg:
+            logging.info(f"Found ffmpeg via app_init module: {init_ffmpeg}")
+            return init_ffmpeg
+    except Exception as e:
+        logging.warning(f"Error using app_init find_ffmpeg: {str(e)}")
+        
     return None
 
 def check_ffmpeg(settings, socketio):
-    """Check if ffmpeg is available"""
+    """Check if ffmpeg is available and working"""
     ffmpeg_path = get_ffmpeg_path()
     if not ffmpeg_path:
         error_msg = "FFmpeg not found. Please ensure ffmpeg is properly installed."
@@ -504,11 +546,54 @@ def check_ffmpeg(settings, socketio):
             socketio.emit('error', {'message': error_msg})
         return {'success': False, 'message': error_msg}
     
-    # Store the full path in settings for later use
-    if settings is not None:
-        settings['ffmpeg_path'] = ffmpeg_path
-    
-    return {'success': True, 'path': ffmpeg_path}
+    # Verify FFmpeg actually works
+    try:
+        if ffmpeg_path == 'ffmpeg':
+            # If it's just 'ffmpeg', try to run it directly (PATH resolution)
+            test_cmd = ['ffmpeg', '-version']
+        else:
+            # Use the full path
+            test_cmd = [ffmpeg_path, '-version']
+        
+        # Test FFmpeg
+        result = subprocess.run(test_cmd, 
+                              capture_output=True, 
+                              text=True, 
+                              timeout=10)
+        
+        if result.returncode == 0 and 'ffmpeg version' in result.stdout:
+            logging.info(f"FFmpeg verified and working: {ffmpeg_path}")
+            # Store the verified path in settings for later use
+            if settings is not None:
+                settings['ffmpeg_path'] = ffmpeg_path
+            return {'success': True, 'path': ffmpeg_path}
+        else:
+            error_msg = f"FFmpeg found but not working properly: {ffmpeg_path}"
+            logging.error(error_msg)
+            logging.error(f"FFmpeg test output: {result.stderr}")
+            if socketio:
+                socketio.emit('error', {'message': error_msg})
+            return {'success': False, 'message': error_msg}
+            
+    except subprocess.TimeoutExpired:
+        error_msg = f"FFmpeg test timed out: {ffmpeg_path}"
+        logging.error(error_msg)
+        if socketio:
+            socketio.emit('error', {'message': error_msg})
+        return {'success': False, 'message': error_msg}
+    except Exception as e:
+        error_msg = f"Error testing FFmpeg: {str(e)}"
+        logging.error(error_msg)
+        if socketio:
+            socketio.emit('error', {'message': error_msg})
+        # On macOS, if direct test fails but file exists, try to continue anyway
+        if sys.platform == 'darwin' and ffmpeg_path != 'ffmpeg':
+            if os.path.exists(ffmpeg_path) and os.access(ffmpeg_path, os.X_OK):
+                logging.warning(f"FFmpeg test failed but file exists and is executable, continuing anyway: {ffmpeg_path}")
+                if settings is not None:
+                    settings['ffmpeg_path'] = ffmpeg_path
+                return {'success': True, 'path': ffmpeg_path}
+        return {'success': False, 'message': error_msg}
 
 def validate_license(license_key):
     if not license_key:
@@ -1672,6 +1757,31 @@ def write_error_log(error_message, context=None):
     except Exception as e:
         logging.error(f"Failed to write to error log: {e}")
 
+def get_ffmpeg_location_for_ydl(ffmpeg_path):
+    """Get the correct FFmpeg location configuration for yt-dlp"""
+    if not ffmpeg_path:
+        return None
+    
+    if sys.platform == 'win32':
+        # On Windows, yt-dlp expects the full path to the executable
+        return ffmpeg_path
+    else:
+        # On Unix systems (macOS/Linux)
+        if ffmpeg_path == 'ffmpeg':
+            # If it's just 'ffmpeg', it's in PATH - don't set ffmpeg_location
+            # yt-dlp will find it automatically
+            return None
+        elif os.path.isabs(ffmpeg_path):
+            # If it's an absolute path, return the directory containing it
+            ffmpeg_dir = os.path.dirname(ffmpeg_path)
+            if ffmpeg_dir and ffmpeg_dir != '/' and ffmpeg_dir != '.':
+                return ffmpeg_dir
+            else:
+                return None
+        else:
+            # Relative path - return as-is and let yt-dlp handle it
+            return ffmpeg_path
+
 def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
     """Get robust yt-dlp options to handle YouTube changes and SABR streaming"""
     base_options = {
@@ -1710,8 +1820,8 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
             }
         },
         
-        # FFmpeg configuration
-        'ffmpeg_location': ffmpeg_path if sys.platform == 'win32' else os.path.dirname(ffmpeg_path),
+        # FFmpeg configuration - handle both absolute paths and PATH resolution
+        'ffmpeg_location': get_ffmpeg_location_for_ydl(ffmpeg_path),
         'postprocessor_args': get_ffmpeg_postprocessor_args() + ['-threads', '4'],
         'external_downloader_args': ['-timeout', '120'],  # Increase timeout
     }
