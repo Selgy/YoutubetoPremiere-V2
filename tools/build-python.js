@@ -115,12 +115,12 @@ let pyinstallerCmd = [
     '--workpath ./build/YoutubetoPremiere-work'
 ];
 
-// Add sounds data if they exist
+// Add sounds data if they exist (will be placed in bundle, but we'll also copy externally)
 if (hasSoundFiles()) {
     if (isWindows) {
-        pyinstallerCmd.push('--add-data', 'app/sounds;exec/sounds');
+        pyinstallerCmd.push('--add-data', 'app/sounds;sounds');
     } else {
-        pyinstallerCmd.push('--add-data', 'app/sounds:exec/sounds');
+        pyinstallerCmd.push('--add-data', 'app/sounds:sounds');
     }
 }
 
@@ -262,6 +262,20 @@ for (const ffmpegPath of ffmpegPaths) {
         const fileName = path.basename(ffmpegPath);
         fs.copyFileSync(ffmpegPath, path.join('dist/cep/exec', fileName));
         break;
+    }
+}
+
+// Copy sound files next to executable for external access
+if (hasSoundFiles()) {
+    console.log('Copying sound files next to executable for external access...');
+    const soundsDestDir = path.join('dist/cep/exec', 'sounds');
+    ensureDir(soundsDestDir);
+    
+    try {
+        copyRecursive('app/sounds', soundsDestDir);
+        console.log('Sound files copied successfully to dist/cep/exec/sounds/');
+    } catch (error) {
+        console.warn('Warning: Failed to copy sound files:', error.message);
     }
 }
 
