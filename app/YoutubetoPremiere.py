@@ -604,13 +604,36 @@ def run_server():
     # Start server without exposing IP addresses
     logging.info(f'Starting server on all interfaces on port 3002')
 
-    server_thread = threading.Thread(target=lambda: socketio.run(
-        app, 
-        host='0.0.0.0',  # Bind to all available interfaces
-        port=3002,
-        debug=False,
-        use_reloader=False
-    ))
+    # Disable Werkzeug production warning
+    import warnings
+    warnings.filterwarnings('ignore', message='.*Werkzeug.*')
+    
+    def run_server_safe():
+        """Run server with production-safe configuration"""
+        try:
+            socketio.run(
+                app, 
+                host='0.0.0.0',  # Bind to all available interfaces
+                port=3002,
+                debug=False,
+                use_reloader=False,
+                log_output=False  # Disable Werkzeug logs
+            )
+        except RuntimeError as e:
+            if "Werkzeug" in str(e) and "production" in str(e):
+                # Fall back to direct Flask app run for older versions
+                logging.warning("Falling back to Flask app.run() due to Werkzeug restrictions")
+                app.run(
+                    host='0.0.0.0',
+                    port=3002,
+                    debug=False,
+                    use_reloader=False,
+                    threaded=True
+                )
+            else:
+                raise e
+    
+    server_thread = threading.Thread(target=run_server_safe)
     server_thread.start()
     
     # Browser opening disabled - not needed for CEP extension
