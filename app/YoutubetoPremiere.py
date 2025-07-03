@@ -288,20 +288,20 @@ try:
     socketio = SocketIO(app, 
         cors_allowed_origins="*",
         async_mode='threading',
-        ping_timeout=60,  # Reduced from 120 to avoid long-hanging connections
-        ping_interval=25,  # Reduced from 25000 to 25 seconds for more frequent pings
-        max_http_buffer_size=50 * 1024 * 1024,  # Reduced from 100MB to 50MB
+        ping_timeout=120,  # Increased back to 120 for stability
+        ping_interval=60,  # Increased to 60 seconds for less aggressive pinging
+        max_http_buffer_size=50 * 1024 * 1024,  # 50MB buffer
         transports=['websocket', 'polling'],
         logger=False,
         engineio_logger=False,
-        always_connect=False,  # Changed to False to avoid automatic connections
+        always_connect=False,
         reconnection=True,
-        reconnection_attempts=5,  # Limited to 5 attempts instead of unlimited
-        reconnection_delay=1000,
-        reconnection_delay_max=5000,
+        reconnection_attempts=3,  # Reduced to 3 attempts to avoid infinite loops
+        reconnection_delay=2000,  # Increased delay
+        reconnection_delay_max=10000,  # Increased max delay
         allow_upgrades=True,
         cookie=None,
-        manage_session=False  # Added to avoid session management issues
+        manage_session=False
     )
 
     logging.info("Flask and SocketIO initialized successfully")
@@ -351,10 +351,25 @@ def options_handler(path=None):
 @socketio.on_error()
 def error_handler(e):
     try:
-        app_logger.error(f'🔥 SocketIO error: {str(e)}')
-        app_logger.error(f'🔥 Error type: {type(e).__name__}')
+        error_str = str(e).lower()
+        error_type = type(e).__name__
+        
+        # Handle connection errors more gracefully
+        if 'broken pipe' in error_str or 'connection reset' in error_str or 'connection aborted' in error_str:
+            app_logger.warning(f'🔌 Client connection lost: {error_type}')
+        elif 'bad file descriptor' in error_str or 'socket is closed' in error_str:
+            app_logger.warning(f'🔌 Socket closed: {error_type}')
+        else:
+            app_logger.error(f'🔥 SocketIO error: {str(e)}')
+            app_logger.error(f'🔥 Error type: {error_type}')
+        
         if hasattr(request, "sid") and request.sid:
-            app_logger.error(f'🔥 Request SID: {request.sid[:8]}...')
+            sid = request.sid
+            app_logger.debug(f'🔥 Request SID: {sid[:8]}...')
+            
+            # Clean up the problematic connection
+            cleanup_disconnected_client(sid)
+            
     except Exception as log_error:
         # Fallback logging if request context is not available
         print(f'SocketIO error (context unavailable): {str(e)}')
@@ -362,13 +377,39 @@ def error_handler(e):
 @socketio.on_error_default
 def default_error_handler(e):
     try:
-        app_logger.error(f'🔥 SocketIO default error: {str(e)}')
-        app_logger.error(f'🔥 Default error type: {type(e).__name__}')
+        error_str = str(e).lower()
+        error_type = type(e).__name__
+        
+        # Handle connection errors more gracefully
+        if 'broken pipe' in error_str or 'connection reset' in error_str or 'connection aborted' in error_str:
+            app_logger.warning(f'🔌 Default handler - Client connection lost: {error_type}')
+        elif 'bad file descriptor' in error_str or 'socket is closed' in error_str:
+            app_logger.warning(f'🔌 Default handler - Socket closed: {error_type}')
+        else:
+            app_logger.error(f'🔥 SocketIO default error: {str(e)}')
+            app_logger.error(f'🔥 Default error type: {error_type}')
+        
         if hasattr(request, "sid") and request.sid:
-            app_logger.error(f'🔥 Request SID: {request.sid[:8]}...')
+            sid = request.sid
+            app_logger.debug(f'🔥 Default Request SID: {sid[:8]}...')
+            
+            # Clean up the problematic connection
+            cleanup_disconnected_client(sid)
+            
     except Exception as log_error:
         # Fallback logging if request context is not available
         print(f'SocketIO default error (context unavailable): {str(e)}')
+
+def cleanup_disconnected_client(sid):
+    """Clean up a disconnected client from all tracking structures"""
+    try:
+        for client_type, clients in connected_clients.items():
+            if sid in clients:
+                del clients[sid]
+                app_logger.info(f'[CLEANUP] Removed disconnected SID {sid[:8]}... from {client_type}')
+                break
+    except Exception as cleanup_error:
+        app_logger.error(f'Error during disconnect cleanup for SID {sid[:8]}...: {cleanup_error}')
 
 # Add pre-connection debugging
 @app.before_request
@@ -457,19 +498,43 @@ def handle_connection_check(data):
     except Exception as e:
         app_logger.error(f'Error in handle_connection_check: {str(e)}')
 
+def is_client_connected(sid):
+    """Check if a client is still connected by testing the connection"""
+    try:
+        # Try to emit a test event to check if connection is alive
+        socketio.emit('ping', {}, room=sid, timeout=1)
+        return True
+    except Exception:
+        return False
+
+def cleanup_stale_connections():
+    """Clean up connections that are no longer active"""
+    stale_sids = []
+    
+    for client_type, clients in connected_clients.items():
+        for sid in list(clients.keys()):
+            if not is_client_connected(sid):
+                stale_sids.append((client_type, sid))
+    
+    for client_type, sid in stale_sids:
+        try:
+            del connected_clients[client_type][sid]
+            app_logger.info(f'[CLEANUP] Removed stale connection SID {sid[:8]}... from {client_type}')
+        except KeyError:
+            pass  # Already removed
+
 def emit_to_client_type(event, data, client_type=None):
     """Emit event to specific client type or all if client_type is None"""
     if client_type:
+        # Clean up stale connections before sending
+        cleanup_stale_connections()
+        
         # Only emit to clients of the specified type
         connected_clients_count = len(connected_clients[client_type])
-        app_logger.info(f'[DEBUG] Checking {client_type} clients - found {connected_clients_count} connected')
-        app_logger.info(f'[DEBUG] All connected clients: {dict([(k, len(v)) for k, v in connected_clients.items()])}')
-        app_logger.info(f'[DEBUG] {client_type} client SIDs: {list(connected_clients[client_type].keys())}')
+        app_logger.debug(f'[DEBUG] Checking {client_type} clients - found {connected_clients_count} connected')
         
         if connected_clients_count == 0:
             app_logger.warning(f'[WARN] No {client_type} clients connected to send {event} event!')
-            app_logger.info(f'[DEBUG] Available client types: {list(connected_clients.keys())}')
-            app_logger.info(f'[DEBUG] Full connected_clients structure: {connected_clients}')
             return
             
         app_logger.info(f'[INFO] Found {connected_clients_count} {client_type} clients connected')
@@ -503,7 +568,15 @@ def emit_to_client_type(event, data, client_type=None):
                     app_logger.debug(f'Emitting {event} to {client_type} client')
                     
             except Exception as e:
-                app_logger.error(f'Error emitting to client SID {sid[:8]}...: {str(e)}')
+                error_str = str(e).lower()
+                # Handle broken pipe and connection errors more gracefully
+                if 'broken pipe' in error_str or 'connection reset' in error_str or 'connection aborted' in error_str:
+                    app_logger.warning(f'Client connection lost for SID {sid[:8]}...: {type(e).__name__}')
+                elif 'bad file descriptor' in error_str or 'socket is closed' in error_str:
+                    app_logger.warning(f'Socket closed for SID {sid[:8]}...: {type(e).__name__}')
+                else:
+                    app_logger.error(f'Error emitting to client SID {sid[:8]}...: {str(e)}')
+                
                 # Remove the problematic SID
                 try:
                     if sid in connected_clients[client_type]:
@@ -584,6 +657,24 @@ def handle_get_project_path():
 
 should_shutdown = False
 
+def periodic_cleanup():
+    """Periodic cleanup task to remove stale connections"""
+    import threading
+    
+    def cleanup_task():
+        while not should_shutdown:
+            try:
+                time.sleep(300)  # Run every 5 minutes
+                if not should_shutdown:
+                    cleanup_stale_connections()
+                    app_logger.debug("Periodic cleanup completed")
+            except Exception as e:
+                app_logger.error(f"Error in periodic cleanup: {e}")
+    
+    cleanup_thread = threading.Thread(target=cleanup_task, daemon=True)
+    cleanup_thread.start()
+    return cleanup_thread
+
 def run_server():
     global socketio  # Make socketio accessible to progress_hook
     settings = load_settings()
@@ -601,6 +692,9 @@ def run_server():
     logging.info('Settings loaded: %s', settings_for_logging)
     register_routes(app, socketio, settings)
 
+    # Start periodic cleanup task
+    cleanup_thread = periodic_cleanup()
+    
     # Start server without exposing IP addresses
     logging.info(f'Starting server on all interfaces on port 3002')
 

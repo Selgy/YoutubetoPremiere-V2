@@ -201,6 +201,19 @@ styleSheet.textContent = `
         transform: translateY(0) scale(0.98);
     }
 
+    .download-button.disabled {
+        background: linear-gradient(135deg, #6b7280 0%, #9ca3af 100%) !important;
+        cursor: not-allowed !important;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
+        opacity: 0.6 !important;
+        pointer-events: none !important;
+    }
+
+    .download-button.disabled:hover {
+        transform: none !important;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
+    }
+
     .download-button.downloading {
         background: linear-gradient(135deg, #2e2f77 0%, #4e52ff 100%);
         pointer-events: auto;
@@ -806,6 +819,34 @@ const buttonStates = {
     audio: { isDownloading: false }
 };
 
+// Function to check if any download is in progress
+function isAnyDownloadInProgress() {
+    return Object.values(buttonStates).some(state => state.isDownloading);
+}
+
+// Function to disable all buttons during download
+function disableAllButtons() {
+    const buttons = document.querySelectorAll('.download-button');
+    buttons.forEach(button => {
+        // Don't disable the button that's currently downloading (it needs to show progress)
+        if (!button.classList.contains('downloading') && !button.classList.contains('loading')) {
+            button.classList.add('disabled');
+            button.style.pointerEvents = 'none';
+            button.style.opacity = '0.6';
+        }
+    });
+}
+
+// Function to enable all buttons after download
+function enableAllButtons() {
+    const buttons = document.querySelectorAll('.download-button');
+    buttons.forEach(button => {
+        button.classList.remove('disabled');
+        button.style.pointerEvents = 'auto';
+        button.style.opacity = '1';
+    });
+}
+
 console.log('🎯 [INIT] ButtonStates initialized:', JSON.stringify(buttonStates));
 
 // Visibility state
@@ -1046,11 +1087,11 @@ function initializeSocket() {
             }
         });
 
-        // Enhanced progress handling with extension validation
+                // Enhanced progress handling with extension validation
         socket.on('progress', (data) => {
             // Check extension validity before processing
             if (!validateExtensionContext()) return;
-            
+           
             // Check if this is a timecode message and route appropriately
             const progressText = data.progress || data.message || '';
             const isTimecode = progressText.includes(':') || progressText.includes('Clip:');
@@ -1062,9 +1103,13 @@ function initializeSocket() {
                     type: 'clip'
                 });
             } else {
-                // For non-timecode progress, show all progress updates immediately
-                // The server already handles throttling, so no need to throttle again
-                updateProgressSafely(data);
+                // For non-timecode progress, check if it's for a clip download
+                const targetType = data.type === 'full' ? 'premiere' : data.type;
+                
+                // Only show percentage progress for non-clip downloads
+                if (targetType !== 'clip') {
+                    updateProgressSafely(data);
+                }
             }
         });
 
@@ -1098,13 +1143,16 @@ function initializeSocket() {
                 
                 targetType = activeButtonType || data.type || 'full';
                 
-                // Convert percentage and show as progress
-                const percentage = percentageText.replace('%', '');
-                
-                updateProgressSafely({
-                    progress: percentage,
-                    type: targetType
-                });
+                // Only show percentage for non-clip downloads
+                if (targetType !== 'clip') {
+                    // Convert percentage and show as progress
+                    const percentage = percentageText.replace('%', '');
+                    
+                    updateProgressSafely({
+                        progress: percentage,
+                        type: targetType
+                    });
+                }
             }
         });
 
@@ -1197,7 +1245,13 @@ function initializeSocket() {
                     }
                     
                     progressText.appendChild(icon);
-                    const message = data.message || 'Traitement...';
+                    
+                    // For clips, show custom message or default to "Traitement..."
+                    let message = data.message || 'Traitement...';
+                    if (buttonType === 'clip') {
+                        message = data.message || 'Traitement...';
+                    }
+                    
                     progressText.appendChild(document.createTextNode(' ' + message));
                 }
             } else {
@@ -1378,16 +1432,12 @@ function updateProgress(data) {
                 progressSpan.className = 'progress-value';
                 
                 // Show progress for all button types
-                // Priority: message > progress > default
+                // Priority: message > progress (only for non-clip) > default
                 if (data.message !== undefined && data.message !== null) {
-                    // For clip timecode messages, show them directly
-                    if (data.message.includes(':') || data.message.includes('Clip:')) {
-                        progressSpan.textContent = ` ${data.message}`;
-                    } else {
-                        progressSpan.textContent = ` ${data.message}`;
-                    }
-                } else if (data.progress !== undefined && data.progress !== null) {
-                    // Ensure progress is displayed as percentage
+                    // For all message types, show them directly
+                    progressSpan.textContent = ` ${data.message}`;
+                } else if (data.progress !== undefined && data.progress !== null && buttonType !== 'clip') {
+                    // Only show percentage for non-clip downloads
                     const progressValue = data.progress.toString().replace('%', '');
                     progressSpan.textContent = ` ${progressValue}%`;
                 } else {
@@ -1571,6 +1621,11 @@ function resetButtonState(button) {
             progressText.appendChild(document.createTextNode(btn.dataset.originalText));
         }
     });
+    
+    // Re-enable all buttons if no download is in progress
+    if (!isAnyDownloadInProgress()) {
+        enableAllButtons();
+    }
 }
 
 function showNotification(message, type = 'info', duration = 5000) {
@@ -1618,7 +1673,17 @@ function showNotification(message, type = 'info', duration = 5000) {
 
 function sendURL(downloadType, additionalData = {}) {
     const buttonType = downloadType === 'full' ? 'premiere' : downloadType;
-    if (buttonStates[buttonType].isDownloading) return;
+    
+    // Check if any download is in progress
+    if (isAnyDownloadInProgress()) {
+        // Find which type is downloading
+        const downloadingType = Object.keys(buttonStates).find(type => buttonStates[type].isDownloading);
+        const downloadingName = downloadingType === 'premiere' ? 'Vidéo' : 
+                               downloadingType === 'clip' ? 'Clip' : 'Audio';
+        console.log('🚫 [BLOCK] Download blocked - another download is in progress:', downloadingType);
+        showNotification(`Un téléchargement ${downloadingName} est déjà en cours. Veuillez patienter.`, 'warning', 3000);
+        return;
+    }
     
     // Reset all button states first
     Object.keys(buttonStates).forEach(type => {
@@ -1666,6 +1731,7 @@ function sendURL(downloadType, additionalData = {}) {
         .then(data => {
             if (!data.isValid) {
                 button.classList.add('failure');
+                enableAllButtons(); // Re-enable all buttons on license failure
                 showNotification('Clé de licence invalide ou manquante. Veuillez entrer une clé de licence valide dans les paramètres.', 'error');
                 setTimeout(() => {
                     button.classList.remove('failure');
@@ -1677,6 +1743,9 @@ function sendURL(downloadType, additionalData = {}) {
             buttonStates[buttonType].isDownloading = true;
             button.classList.add('loading');
             button.dataset.downloading = 'true';
+            
+            // Disable all buttons during download
+            disableAllButtons();
                 
                 // Add timeout to prevent infinite loading (5 minutes)
                 button.downloadTimeout = setTimeout(() => {
@@ -1684,6 +1753,7 @@ function sendURL(downloadType, additionalData = {}) {
                     button.classList.remove('downloading', 'loading');
                     button.classList.add('failure');
                     buttonStates[buttonType].isDownloading = false;
+                    enableAllButtons(); // Re-enable all buttons on timeout
                     showNotification('Délai d\'attente dépassé pour le téléchargement. Veuillez réessayer.', 'error');
                     setTimeout(() => {
                         resetButtonState(button);
@@ -1791,6 +1861,7 @@ function sendURL(downloadType, additionalData = {}) {
                     button.classList.remove('downloading', 'loading');
                     button.classList.add('failure');
                         buttonStates[buttonType].isDownloading = false;
+                        enableAllButtons(); // Re-enable all buttons on download error
                         
                     if (error.message === 'Failed to fetch') {
                         showNotification('Connexion au serveur échouée. Assurez-vous qu\'Adobe Premiere Pro est ouvert et que YoutubetoPremiere fonctionne.', 'error');
@@ -1808,6 +1879,7 @@ function sendURL(downloadType, additionalData = {}) {
                 // No video ID found
                 button.classList.remove('loading');
                 button.classList.add('failure');
+                enableAllButtons(); // Re-enable all buttons on video ID error
                 showNotification('Impossible de détecter l\'ID de la vidéo YouTube.', 'error');
                 setTimeout(() => {
                     button.classList.remove('failure');
@@ -1818,6 +1890,7 @@ function sendURL(downloadType, additionalData = {}) {
         .catch(error => {
             console.error('Server check error:', error);
             button.classList.add('failure');
+            enableAllButtons(); // Re-enable all buttons on server error
             showNotification('Veuillez vous assurer que YoutubetoPremiere fonctionne.', 'error');
             setTimeout(() => {
                 button.classList.remove('failure');
@@ -2208,6 +2281,11 @@ function addButtons() {
             buttonsContainer.appendChild(createButton('audio-button', 'Audio', () => {
                 sendURL('audio');
             }));
+            
+            // Check if any download is in progress and disable buttons accordingly
+            if (isAnyDownloadInProgress()) {
+                disableAllButtons();
+            }
             
             // Create toggle button
             const toggleButton = createToggleButton();
@@ -2758,6 +2836,9 @@ function resetAllButtons() {
             resetButtonState(button);
         }
     });
+    
+    // Re-enable all buttons
+    enableAllButtons();
 }
 
 // Check authentication status on page load

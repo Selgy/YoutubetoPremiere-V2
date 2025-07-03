@@ -143,7 +143,7 @@ jobs:
           --hidden-import=pymiere \
           --hidden-import=psutil \
           --hidden-import=tkinter \
-          --add-data "app/sounds/notification_sound.mp3:." \
+          --add-data "app/sounds:sounds" \
           --add-binary "ffmpeg:." \
           app/YoutubetoPremiere.py
 
