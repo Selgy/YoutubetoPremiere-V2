@@ -73,14 +73,14 @@ def register_routes(app, socketio, settings):
 
     @app.route('/get-version', methods=['GET'])
     def get_version():
-        return jsonify(version='3.0.2')
+        return jsonify(version='3.0.25')
 
     @app.route('/check-updates', methods=['GET'])
     def check_updates():
         """Check for available updates from GitHub releases"""
         try:
             # Current version
-            current_version = '3.0.2'
+            current_version = '3.0.25'
             
             # Detect OS
             system = platform.system().lower()
@@ -422,25 +422,39 @@ def register_routes(app, socketio, settings):
     @app.route('/available-sounds', methods=['GET'])
     def get_available_sounds():
         try:
+            # Use the same logic as play_notification_sound() to find sounds
             if getattr(sys, 'frozen', False):
-                base_path = os.path.dirname(sys.executable)
+                # For PyInstaller, use _MEIPASS for bundled resources and executable directory for external resources
+                bundle_path = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+                exec_path = os.path.dirname(sys.executable)
             else:
-                base_path = os.path.dirname(os.path.abspath(__file__))
+                bundle_path = os.path.dirname(os.path.abspath(__file__))
+                exec_path = bundle_path
+            
+            # Define possible sound directories (same as play_notification_sound)
+            user_docs = os.path.expanduser('~/Documents')
+            user_sounds_dir = os.path.join(user_docs, 'YoutubetoPremiere', 'sounds')
             
             sound_dirs = [
-                os.path.join(base_path, 'sounds'),
-                os.path.join(os.path.dirname(base_path), 'sounds'),
-                os.path.join(base_path, 'app', 'sounds'),
-                os.path.join(base_path, 'exec', 'sounds'),
-                os.path.join(os.path.dirname(base_path), 'app', 'sounds')
+                user_sounds_dir,                                      # user Documents directory (highest priority)
+                os.path.join(exec_path, 'sounds'),                    # next to executable
+                os.path.join(exec_path, 'exec', 'sounds'),            # in exec subdirectory  
+                os.path.join(bundle_path, 'sounds'),                  # bundled sounds (_MEIPASS)
+                os.path.join(os.path.dirname(exec_path), 'sounds'),   # parent directory
+                os.path.join(exec_path, 'app', 'sounds'),             # app subdirectory
+                os.path.join(os.path.dirname(exec_path), 'app', 'sounds')  # parent app directory
             ]
             
+            # Find first existing sounds directory and return its files
             for dir_path in sound_dirs:
                 if os.path.exists(dir_path):
                     sound_files = [os.path.splitext(f)[0] for f in os.listdir(dir_path) 
-                                 if f.lower().endswith(('.mp3', '.wav'))]
-                    return jsonify(sounds=sound_files)
+                                 if f.lower().endswith(('.mp3', '.wav')) and f != '.gitkeep']
+                    if sound_files:  # Only return if we found actual sound files
+                        logging.info(f"Found {len(sound_files)} sound files in: {dir_path}")
+                        return jsonify(sounds=sound_files)
             
+            logging.warning(f"No sound files found in any directory: {sound_dirs}")
             return jsonify(sounds=[])
         except Exception as e:
             logging.error(f"Error getting available sounds: {e}")

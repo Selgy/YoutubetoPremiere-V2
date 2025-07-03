@@ -74,6 +74,23 @@ if (Test-Path "src/js/main/main.tsx") {
     Write-Host "  [OK] main.tsx" -ForegroundColor Green
 }
 
+# app/routes.py
+if (Test-Path "app/routes.py") {
+    $content = Get-Content "app/routes.py" -Raw
+    $content = $content -replace "return jsonify\(version='[^']*'\)", "return jsonify(version='$Version')"
+    $content = $content -replace "current_version = '[^']*'", "current_version = '$Version'"
+    Set-Content "app/routes.py" $content
+    Write-Host "  [OK] app/routes.py" -ForegroundColor Green
+}
+
+# vite.config.ts
+if (Test-Path "vite.config.ts") {
+    $content = Get-Content "vite.config.ts" -Raw
+    $content = $content -replace "const currentVersion = process\.env\.APP_VERSION \|\| '[^']*'", "const currentVersion = process.env.APP_VERSION || '$Version'"
+    Set-Content "vite.config.ts" $content
+    Write-Host "  [OK] vite.config.ts" -ForegroundColor Green
+}
+
 # Script version-update.js
 if (Test-Path "tools/version-update.js") {
     node tools/version-update.js $Version 2>$null
