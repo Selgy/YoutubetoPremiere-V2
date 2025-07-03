@@ -2,7 +2,7 @@
 // Modern button design with icons and improved animations - Original Colors
 
 // Debug: Version check
-console.log('YTP: Content script loaded - Version 3.0.24 with Enhanced Cookie Extraction & Debug');
+console.log('YTP: Content script loaded - Version 3.0.25 with Enhanced Cookie Extraction & Debug');
 
 // Fonction pour récupérer les cookies YouTube pour le serveur
 async function getCookiesForServer() {
@@ -2907,6 +2907,7 @@ async function enhancedAuthCheck() {
         return false;
     }
 } 
+
 
 
 
