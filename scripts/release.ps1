@@ -66,6 +66,14 @@ if (Test-Path "ChromeExtension/content.js") {
     Write-Host "  [OK] content.js" -ForegroundColor Green
 }
 
+# popup.html
+if (Test-Path "ChromeExtension/popup.html") {
+    $content = Get-Content "ChromeExtension/popup.html" -Raw
+    $content = $content -replace "YouTube to Premiere Pro v[^<]*", "YouTube to Premiere Pro v$Version"
+    Set-Content "ChromeExtension/popup.html" $content
+    Write-Host "  [OK] popup.html" -ForegroundColor Green
+}
+
 # main.tsx
 if (Test-Path "src/js/main/main.tsx") {
     $content = Get-Content "src/js/main/main.tsx" -Raw

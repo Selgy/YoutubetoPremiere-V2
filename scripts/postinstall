@@ -149,4 +149,8 @@ echo "=== Post Install Completed Successfully ==="
 echo "🎉 YouTube to Premiere Pro has been installed!"
 echo "👉 Please restart Adobe Premiere Pro to see the extension."
 
+# Open Chrome Web Store extension page in default browser
+echo "📱 Opening Chrome Extension page..."
+launchctl asuser "$uid" sudo -u "$loggedInUser" open "https://chromewebstore.google.com/detail/youtube-to-premiere-pro-v/fnhpeiohcfobchjffmgfdeobphhmaibb"
+
 exit 0 

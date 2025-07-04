@@ -124,7 +124,16 @@ else
     echo -e "${YELLOW}    ⚠️  ChromeExtension/content.js non trouvé${NC}"
 fi
 
-# 4. Mettre à jour project.config.js
+# 4. Mettre à jour popup.html
+echo -e "${BLUE}  → ChromeExtension/popup.html${NC}"
+if [ -f "ChromeExtension/popup.html" ]; then
+    sed -i '' "s/YouTube to Premiere Pro v[^<]*/YouTube to Premiere Pro v$VERSION/g" ChromeExtension/popup.html
+    echo -e "${GREEN}    ✅ Version mise à jour dans popup.html${NC}"
+else
+    echo -e "${YELLOW}    ⚠️  ChromeExtension/popup.html non trouvé${NC}"
+fi
+
+# 5. Mettre à jour project.config.js
 echo -e "${BLUE}  → project.config.js${NC}"
 if [ -f "project.config.js" ]; then
     sed -i '' "s/version: '[^']*'/version: '$VERSION'/g" project.config.js
@@ -134,7 +143,7 @@ else
     echo -e "${YELLOW}    ⚠️  project.config.js non trouvé${NC}"
 fi
 
-# 5. Mettre à jour vite.config.ts si nécessaire
+# 6. Mettre à jour vite.config.ts si nécessaire
 echo -e "${BLUE}  → vite.config.ts${NC}"
 if [ -f "vite.config.ts" ]; then
     # Rechercher et remplacer la version hardcodée
@@ -144,13 +153,13 @@ else
     echo -e "${YELLOW}    ⚠️  vite.config.ts non trouvé${NC}"
 fi
 
-# 6. Utiliser le script existant tools/version-update.js s'il existe
+# 7. Utiliser le script existant tools/version-update.js s'il existe
 if [ -f "tools/version-update.js" ]; then
     echo -e "${BLUE}  → Exécution de tools/version-update.js${NC}"
     node tools/version-update.js "$VERSION" || echo -e "${YELLOW}    ⚠️  Erreur lors de l'exécution de version-update.js${NC}"
 fi
 
-# 7. Mettre à jour app/routes.py
+# 8. Mettre à jour app/routes.py
 echo -e "${BLUE}  → app/routes.py${NC}"
 if [ -f "app/routes.py" ]; then
     sed -i '' "s/return jsonify(version='[^']*')/return jsonify(version='$VERSION')/g" app/routes.py
@@ -160,7 +169,7 @@ else
     echo -e "${YELLOW}    ⚠️  app/routes.py non trouvé${NC}"
 fi
 
-# 8. Mettre à jour les manifests CEP générés dans les configs vite
+# 9. Mettre à jour les manifests CEP générés dans les configs vite
 echo -e "${BLUE}  → Mise à jour des templates manifest CEP${NC}"
 # Ces fichiers sont générés dynamiquement, donc on n'a pas besoin de les modifier
 
