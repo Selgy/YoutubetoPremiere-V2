@@ -455,6 +455,11 @@ def handle_connect():
         app_logger.info(f'[STATS] Current connected clients: chrome={len(connected_clients["chrome"])}, premiere={len(connected_clients["premiere"])}, unknown={len(connected_clients["unknown"])}')
         app_logger.info(f'[DEBUG] connected_clients structure: {dict([(k, list(v.keys())) for k, v in connected_clients.items()])}')
         
+        # Special logging for Chrome clients to debug connection issues
+        if client_type == 'chrome':
+            app_logger.info(f'[CHROME] Chrome client successfully registered with SID: {sid[:8]}...')
+            app_logger.info(f'[CHROME] Total Chrome clients now: {len(connected_clients["chrome"])}')
+        
         # Send connection status safely
         try:
             socketio.emit('connection_status', {'status': 'connected', 'client_type': client_type}, room=sid)
@@ -475,6 +480,12 @@ def handle_disconnect():
             if sid in clients:
                 del clients[sid]
                 app_logger.info(f'[DISCONNECTED] Client disconnected - Type: {client_type}, SID: {sid[:8]}...')
+                
+                # Special logging for Chrome disconnections
+                if client_type == 'chrome':
+                    app_logger.warning(f'[CHROME] Chrome client disconnected! SID: {sid[:8]}...')
+                    app_logger.info(f'[CHROME] Remaining Chrome clients: {len(connected_clients["chrome"])}')
+                
                 app_logger.info(f'[STATS] Remaining connected clients: chrome={len(connected_clients["chrome"])}, premiere={len(connected_clients["premiere"])}, unknown={len(connected_clients["unknown"])}')
                 return
         
@@ -596,6 +607,13 @@ def emit_to_client_type(event, data, client_type=None):
             app_logger.debug(f'Broadcasting {event}')
 
 @socketio.on('progress')
+def handle_progress(data):
+    """Handle progress events"""
+    try:
+        # Forward progress events to all clients
+        emit_to_client_type('progress', data)
+    except Exception as e:
+        app_logger.error(f"Error handling progress event: {e}")
 
 @socketio.on('import_video')
 def handle_import_video(data):
@@ -650,6 +668,86 @@ def handle_import_complete(data):
         # Forward the error to all clients
         socketio.emit('import_failed', {'path': path, 'error': error})
 
+@socketio.on('cancel-download')
+def handle_cancel_download(data):
+    """Handle download cancellation requests from Chrome extension"""
+    try:
+        download_type = data.get('type', 'unknown')
+        app_logger.info(f'[CANCEL] Download cancellation requested for type: {download_type}')
+        
+        # Get the current download from routes module
+        from routes import get_current_download
+        current_download = get_current_download()
+        
+        # Debug: Log current_download contents
+        app_logger.info(f'[CANCEL] Current download structure: {current_download}')
+        app_logger.info(f'[CANCEL] Has ydl: {bool(current_download.get("ydl"))}')
+        app_logger.info(f'[CANCEL] Has process: {bool(current_download.get("process"))}')
+        app_logger.info(f'[CANCEL] Has cancel_callback: {bool(current_download.get("cancel_callback"))}')
+        
+        if current_download and (current_download.get('ydl') or current_download.get('process') or current_download.get('cancel_callback')):
+            cancelled = False
+            
+            # Cancel using callback first (most reliable)
+            if current_download.get('cancel_callback'):
+                try:
+                    app_logger.info('[CANCEL] Executing cancel callback')
+                    current_download['cancel_callback']()
+                    app_logger.info('[CANCEL] Cancel callback executed successfully')
+                    cancelled = True
+                except Exception as e:
+                    app_logger.error(f'[CANCEL] Error executing cancel callback: {e}')
+            
+            # Cancel yt-dlp process if exists
+            if current_download.get('ydl'):
+                try:
+                    app_logger.info('[CANCEL] Attempting to cancel yt-dlp process')
+                    current_download['ydl'] = None
+                    cancelled = True
+                except Exception as e:
+                    app_logger.error(f'[CANCEL] Error cancelling yt-dlp: {e}')
+            
+            # Cancel subprocess if exists
+            if current_download.get('process'):
+                try:
+                    app_logger.info('[CANCEL] Attempting to cancel subprocess')
+                    process = current_download['process']
+                    if process.poll() is None:  # Process is still running
+                        process.terminate()
+                        # Give it a moment to terminate gracefully
+                        import time
+                        time.sleep(0.5)
+                        if process.poll() is None:  # Still running, force kill
+                            process.kill()
+                        app_logger.info('[CANCEL] Subprocess terminated')
+                        cancelled = True
+                    current_download['process'] = None
+                except Exception as e:
+                    app_logger.error(f'[CANCEL] Error cancelling subprocess: {e}')
+            
+            # Reset cancel callback
+            current_download['cancel_callback'] = None
+            
+            if cancelled:
+                app_logger.info(f'[CANCEL] Download successfully cancelled for type: {download_type}')
+                # Debug: Log connected clients before emitting
+                chrome_clients = len(connected_clients['chrome'])
+                app_logger.info(f'[CANCEL] Chrome clients connected: {chrome_clients}')
+                app_logger.info(f'[CANCEL] All connected clients: {dict([(k, len(v)) for k, v in connected_clients.items()])}')
+                
+                emit_to_client_type('download-cancelled', {'type': download_type}, 'chrome')
+                app_logger.info('[CANCEL] Successfully cancelled - only sending download-cancelled event, no error message')
+            else:
+                app_logger.warning(f'[CANCEL] No active download processes found to cancel for type: {download_type}')
+                emit_to_client_type('download-failed', {'message': 'Aucun téléchargement actif à annuler'}, 'chrome')
+        else:
+            app_logger.warning(f'[CANCEL] No current download structure found or empty structure: {current_download}')
+            emit_to_client_type('download-failed', {'message': 'Aucun téléchargement actif à annuler'}, 'chrome')
+            
+    except Exception as e:
+        app_logger.error(f'[CANCEL] Error handling download cancellation: {str(e)}')
+        emit_to_client_type('download-failed', {'message': 'Erreur lors de l\'annulation du téléchargement'}, 'chrome')
+
 @socketio.on('get_project_path')
 def handle_get_project_path():
     logging.info('Requesting project path from panel')
@@ -694,7 +792,7 @@ def run_server():
 
     # Start periodic cleanup task
     cleanup_thread = periodic_cleanup()
-    
+
     # Start server without exposing IP addresses
     logging.info(f'Starting server on all interfaces on port 3002')
 
@@ -706,10 +804,10 @@ def run_server():
         """Run server with production-safe configuration"""
         try:
             socketio.run(
-                app, 
-                host='0.0.0.0',  # Bind to all available interfaces
-                port=3002,
-                debug=False,
+        app, 
+        host='0.0.0.0',  # Bind to all available interfaces
+        port=3002,
+        debug=False,
                 use_reloader=False,
                 log_output=False  # Disable Werkzeug logs
             )

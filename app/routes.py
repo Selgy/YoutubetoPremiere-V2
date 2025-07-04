@@ -12,9 +12,20 @@ import re
 import tempfile
 import subprocess
 
+# Global variable to track current download for cancellation
+current_download = {'process': None, 'ydl': None, 'cancel_callback': None}
+
+def get_current_download():
+    """Get the current download structure for cancellation purposes"""
+    return current_download
+
+def reset_current_download():
+    """Reset the current download structure"""
+    global current_download
+    current_download = {'process': None, 'ydl': None, 'cancel_callback': None}
+
 def register_routes(app, socketio, settings):
     connected_clients = set()
-    current_download = {'process': None, 'ydl': None, 'cancel_callback': None}
     
     # Import emit_to_client_type from the main module
     # We need to get this from the calling context since it's defined in YoutubetoPremiere.py
@@ -232,6 +243,10 @@ def register_routes(app, socketio, settings):
             # Load current settings
             current_settings = load_settings()
             
+            # Reset current download structure before starting new download
+            reset_current_download()
+            logging.info(f"Reset current_download structure before starting {download_type} download (legacy route)")
+            
             # Emit start event to all connected clients
             socketio.emit('download_started', {'url': video_url})
             
@@ -322,6 +337,10 @@ def register_routes(app, socketio, settings):
             # Load current settings
             current_settings = load_settings()
             logging.info(f"Current settings for download: {current_settings}")
+            
+            # Reset current download structure before starting new download
+            reset_current_download()
+            logging.info(f"Reset current_download structure before starting {download_type} download")
             
             # Emit start event to all connected clients
             socketio.emit('download_started', {'url': video_url})

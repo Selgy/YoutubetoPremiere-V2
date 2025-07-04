@@ -814,14 +814,16 @@ document.head.appendChild(styleSheet);
 
 // Button states tracking
 const buttonStates = {
-    premiere: { isDownloading: false },
-    clip: { isDownloading: false },
-    audio: { isDownloading: false }
+    premiere: { isDownloading: false, cancelCooldown: false },
+    clip: { isDownloading: false, cancelCooldown: false },
+    audio: { isDownloading: false, cancelCooldown: false }
 };
 
 // Function to check if any download is in progress
 function isAnyDownloadInProgress() {
-    return Object.values(buttonStates).some(state => state.isDownloading);
+    const downloadActive = Object.values(buttonStates).some(state => state.isDownloading);
+    isDownloadActive = downloadActive; // Update global flag
+    return downloadActive;
 }
 
 // Function to disable all buttons during download
@@ -855,9 +857,11 @@ let buttonsVisible = localStorage.getItem('ytp-buttons-visible') !== 'false';
 // Global variables
 let socket = null;
 let reconnectAttempts = 0;
-let maxReconnectAttempts = 3; // Reduced to limit spam when server is unavailable
+let maxReconnectAttempts = 10; // Increased for better reliability during downloads
 let reconnectInterval = 2000;
 let isExtensionValid = true;
+let isDownloadActive = false; // Track if any download is active
+let lastUserCancellation = null; // Track last user cancellation to avoid duplicate messages
 
 // Observer instances to disconnect on invalidation
 let mainMutationObserver = null;
@@ -1031,12 +1035,19 @@ function initializeSocket() {
             transports: ['websocket', 'polling'],
             upgrade: true,
             rememberUpgrade: false,
-            timeout: 10000,
+            timeout: 15000,  // Increased timeout
             forceNew: true,
             autoConnect: false,
             query: {
                 client_type: 'chrome'
-            }
+            },
+            // Additional options for stability during downloads
+            pingInterval: 10000,  // Ping every 10 seconds
+            pingTimeout: 5000,    // Wait 5 seconds for pong response
+            reconnection: true,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
+            maxReconnectionAttempts: isDownloadActive ? 50 : 10  // More attempts during downloads
         });
         
         console.log('🔌 [SOCKET] Initializing connection with client_type=chrome');
@@ -1045,6 +1056,15 @@ function initializeSocket() {
             // Only log connection errors if not expected (when Premiere is closed)
             if (!error.message.includes('ECONNREFUSED') && !error.message.includes('websocket error')) {
                 console.error('❌ [SOCKET] Connection ERROR:', error.message);
+                
+                // Show user-friendly message only if download is active and multiple failures
+                if (isDownloadActive && reconnectAttempts >= 5) {
+                    showNotification(
+                        'Connexion instable pendant le téléchargement. Tentative de reconnexion...', 
+                        'warning', 
+                        5000
+                    );
+                }
             }
         });
 
@@ -1054,15 +1074,27 @@ function initializeSocket() {
                 console.log('🔌 [SOCKET] Disconnected from server, reason:', reason);
             }
             
-            // Only attempt reconnection if extension is still valid and disconnect wasn't intentional
-            // Also, increase reconnection interval to reduce spam
-            if (isExtensionValid && reason !== 'io client disconnect' && reconnectAttempts < maxReconnectAttempts) {
-                const delayMs = Math.min(reconnectInterval * Math.pow(2, reconnectAttempts), 30000); // Exponential backoff, max 30s
+            // More aggressive reconnection during active downloads
+            const shouldReconnect = isExtensionValid && reason !== 'io client disconnect';
+            const maxAttempts = isDownloadActive ? 20 : maxReconnectAttempts; // More attempts during downloads
+            
+            if (shouldReconnect && reconnectAttempts < maxAttempts) {
+                // Shorter delay during downloads for faster reconnection
+                const baseDelay = isDownloadActive ? 1000 : reconnectInterval;
+                const delayMs = Math.min(baseDelay * Math.pow(1.5, reconnectAttempts), isDownloadActive ? 10000 : 30000);
+                
+                console.log(`🔌 [SOCKET] Attempting reconnection in ${delayMs}ms (attempt ${reconnectAttempts + 1}/${maxAttempts}, download active: ${isDownloadActive})`);
+                
                 setTimeout(() => {
                     if (validateExtensionContext()) {
                         attemptReconnection();
                     }
                 }, delayMs);
+            } else if (reconnectAttempts >= maxAttempts) {
+                console.warn('🔌 [SOCKET] Max reconnection attempts reached. Connection abandoned.');
+                if (isDownloadActive) {
+                    showNotification('Connexion perdue pendant le téléchargement. Rafraîchissez la page.', 'error', 10000);
+                }
             }
         });
 
@@ -1087,11 +1119,11 @@ function initializeSocket() {
             }
         });
 
-                // Enhanced progress handling with extension validation
+        // Enhanced progress handling with extension validation
         socket.on('progress', (data) => {
             // Check extension validity before processing
             if (!validateExtensionContext()) return;
-           
+            
             // Check if this is a timecode message and route appropriately
             const progressText = data.progress || data.message || '';
             const isTimecode = progressText.includes(':') || progressText.includes('Clip:');
@@ -1108,7 +1140,7 @@ function initializeSocket() {
                 
                 // Only show percentage progress for non-clip downloads
                 if (targetType !== 'clip') {
-                    updateProgressSafely(data);
+                updateProgressSafely(data);
                 }
             }
         });
@@ -1145,13 +1177,13 @@ function initializeSocket() {
                 
                 // Only show percentage for non-clip downloads
                 if (targetType !== 'clip') {
-                    // Convert percentage and show as progress
-                    const percentage = percentageText.replace('%', '');
-                    
-                    updateProgressSafely({
-                        progress: percentage,
-                        type: targetType
-                    });
+                // Convert percentage and show as progress
+                const percentage = percentageText.replace('%', '');
+                
+                updateProgressSafely({
+                    progress: percentage,
+                    type: targetType
+                });
                 }
             }
         });
@@ -1175,12 +1207,77 @@ function initializeSocket() {
             }
         });
 
-        socket.on('download-failed', (data) => {
-            console.log('YTP: Download failed:', data);
+        // Handle download cancellation specifically
+        socket.on('download-cancelled', (data) => {
+            console.log('🚫 [SERVER] Download cancellation confirmed by server:', data);
             if (!validateExtensionContext()) return;
+            
+            // Check if this is a recent user cancellation (within last 10 seconds)
+            const isRecentUserCancellation = lastUserCancellation && 
+                (Date.now() - lastUserCancellation.timestamp) < 10000 &&
+                lastUserCancellation.type === (data.type === 'full' ? 'premiere' : data.type);
+            
+            if (isRecentUserCancellation) {
+                console.log('🚫 [SERVER] Ignoring server cancellation - user already cancelled locally');
+                return;
+            }
+            
+            // Only reset buttons if they're still in downloading state
+            let hasActiveDownloads = false;
+            Object.values(buttonStates).forEach(state => {
+                if (state.isDownloading) {
+                    hasActiveDownloads = true;
+                }
+            });
+            
+            if (hasActiveDownloads) {
+                console.log('🚫 [SERVER] Resetting buttons after server cancellation');
             resetAllButtons();
+                showNotification('Téléchargement annulé', 'info', 3000);
+            } else {
+                console.log('🚫 [SERVER] Buttons already reset');
+            }
+        });
+
+        socket.on('download-failed', (data) => {
+            console.log('❌ [SERVER] Download failed:', data);
+            if (!validateExtensionContext()) return;
             
             let errorMessage = data.message || data.error || 'Erreur de téléchargement inconnue';
+            
+            // Check if this is a user cancellation
+            if (errorMessage.includes('annulé par l\'utilisateur') || errorMessage.includes('cancelled by user')) {
+                console.log('🚫 [SERVER] Server confirmed user cancellation');
+                
+                // Check if this is a recent user cancellation
+                const isRecentUserCancellation = lastUserCancellation && 
+                    (Date.now() - lastUserCancellation.timestamp) < 10000;
+                
+                if (isRecentUserCancellation) {
+                    console.log('🚫 [SERVER] Ignoring server cancellation message - user already cancelled locally');
+                    return;
+                }
+                
+                // Only show message and reset if buttons are still in downloading state
+                let hasActiveDownloads = false;
+                Object.values(buttonStates).forEach(state => {
+                    if (state.isDownloading) {
+                        hasActiveDownloads = true;
+                    }
+                });
+                
+                if (hasActiveDownloads) {
+                    console.log('🚫 [SERVER] Resetting buttons after server cancellation confirmation');
+                    resetAllButtons();
+                    showNotification('Téléchargement annulé', 'info', 3000);
+                } else {
+                    console.log('🚫 [SERVER] Buttons already reset, no additional message needed');
+                }
+                return;
+            }
+            
+            // For actual errors (not cancellations), always reset and show error
+            resetAllButtons();
             
             // Check for specific error types and provide better messages
             if (errorMessage.includes('403') || errorMessage.includes('Forbidden')) {
@@ -1201,6 +1298,8 @@ function initializeSocket() {
             
             showNotification(errorMessage, 'error', 10000);
         });
+
+
 
         socket.on('error', (data) => {
             // Silently handle server errors to prevent console spam
@@ -1266,8 +1365,22 @@ function initializeSocket() {
 
         // Handle ping from server (to keep connection alive)
         socket.on('ping', (data) => {
-            // Silently handle pings - no need to log
+            // Silently handle pings - respond with pong
+            if (socket && socket.connected) {
+                socket.emit('pong', { timestamp: Date.now() });
+            }
         });
+
+        // Send periodic heartbeat during downloads to maintain connection
+        setInterval(() => {
+            if (socket && socket.connected && isDownloadActive) {
+                socket.emit('heartbeat', { 
+                    client_type: 'chrome',
+                    download_active: true,
+                    timestamp: Date.now()
+                });
+            }
+        }, 30000); // Every 30 seconds during downloads
 
 
 
@@ -1435,7 +1548,7 @@ function updateProgress(data) {
                 // Priority: message > progress (only for non-clip) > default
                 if (data.message !== undefined && data.message !== null) {
                     // For all message types, show them directly
-                    progressSpan.textContent = ` ${data.message}`;
+                        progressSpan.textContent = ` ${data.message}`;
                 } else if (data.progress !== undefined && data.progress !== null && buttonType !== 'clip') {
                     // Only show percentage for non-clip downloads
                     const progressValue = data.progress.toString().replace('%', '');
@@ -1548,11 +1661,49 @@ function createButton(id, text, onClick) {
     cancelButton.innerHTML = '✕';
     cancelButton.addEventListener('click', (e) => {
         e.stopPropagation();
+        e.preventDefault(); // Prevent any default behavior
         const buttonType = button.dataset.type;
         if (buttonStates[buttonType].isDownloading) {
-            console.log('Cancelling download for:', buttonType);
-            socket.emit('cancel-download', { type: buttonType === 'premiere' ? 'full' : buttonType });
+            console.log('🚫 [CANCEL] User clicked cancel for:', buttonType);
+            
+            // Mark this as a user cancellation with timestamp
+            const cancellationTimestamp = Date.now();
+            lastUserCancellation = {
+                type: buttonType,
+                timestamp: cancellationTimestamp
+            };
+            
+            // Add a cooldown period to prevent immediate new downloads
+            buttonStates[buttonType].cancelCooldown = true;
+            setTimeout(() => {
+                buttonStates[buttonType].cancelCooldown = false;
+                console.log('🚫 [COOLDOWN] Cancellation cooldown expired for:', buttonType);
+            }, 3000); // 3 second cooldown
+            
+            // Clear the cancellation flag after 15 seconds
+            setTimeout(() => {
+                if (lastUserCancellation && lastUserCancellation.timestamp === cancellationTimestamp) {
+                    lastUserCancellation = null;
+                    console.log('🚫 [CLEANUP] Cleared user cancellation flag');
+                }
+            }, 15000);
+            
+            // Immediately show cancellation message and reset button
+            console.log('🚫 [CANCEL] Showing immediate cancellation feedback');
+            showNotification('Téléchargement annulé', 'info', 3000);
             resetButtonState(button);
+            
+            // Try to send cancellation to server (but don't wait for response)
+            try {
+                if (socket && socket.connected) {
+                    console.log('🚫 [CANCEL] Sending cancel-download to server');
+                    socket.emit('cancel-download', { type: buttonType === 'premiere' ? 'full' : buttonType });
+                } else {
+                    console.log('🚫 [CANCEL] Socket not connected, but user feedback already shown');
+                }
+            } catch (error) {
+                console.log('🚫 [CANCEL] Error sending cancellation to server (ignored):', error);
+            }
         }
     });
     button.appendChild(cancelButton);
@@ -1625,6 +1776,7 @@ function resetButtonState(button) {
     // Re-enable all buttons if no download is in progress
     if (!isAnyDownloadInProgress()) {
         enableAllButtons();
+        isDownloadActive = false; // Clear global download state
     }
 }
 
@@ -1673,6 +1825,13 @@ function showNotification(message, type = 'info', duration = 5000) {
 
 function sendURL(downloadType, additionalData = {}) {
     const buttonType = downloadType === 'full' ? 'premiere' : downloadType;
+    
+    // Check if this button type is in cancellation cooldown
+    if (buttonStates[buttonType].cancelCooldown) {
+        console.log('🚫 [COOLDOWN] Download blocked - cancellation cooldown active for:', buttonType);
+        showNotification('Veuillez patienter quelques secondes après l\'annulation avant de relancer.', 'warning', 3000);
+        return;
+    }
     
     // Check if any download is in progress
     if (isAnyDownloadInProgress()) {
@@ -1743,6 +1902,9 @@ function sendURL(downloadType, additionalData = {}) {
             buttonStates[buttonType].isDownloading = true;
             button.classList.add('loading');
             button.dataset.downloading = 'true';
+            
+            // Update global download state
+            isDownloadActive = true;
             
             // Disable all buttons during download
             disableAllButtons();

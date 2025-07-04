@@ -463,8 +463,8 @@ def get_ffmpeg_path():
                     text=True
                 )
                 
-                if result.returncode == 0:
-                    logging.info(f"Verified ffmpeg is working at: {ffmpeg_path}")
+                if result.returncode == 0 and 'ffmpeg version' in result.stdout:
+                    logging.info(f"FFmpeg verified and working: {ffmpeg_path}")
                     return ffmpeg_path
                 else:
                     logging.warning(f"FFmpeg found at {ffmpeg_path} but failed version check: {result.stderr}")
@@ -867,8 +867,10 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         last_progress_value_clip = [0]
         
         def progress_hook(d):
+            # Check for cancellation first - throw exception to stop yt-dlp
             if is_cancelled[0]:
-                return
+                logging.info('[CANCEL] Clip progress hook detected cancellation, raising exception to stop yt-dlp')
+                raise Exception('Download cancelled by user')
                 
             if d['status'] == 'downloading':
                 try:
@@ -879,6 +881,8 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                     logging.info(f'[PROGRESS] Clip Progress: {percentage}')
                     # No percentage emission for clips - just keep loading animation
                 except Exception as e:
+                    if 'cancelled' in str(e).lower():
+                        raise e  # Re-raise cancellation exceptions
                     logging.error(f"Error in clip progress hook: {e}")
             elif d['status'] == 'finished':
                 logging.info('[FINISHED] Clip download finished')
@@ -924,6 +928,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
                 current_download['ydl'] = ydl
+                logging.info('[DOWNLOAD] Set ydl object in current_download structure for clip download')
                 
                 # Log the environment variables related to ffmpeg
                 logging.info(f"Environment PATH: {os.environ.get('PATH')}")
@@ -957,6 +962,15 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                         
             except Exception as e:
                 error_message = f"Error downloading clip: {str(e)}"
+                
+                # Check if this is a cancellation exception
+                if 'cancelled' in str(e).lower():
+                    logging.info("Clip download cancelled by user")
+                    # Clean up all partial files created by yt-dlp for clips
+                    cleanup_partial_video_files(video_file_path)
+                    logging.info('[CANCEL] Clip download successfully cancelled - cleanup completed')
+                    return {"error": "Download cancelled by user"}
+                
                 logging.error(error_message)
                 logging.error(f"Exception type: {type(e).__name__}")
                 logging.error(f"Exception traceback: {traceback.format_exc()}")
@@ -1052,12 +1066,27 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
     try:
         import yt_dlp
 
+        # Handle cancellation
+        is_cancelled = [False]
+        def cancel_callback():
+            is_cancelled[0] = True
+            logging.info('[CANCEL] Video download cancel callback triggered, setting is_cancelled to True')
+            return is_cancelled[0]
+        
+        current_download['cancel_callback'] = cancel_callback
+        logging.info('[DOWNLOAD] Set video cancel_callback in current_download structure')
+
         # Progress throttling variables (use lists to make them mutable in nested functions)
         last_progress_time = [0]
         last_progress_value = [0]
         
         # Simple progress hook like the old working version
         def progress_hook(d):
+            # Check for cancellation first - throw exception to stop yt-dlp
+            if is_cancelled[0]:
+                logging.info('[CANCEL] Progress hook detected cancellation, raising exception to stop yt-dlp')
+                raise Exception('Download cancelled by user')
+                
             if d['status'] == 'downloading':
                 try:
                     percentage = d.get('_percent_str', '0%')
@@ -1068,6 +1097,8 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     # Simple emission like the old version
                     socketio.emit('percentage', {'percentage': percentage})
                 except Exception as e:
+                    if 'cancelled' in str(e).lower():
+                        raise e  # Re-raise cancellation exceptions
                     logging.error(f"Error in progress hook: {e}")
             elif d['status'] == 'finished':
                 logging.info('[FINISHED] Video download finished')
@@ -1237,9 +1268,40 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     current_download['ydl'] = ydl
+                    logging.info('[DOWNLOAD] Set ydl object in current_download structure for video download')
+                    
+                    # Check for cancellation before starting
+                    if is_cancelled[0]:
+                        logging.info("Download cancelled before starting")
+                        logging.info('[CANCEL] Video download successfully cancelled before start')
+                        return None
+                    
                     ydl.process_ie_result(info, download=True)
+                    
+                    # Check for cancellation after download
+                    if is_cancelled[0]:
+                        logging.info("Download cancelled after completion")
+                        # Remove the downloaded file if it exists
+                        if os.path.exists(output_path):
+                            try:
+                                os.remove(output_path)
+                                logging.info(f"Removed cancelled download file: {output_path}")
+                            except Exception as e:
+                                logging.error(f"Could not remove cancelled download file: {e}")
+                        logging.info('[CANCEL] Video download successfully cancelled after download - cleanup completed')
+                        return None
+                        
             except Exception as e:
                 error_message = f"Error during video download: {str(e)}"
+                
+                # Check if this is a cancellation exception
+                if 'cancelled' in str(e).lower():
+                    logging.info("Video download cancelled by user")
+                    # Clean up all partial files created by yt-dlp
+                    cleanup_partial_video_files(output_path)
+                    logging.info('[CANCEL] Video download successfully cancelled - cleanup completed')
+                    return None
+                
                 logging.error(error_message)
                 logging.error(f"Exception type: {type(e).__name__}")
                 logging.error(f"Exception traceback: {traceback.format_exc()}")
@@ -1253,6 +1315,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 raise e
             finally:
                 current_download['ydl'] = None
+                current_download['cancel_callback'] = None
 
             # Get the final path of the downloaded file
             final_path = output_path
@@ -1415,6 +1478,17 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
         return None
 
     try:
+        # Handle cancellation
+        is_cancelled = [False]
+        def cancel_callback():
+            is_cancelled[0] = True
+            logging.info('[CANCEL] Audio download cancel callback triggered, setting is_cancelled to True')
+            return is_cancelled[0]
+        
+        if current_download:
+            current_download['cancel_callback'] = cancel_callback
+            logging.info('[DOWNLOAD] Set audio cancel_callback in current_download structure')
+
         # Clean the URL first - remove playlist and other problematic parameters
         parsed_url = urlparse.urlparse(video_url)
         
@@ -1496,6 +1570,11 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
         
         # Simple progress hook like the old working version
         def progress_hook(d):
+            # Check for cancellation first - throw exception to stop yt-dlp
+            if is_cancelled[0]:
+                logging.info('[CANCEL] Audio progress hook detected cancellation, raising exception to stop yt-dlp')
+                raise Exception('Download cancelled by user')
+                
             if d['status'] == 'downloading':
                 try:
                     percentage = d.get('_percent_str', '0%')
@@ -1506,6 +1585,8 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                     # Simple emission like the old version
                     socketio.emit('percentage', {'percentage': percentage})
                 except Exception as e:
+                    if 'cancelled' in str(e).lower():
+                        raise e  # Re-raise cancellation exceptions
                     logging.error(f"Error in audio progress hook: {e}")
             elif d['status'] == 'finished':
                 logging.info('[FINISHED] Audio download finished')
@@ -1555,6 +1636,12 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
+                # Check for cancellation before starting
+                if is_cancelled[0]:
+                    logging.info("Audio download cancelled before starting")
+                    logging.info('[CANCEL] Audio download successfully cancelled before start')
+                    return None
+                
                 # Extract info first to verify URL is valid and get title
                 logging.info(f"Attempting to extract info for URL: {video_url}")
                 info = ydl.extract_info(video_url, download=False)
@@ -1606,8 +1693,32 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                 
                 # Create new YoutubeDL instance with updated options
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl_download:
+                    if current_download:
+                        current_download['ydl'] = ydl_download
+                        logging.info('[DOWNLOAD] Set ydl object in current_download structure for audio download')
+                    
+                    # Check for cancellation before downloading
+                    if is_cancelled[0]:
+                        logging.info("Audio download cancelled before download")
+                        logging.info('[CANCEL] Audio download successfully cancelled before download')
+                        return None
+                    
                     # Download using the already extracted info
                     ydl_download.process_ie_result(info, download=True)
+                    
+                    # Check for cancellation after download
+                    if is_cancelled[0]:
+                        logging.info("Audio download cancelled after download")
+                        # Remove any temp files
+                        temp_pattern = os.path.join(download_path, f"temp_{sanitized_title}*")
+                        for temp_file in glob.glob(temp_pattern):
+                            try:
+                                os.remove(temp_file)
+                                logging.info(f"Removed cancelled audio file: {temp_file}")
+                            except Exception as e:
+                                logging.error(f"Could not remove cancelled audio file: {e}")
+                        logging.info('[CANCEL] Audio download successfully cancelled after download - cleanup completed')
+                        return None
 
                 # Find the downloaded file
                 downloaded_file = None
@@ -1648,6 +1759,11 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                     except:
                         pass
 
+                # Clean up current_download references on success
+                if current_download:
+                    current_download['ydl'] = None
+                    current_download['cancel_callback'] = None
+
                 # Emit both completion events before returning
                 if socketio:
                     socketio.emit('import_video', {'path': output_path})
@@ -1657,12 +1773,26 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                 return output_path
 
             except Exception as e:
+                # Check if this is a cancellation exception
+                if 'cancelled' in str(e).lower():
+                    logging.info("Audio download cancelled by user")
+                    # Clean up all partial files for audio downloads
+                    temp_audio_path = os.path.join(download_path, f"temp_{sanitized_title}.wav")
+                    cleanup_partial_video_files(temp_audio_path)
+                    logging.info('[CANCEL] Audio download successfully cancelled - cleanup completed')
+                    return None
+                
                 logging.error(f"Error downloading audio: {str(e)}")
                 logging.error(f"Exception type: {type(e)}")
                 logging.error(f"Exception traceback: {traceback.format_exc()}")
                 if socketio:
                     socketio.emit('download-failed', {'message': f'Error downloading audio: {str(e)}'})
                 return None
+            finally:
+                # Clean up current_download references
+                if current_download:
+                    current_download['ydl'] = None
+                    current_download['cancel_callback'] = None
 
     except Exception as e:
         logging.error(f"Error in download_audio: {str(e)}")
@@ -1736,6 +1866,47 @@ def get_audio_language_options(video_url):
     except Exception as e:
         logging.error(f"Error extracting audio languages: {str(e)}")
         return []
+
+def cleanup_partial_video_files(output_path):
+    """Clean up all partial files created by yt-dlp during download"""
+    try:
+        base_name = os.path.splitext(output_path)[0]
+        base_dir = os.path.dirname(output_path)
+        
+        if not os.path.exists(base_dir):
+            return
+        
+        # Patterns for yt-dlp partial files
+        patterns = [
+            f"{base_name}.f*.mp4",      # Video streams (f137.mp4, etc.)
+            f"{base_name}.f*.m4a",      # Audio streams (f140.m4a, etc.)
+            f"{base_name}.f*.webm",     # WebM video/audio
+            f"{base_name}.f*.mkv",      # MKV containers
+            f"{base_name}.part",        # Partial download files
+            f"{base_name}.ytdl",        # yt-dlp temporary files
+            f"{base_name}*.part",       # More partial patterns
+            output_path,                # Final output file if it exists
+        ]
+        
+        removed_files = []
+        for pattern in patterns:
+            matching_files = glob.glob(pattern)
+            for file_path in matching_files:
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                        removed_files.append(os.path.basename(file_path))
+                        logging.info(f"Removed partial file: {file_path}")
+                except Exception as e:
+                    logging.error(f"Could not remove partial file {file_path}: {e}")
+        
+        if removed_files:
+            logging.info(f"Cleaned up {len(removed_files)} partial files: {', '.join(removed_files)}")
+        else:
+            logging.info("No partial files found to clean up")
+            
+    except Exception as e:
+        logging.error(f"Error during partial file cleanup: {e}")
 
 def write_error_log(error_message, context=None):
     """Write error to dedicated error log file"""
