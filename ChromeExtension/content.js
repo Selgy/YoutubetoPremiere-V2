@@ -4,6 +4,77 @@
 // Debug: Version check
 console.log('YTP: Content script loaded - Version 3.0.0 with Enhanced Cookie Extraction & Debug');
 
+// Server availability state
+let serverAvailable = false;
+let serverCheckInProgress = false;
+let lastServerCheck = 0;
+const SERVER_CHECK_INTERVAL = 30000; // Check every 30 seconds
+
+// Check server availability
+async function checkServerAvailability() {
+    if (serverCheckInProgress) return serverAvailable;
+    
+    const now = Date.now();
+    if (now - lastServerCheck < SERVER_CHECK_INTERVAL) {
+        return serverAvailable;
+    }
+    
+    serverCheckInProgress = true;
+    lastServerCheck = now;
+    
+    try {
+        const response = await fetch('http://localhost:3002/health', { 
+            method: 'GET',
+            timeout: 3000 
+        });
+        serverAvailable = response.ok;
+    } catch (error) {
+        serverAvailable = false;
+    }
+    
+    serverCheckInProgress = false;
+    updateButtonsServerStatus();
+    return serverAvailable;
+}
+
+// Update buttons based on server status
+function updateButtonsServerStatus() {
+    const buttons = document.querySelectorAll('.import-button');
+    const statusIndicator = document.getElementById('ytp-server-status');
+    
+    buttons.forEach(button => {
+        if (serverAvailable) {
+            button.classList.remove('server-unavailable');
+        } else {
+            button.classList.add('server-unavailable');
+        }
+        // Keep original button titles regardless of server status
+    });
+    
+    // Update status indicator
+    if (statusIndicator) {
+        statusIndicator.className = serverAvailable ? 'ytp-status-connected' : 'ytp-status-disconnected';
+        statusIndicator.title = serverAvailable ? 'Connecté au serveur YoutubetoPremiere' : 'Serveur YoutubetoPremiere non détecté';
+    }
+}
+
+// Show simple message when server is not available
+function showServerRequiredMessage(buttonType) {
+    const features = {
+        premiere: 'importer cette vidéo vers Premiere Pro',
+        clip: 'créer un clip à partir du timestamp actuel',
+        audio: 'extraire l\'audio de cette vidéo'
+    };
+    
+    const feature = features[buttonType] || 'utiliser cette fonctionnalité';
+    
+    showNotification(
+        `Pour ${feature}, l'application YoutubetoPremiere doit être installée et en cours d'exécution.`,
+        'info',
+        4000
+    );
+}
+
 // Fonction pour récupérer les cookies YouTube pour le serveur
 async function getCookiesForServer() {
     return new Promise((resolve) => {
@@ -116,7 +187,7 @@ styleSheet.textContent = `
     /* Import Google Fonts for icons */
     @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 
-    .download-button {
+    .import-button {
         background: linear-gradient(135deg, #2e2f77 0%, #4e52ff 100%);
         color: white;
         padding: 0 12px;
@@ -154,14 +225,14 @@ styleSheet.textContent = `
     
     /* Force nos boutons à rester visibles même quand YouTube réorganise */
     .ytp-main-container .ytp-buttons-container,
-    .ytp-main-container .download-button,
+    .ytp-main-container .import-button,
     .ytp-main-container .ytp-toggle-button {
         position: relative !important;
         visibility: visible !important;
         display: inline-flex !important;
     }
 
-    .download-button::before {
+    .import-button::before {
         content: '';
         position: absolute;
         top: 0;
@@ -172,7 +243,7 @@ styleSheet.textContent = `
         transition: left 0.5s;
     }
 
-    .download-button:hover::before {
+    .import-button:hover::before {
         left: 100%;
     }
 
@@ -191,17 +262,17 @@ styleSheet.textContent = `
         box-shadow: 0 4px 12px rgba(46, 47, 119, 0.4);
     }
 
-    .download-button:hover {
+    .import-button:hover {
         transform: scale(1.05);
         background: linear-gradient(135deg, #4e52ff 0%, #6366f1 100%);
         box-shadow: 0 8px 25px rgba(78, 82, 255, 0.6);
     }
 
-    .download-button:active {
+    .import-button:active {
         transform: translateY(0) scale(0.98);
     }
 
-    .download-button.disabled {
+    .import-button.disabled {
         background: linear-gradient(135deg, #6b7280 0%, #9ca3af 100%) !important;
         cursor: not-allowed !important;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
@@ -209,24 +280,24 @@ styleSheet.textContent = `
         pointer-events: none !important;
     }
 
-    .download-button.disabled:hover {
+    .import-button.disabled:hover {
         transform: none !important;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
     }
 
-    .download-button.downloading {
+    .import-button.importing {
         background: linear-gradient(135deg, #2e2f77 0%, #4e52ff 100%);
         pointer-events: auto;
         animation: pulse 2s infinite;
     }
 
-    .download-button.success {
+    .import-button.success {
         background: linear-gradient(135deg, #059669 0%, #10b981 100%);
         box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
         animation: none;
     }
 
-    .download-button .progress-text {
+    .import-button .progress-text {
         position: relative;
         z-index: 1;
         transition: all 0.3s ease;
@@ -242,7 +313,7 @@ styleSheet.textContent = `
         vertical-align: middle;
     }
 
-    .download-button .button-icon {
+    .import-button .button-icon {
         font-family: 'Material Symbols Outlined';
         font-size: 18px;
         font-weight: 400;
@@ -252,7 +323,7 @@ styleSheet.textContent = `
         justify-content: center;
     }
 
-    .download-button.downloading:hover .progress-text {
+    .import-button.importing:hover .progress-text {
         opacity: 0;
     }
 
@@ -278,13 +349,13 @@ styleSheet.textContent = `
         backdrop-filter: blur(10px);
     }
 
-    .download-button:hover .cancel-button {
+    .import-button:hover .cancel-button {
         opacity: 0;
         pointer-events: none;
     }
 
-    .download-button.downloading:hover .cancel-button,
-    .download-button.loading:hover .cancel-button {
+    .import-button.importing:hover .cancel-button,
+    .import-button.loading:hover .cancel-button {
         opacity: 1;
         pointer-events: auto;
         transform: scale(1.05);
@@ -348,16 +419,16 @@ styleSheet.textContent = `
         animation: spin 1s linear infinite;
     }
 
-    .download-button.loading {
+    .import-button.loading {
         pointer-events: none;
         background: linear-gradient(135deg, #2e2f77 0%, #4e52ff 100%);
     }
 
-    .download-button.loading .loading-spinner {
+    .import-button.loading .loading-spinner {
         display: block;
     }
 
-    .download-button.loading .progress-text {
+    .import-button.loading .progress-text {
         opacity: 0;
     }
 
@@ -377,11 +448,11 @@ styleSheet.textContent = `
         }
     }
 
-    .download-button.success {
+    .import-button.success {
         animation: success 1.5s ease forwards;
     }
 
-    .download-button.failure {
+    .import-button.failure {
         animation: failure 1.5s ease forwards;
     }
 
@@ -455,9 +526,31 @@ styleSheet.textContent = `
     }
 
     /* Enhanced focus states for accessibility */
-    .download-button:focus {
+    .import-button:focus {
         outline: none;
         box-shadow: 0 0 0 3px rgba(78, 82, 255, 0.4);
+    }
+
+    /* Server unavailable state */
+    .import-button.server-unavailable {
+        opacity: 0.7;
+        pointer-events: auto;
+    }
+
+    .import-button.server-unavailable:hover {
+        opacity: 0.9;
+        transform: scale(1.02);
+    }
+
+
+
+    /* Server status indicator */
+    .ytp-status-connected {
+        color: #10b981;
+    }
+
+    .ytp-status-disconnected {
+        color: #ef4444;
     }
 
     /* Toggle button styles */
@@ -521,7 +614,7 @@ styleSheet.textContent = `
         overflow: hidden;
     }
 
-    .ytp-buttons-container.hidden .download-button {
+    .ytp-buttons-container.hidden .import-button {
         margin: 0;
         padding: 0;
         min-width: 0;
@@ -561,8 +654,8 @@ styleSheet.textContent = `
     }
 
     /* Align with YouTube's action buttons */
-    #actions .ytp-main-container .download-button,
-    #actions-inner .ytp-main-container .download-button {
+    #actions .ytp-main-container .import-button,
+    #actions-inner .ytp-main-container .import-button {
         height: 36px;
         min-width: 85px;
     }
@@ -624,7 +717,7 @@ styleSheet.textContent = `
     }
 
     /* Match YouTube's like/dislike button styling exactly */
-    .ytp-floating-container .ytp-main-container .download-button {
+    .ytp-floating-container .ytp-main-container .import-button {
         height: 36px;
         width: 90px;
         padding: 0 12px;
@@ -653,7 +746,7 @@ styleSheet.textContent = `
         margin-left: 8px;
     }
 
-    .ytp-main-container.compact .download-button {
+    .ytp-main-container.compact .import-button {
         height: 32px;
         padding: 0 10px;
         font-size: 13px;
@@ -681,7 +774,7 @@ styleSheet.textContent = `
         margin-left: 4px;
     }
 
-    .ytp-main-container.mini .download-button {
+    .ytp-main-container.mini .import-button {
         height: 28px;
         padding: 0 8px;
         font-size: 12px;
@@ -706,7 +799,7 @@ styleSheet.textContent = `
     }
 
     /* Hide text in very compact mode, show only icons */
-    .ytp-main-container.icon-only .download-button {
+    .ytp-main-container.icon-only .import-button {
         min-width: 36px;
         padding: 0 6px;
         height: 30px;
@@ -730,7 +823,7 @@ styleSheet.textContent = `
     }
 
     /* Ultra compact mode for extreme space constraints */
-    .ytp-main-container.micro .download-button {
+    .ytp-main-container.micro .import-button {
         min-width: 24px;
         padding: 0 2px;
         height: 24px;
@@ -759,19 +852,19 @@ styleSheet.textContent = `
     }
 
     /* Progress states for compact modes */
-    .ytp-main-container.icon-only .download-button.downloading .progress-text,
-    .ytp-main-container.micro .download-button.downloading .progress-text {
+    .ytp-main-container.icon-only .import-button.importing .progress-text,
+    .ytp-main-container.micro .import-button.importing .progress-text {
         font-size: 0;
     }
 
-    .ytp-main-container.icon-only .download-button.downloading .button-icon,
-    .ytp-main-container.micro .download-button.downloading .button-icon {
+    .ytp-main-container.icon-only .import-button.importing .button-icon,
+    .ytp-main-container.micro .import-button.importing .button-icon {
         font-size: inherit;
         animation: spin 1s linear infinite;
     }
 
-    .ytp-main-container.icon-only .download-button.downloading .button-icon::after,
-    .ytp-main-container.micro .download-button.downloading .button-icon::after {
+    .ytp-main-container.icon-only .import-button.importing .button-icon::after,
+    .ytp-main-container.micro .import-button.importing .button-icon::after {
         content: '⟳';
         position: absolute;
         color: white;
@@ -779,7 +872,7 @@ styleSheet.textContent = `
 
     /* Mobile responsiveness */
     @media (max-width: 768px) {
-        .download-button {
+        .import-button {
             height: 32px;
             padding: 0 10px;
             font-size: 13px;
@@ -801,7 +894,7 @@ styleSheet.textContent = `
             font-size: 16px;
         }
 
-        .ytp-main-container.compact .download-button {
+        .ytp-main-container.compact .import-button {
             height: 28px;
             padding: 0 8px;
             font-size: 11px;
@@ -814,24 +907,24 @@ document.head.appendChild(styleSheet);
 
 // Button states tracking
 const buttonStates = {
-    premiere: { isDownloading: false, cancelCooldown: false },
-    clip: { isDownloading: false, cancelCooldown: false },
-    audio: { isDownloading: false, cancelCooldown: false }
+    premiere: { isimporting: false, cancelCooldown: false },
+    clip: { isimporting: false, cancelCooldown: false },
+    audio: { isimporting: false, cancelCooldown: false }
 };
 
-// Function to check if any download is in progress
-function isAnyDownloadInProgress() {
-    const downloadActive = Object.values(buttonStates).some(state => state.isDownloading);
-    isDownloadActive = downloadActive; // Update global flag
-    return downloadActive;
+// Function to check if any import is in progress
+function isAnyimportInProgress() {
+    const importActive = Object.values(buttonStates).some(state => state.isimporting);
+    isimportActive = importActive; // Update global flag
+    return importActive;
 }
 
-// Function to disable all buttons during download
+// Function to disable all buttons during import
 function disableAllButtons() {
-    const buttons = document.querySelectorAll('.download-button');
+    const buttons = document.querySelectorAll('.import-button');
     buttons.forEach(button => {
-        // Don't disable the button that's currently downloading (it needs to show progress)
-        if (!button.classList.contains('downloading') && !button.classList.contains('loading')) {
+        // Don't disable the button that's currently importing (it needs to show progress)
+        if (!button.classList.contains('importing') && !button.classList.contains('loading')) {
             button.classList.add('disabled');
             button.style.pointerEvents = 'none';
             button.style.opacity = '0.6';
@@ -839,9 +932,9 @@ function disableAllButtons() {
     });
 }
 
-// Function to enable all buttons after download
+// Function to enable all buttons after import
 function enableAllButtons() {
-    const buttons = document.querySelectorAll('.download-button');
+    const buttons = document.querySelectorAll('.import-button');
     buttons.forEach(button => {
         button.classList.remove('disabled');
         button.style.pointerEvents = 'auto';
@@ -857,10 +950,10 @@ let buttonsVisible = localStorage.getItem('ytp-buttons-visible') !== 'false';
 // Global variables
 let socket = null;
 let reconnectAttempts = 0;
-let maxReconnectAttempts = 10; // Increased for better reliability during downloads
+let maxReconnectAttempts = 10; // Increased for better reliability during imports
 let reconnectInterval = 2000;
 let isExtensionValid = true;
-let isDownloadActive = false; // Track if any download is active
+let isimportActive = false; // Track if any import is active
 let lastUserCancellation = null; // Track last user cancellation to avoid duplicate messages
 
 // Observer instances to disconnect on invalidation
@@ -1041,13 +1134,13 @@ function initializeSocket() {
             query: {
                 client_type: 'chrome'
             },
-            // Additional options for stability during downloads
+            // Additional options for stability during imports
             pingInterval: 10000,  // Ping every 10 seconds
             pingTimeout: 5000,    // Wait 5 seconds for pong response
             reconnection: true,
             reconnectionDelay: 1000,
             reconnectionDelayMax: 5000,
-            maxReconnectionAttempts: isDownloadActive ? 50 : 10  // More attempts during downloads
+            maxReconnectionAttempts: isimportActive ? 50 : 10  // More attempts during imports
         });
         
         console.log('🔌 [SOCKET] Initializing connection with client_type=chrome');
@@ -1057,8 +1150,8 @@ function initializeSocket() {
             if (!error.message.includes('ECONNREFUSED') && !error.message.includes('websocket error')) {
                 console.error('❌ [SOCKET] Connection ERROR:', error.message);
                 
-                // Show user-friendly message only if download is active and multiple failures
-                if (isDownloadActive && reconnectAttempts >= 5) {
+                // Show user-friendly message only if import is active and multiple failures
+                if (isimportActive && reconnectAttempts >= 5) {
                     showNotification(
                         'Connexion instable pendant le téléchargement. Tentative de reconnexion...', 
                         'warning', 
@@ -1074,16 +1167,16 @@ function initializeSocket() {
                 console.log('🔌 [SOCKET] Disconnected from server, reason:', reason);
             }
             
-            // More aggressive reconnection during active downloads
+            // More aggressive reconnection during active imports
             const shouldReconnect = isExtensionValid && reason !== 'io client disconnect';
-            const maxAttempts = isDownloadActive ? 20 : maxReconnectAttempts; // More attempts during downloads
+            const maxAttempts = isimportActive ? 20 : maxReconnectAttempts; // More attempts during imports
             
             if (shouldReconnect && reconnectAttempts < maxAttempts) {
-                // Shorter delay during downloads for faster reconnection
-                const baseDelay = isDownloadActive ? 1000 : reconnectInterval;
-                const delayMs = Math.min(baseDelay * Math.pow(1.5, reconnectAttempts), isDownloadActive ? 10000 : 30000);
+                // Shorter delay during imports for faster reconnection
+                const baseDelay = isimportActive ? 1000 : reconnectInterval;
+                const delayMs = Math.min(baseDelay * Math.pow(1.5, reconnectAttempts), isimportActive ? 10000 : 30000);
                 
-                console.log(`🔌 [SOCKET] Attempting reconnection in ${delayMs}ms (attempt ${reconnectAttempts + 1}/${maxAttempts}, download active: ${isDownloadActive})`);
+                console.log(`🔌 [SOCKET] Attempting reconnection in ${delayMs}ms (attempt ${reconnectAttempts + 1}/${maxAttempts}, import active: ${isimportActive})`);
                 
                 setTimeout(() => {
                     if (validateExtensionContext()) {
@@ -1092,7 +1185,7 @@ function initializeSocket() {
                 }, delayMs);
             } else if (reconnectAttempts >= maxAttempts) {
                 console.warn('🔌 [SOCKET] Max reconnection attempts reached. Connection abandoned.');
-                if (isDownloadActive) {
+                if (isimportActive) {
                     showNotification('Connexion perdue pendant le téléchargement. Rafraîchissez la page.', 'error', 10000);
                 }
             }
@@ -1135,10 +1228,10 @@ function initializeSocket() {
                     type: 'clip'
                 });
             } else {
-                // For non-timecode progress, check if it's for a clip download
+                // For non-timecode progress, check if it's for a clip import
                 const targetType = data.type === 'full' ? 'premiere' : data.type;
                 
-                // Only show percentage progress for non-clip downloads
+                // Only show percentage progress for non-clip imports
                 if (targetType !== 'clip') {
                 updateProgressSafely(data);
                 }
@@ -1164,10 +1257,10 @@ function initializeSocket() {
                     type: targetType
                 });
             } else {
-                // For numeric percentages, determine which button is downloading
+                // For numeric percentages, determine which button is importing
                 let activeButtonType = null;
                 for (const [checkType, state] of Object.entries(buttonStates)) {
-                    if (state.isDownloading) {
+                    if (state.isimporting) {
                         activeButtonType = checkType;
                         break;
                     }
@@ -1175,7 +1268,7 @@ function initializeSocket() {
                 
                 targetType = activeButtonType || data.type || 'full';
                 
-                // Only show percentage for non-clip downloads
+                // Only show percentage for non-clip imports
                 if (targetType !== 'clip') {
                 // Convert percentage and show as progress
                 const percentage = percentageText.replace('%', '');
@@ -1190,26 +1283,26 @@ function initializeSocket() {
 
         socket.on('complete', (data) => {
             if (!validateExtensionContext()) return;
-            handleDownloadComplete(data);
+            handleimportComplete(data);
         });
 
-        socket.on('download-complete', (data) => {
+        socket.on('import-complete', (data) => {
             if (!validateExtensionContext()) return;
-            handleDownloadComplete(data);
+            handleimportComplete(data);
         });
 
         // Add listener for import_complete as well
         socket.on('import_complete', (data) => {
             if (!validateExtensionContext()) return;
             if (data.success) {
-                // Don't assume type 'full' - let handleDownloadComplete determine from path or use generic handling
-                handleDownloadComplete({success: true, path: data.path});
+                // Don't assume type 'full' - let handleimportComplete determine from path or use generic handling
+                handleimportComplete({success: true, path: data.path});
             }
         });
 
-        // Handle download cancellation specifically
-        socket.on('download-cancelled', (data) => {
-            console.log('🚫 [SERVER] Download cancellation confirmed by server:', data);
+        // Handle import cancellation specifically
+        socket.on('import-cancelled', (data) => {
+            console.log('🚫 [SERVER] import cancellation confirmed by server:', data);
             if (!validateExtensionContext()) return;
             
             // Check if this is a recent user cancellation (within last 10 seconds)
@@ -1222,15 +1315,15 @@ function initializeSocket() {
                 return;
             }
             
-            // Only reset buttons if they're still in downloading state
-            let hasActiveDownloads = false;
+            // Only reset buttons if they're still in importing state
+            let hasActiveimports = false;
             Object.values(buttonStates).forEach(state => {
-                if (state.isDownloading) {
-                    hasActiveDownloads = true;
+                if (state.isimporting) {
+                    hasActiveimports = true;
                 }
             });
             
-            if (hasActiveDownloads) {
+            if (hasActiveimports) {
                 console.log('🚫 [SERVER] Resetting buttons after server cancellation');
             resetAllButtons();
                 showNotification('Téléchargement annulé', 'info', 3000);
@@ -1239,8 +1332,8 @@ function initializeSocket() {
             }
         });
 
-        socket.on('download-failed', (data) => {
-            console.log('❌ [SERVER] Download failed:', data);
+        socket.on('import-failed', (data) => {
+            console.log('❌ [SERVER] import failed:', data);
             if (!validateExtensionContext()) return;
             
             let errorMessage = data.message || data.error || 'Erreur de téléchargement inconnue';
@@ -1258,15 +1351,15 @@ function initializeSocket() {
                     return;
                 }
                 
-                // Only show message and reset if buttons are still in downloading state
-                let hasActiveDownloads = false;
+                // Only show message and reset if buttons are still in importing state
+                let hasActiveimports = false;
                 Object.values(buttonStates).forEach(state => {
-                    if (state.isDownloading) {
-                        hasActiveDownloads = true;
+                    if (state.isimporting) {
+                        hasActiveimports = true;
                     }
                 });
                 
-                if (hasActiveDownloads) {
+                if (hasActiveimports) {
                     console.log('🚫 [SERVER] Resetting buttons after server cancellation confirmation');
                     resetAllButtons();
                     showNotification('Téléchargement annulé', 'info', 3000);
@@ -1321,12 +1414,12 @@ function initializeSocket() {
                 buttonType === 'clip' ? 'clip-button' : 'audio-button'
             );
 
-            if (button && buttonStates[buttonType].isDownloading) {
-                console.log('📊 [PROCESSING] Button found and is downloading:', button.id);
+            if (button && buttonStates[buttonType].isimporting) {
+                console.log('📊 [PROCESSING] Button found and is importing:', button.id);
                 
-                // Transition from loading to downloading state smoothly
+                // Transition from loading to importing state smoothly
                 button.classList.remove('loading');
-                button.classList.add('downloading');
+                button.classList.add('importing');
                 
                 const progressText = button.querySelector('.progress-text');
                 if (progressText) {
@@ -1354,7 +1447,7 @@ function initializeSocket() {
                     progressText.appendChild(document.createTextNode(' ' + message));
                 }
             } else {
-                console.log('📊 [PROCESSING] Button not found or not downloading - button:', !!button, 'isDownloading:', buttonStates[buttonType]?.isDownloading);
+                console.log('📊 [PROCESSING] Button not found or not importing - button:', !!button, 'isimporting:', buttonStates[buttonType]?.isimporting);
             }
         });
 
@@ -1371,16 +1464,16 @@ function initializeSocket() {
             }
         });
 
-        // Send periodic heartbeat during downloads to maintain connection
+        // Send periodic heartbeat during imports to maintain connection
         setInterval(() => {
-            if (socket && socket.connected && isDownloadActive) {
+            if (socket && socket.connected && isimportActive) {
                 socket.emit('heartbeat', { 
                     client_type: 'chrome',
-                    download_active: true,
+                    import_active: true,
                     timestamp: Date.now()
                 });
             }
-        }, 30000); // Every 30 seconds during downloads
+        }, 30000); // Every 30 seconds during imports
 
 
 
@@ -1518,11 +1611,11 @@ function updateProgress(data) {
         );
 
         if (button) {
-            // Ensure button is in downloading state when receiving progress
-            if (!button.classList.contains('downloading')) {
+            // Ensure button is in importing state when receiving progress
+            if (!button.classList.contains('importing')) {
                 button.classList.remove('loading');
-                button.classList.add('downloading');
-                buttonStates[buttonType].isDownloading = true;
+                button.classList.add('importing');
+                buttonStates[buttonType].isimporting = true;
             }
             
             const progressText = button.querySelector('.progress-text');
@@ -1550,7 +1643,7 @@ function updateProgress(data) {
                     // For all message types, show them directly
                         progressSpan.textContent = ` ${data.message}`;
                 } else if (data.progress !== undefined && data.progress !== null && buttonType !== 'clip') {
-                    // Only show percentage for non-clip downloads
+                    // Only show percentage for non-clip imports
                     const progressValue = data.progress.toString().replace('%', '');
                     progressSpan.textContent = ` ${progressValue}%`;
                 } else {
@@ -1626,7 +1719,7 @@ function createRipple(event, button) {
 
 function createButton(id, text, onClick) {
     const button = document.createElement('div');
-    button.className = 'download-button';
+    button.className = 'import-button';
     button.id = id;
     button.dataset.originalText = text;
     button.dataset.type = id === 'send-to-premiere-button' ? 'premiere' : 
@@ -1663,7 +1756,7 @@ function createButton(id, text, onClick) {
         e.stopPropagation();
         e.preventDefault(); // Prevent any default behavior
         const buttonType = button.dataset.type;
-        if (buttonStates[buttonType].isDownloading) {
+        if (buttonStates[buttonType].isimporting) {
             console.log('🚫 [CANCEL] User clicked cancel for:', buttonType);
             
             // Mark this as a user cancellation with timestamp
@@ -1673,7 +1766,7 @@ function createButton(id, text, onClick) {
                 timestamp: cancellationTimestamp
             };
             
-            // Add a cooldown period to prevent immediate new downloads
+            // Add a cooldown period to prevent immediate new imports
             buttonStates[buttonType].cancelCooldown = true;
             setTimeout(() => {
                 buttonStates[buttonType].cancelCooldown = false;
@@ -1696,8 +1789,8 @@ function createButton(id, text, onClick) {
             // Try to send cancellation to server (but don't wait for response)
             try {
                 if (socket && socket.connected) {
-                    console.log('🚫 [CANCEL] Sending cancel-download to server');
-                    socket.emit('cancel-download', { type: buttonType === 'premiere' ? 'full' : buttonType });
+                    console.log('🚫 [CANCEL] Sending cancel-import to server');
+                    socket.emit('cancel-import', { type: buttonType === 'premiere' ? 'full' : buttonType });
                 } else {
                     console.log('🚫 [CANCEL] Socket not connected, but user feedback already shown');
                 }
@@ -1731,24 +1824,24 @@ function resetButtonState(button) {
     if (!button) return;
     
     const buttonType = button.dataset.type;
-    buttonStates[buttonType].isDownloading = false;
+    buttonStates[buttonType].isimporting = false;
     
     // Clear any timeout
-    if (button.downloadTimeout) {
-        clearTimeout(button.downloadTimeout);
-        button.downloadTimeout = null;
+    if (button.importTimeout) {
+        clearTimeout(button.importTimeout);
+        button.importTimeout = null;
     }
     
     // Reset both main and fallback buttons
     const allButtons = document.querySelectorAll(`[data-type="${buttonType}"]`);
     allButtons.forEach(btn => {
-        btn.classList.remove('downloading', 'loading', 'success', 'failure');
-        btn.dataset.downloading = 'false';
+        btn.classList.remove('importing', 'loading', 'success', 'failure');
+        btn.dataset.importing = 'false';
         
         // Clear any timeout on this button too
-        if (btn.downloadTimeout) {
-            clearTimeout(btn.downloadTimeout);
-            btn.downloadTimeout = null;
+        if (btn.importTimeout) {
+            clearTimeout(btn.importTimeout);
+            btn.importTimeout = null;
         }
         
         // Restore original text with icon
@@ -1773,10 +1866,10 @@ function resetButtonState(button) {
         }
     });
     
-    // Re-enable all buttons if no download is in progress
-    if (!isAnyDownloadInProgress()) {
+    // Re-enable all buttons if no import is in progress
+    if (!isAnyimportInProgress()) {
         enableAllButtons();
-        isDownloadActive = false; // Clear global download state
+        isimportActive = false; // Clear global import state
     }
 }
 
@@ -1823,42 +1916,54 @@ function showNotification(message, type = 'info', duration = 5000) {
     }
 }
 
-function sendURL(downloadType, additionalData = {}) {
-    const buttonType = downloadType === 'full' ? 'premiere' : downloadType;
+function sendURL(importType, additionalData = {}) {
+    const buttonType = importType === 'full' ? 'premiere' : importType;
     
-    // Check if this button type is in cancellation cooldown
-    if (buttonStates[buttonType].cancelCooldown) {
-        console.log('🚫 [COOLDOWN] Download blocked - cancellation cooldown active for:', buttonType);
-        showNotification('Veuillez patienter quelques secondes après l\'annulation avant de relancer.', 'warning', 3000);
-        return;
-    }
-    
-    // Check if any download is in progress
-    if (isAnyDownloadInProgress()) {
-        // Find which type is downloading
-        const downloadingType = Object.keys(buttonStates).find(type => buttonStates[type].isDownloading);
-        const downloadingName = downloadingType === 'premiere' ? 'Vidéo' : 
-                               downloadingType === 'clip' ? 'Clip' : 'Audio';
-        console.log('🚫 [BLOCK] Download blocked - another download is in progress:', downloadingType);
-        showNotification(`Un téléchargement ${downloadingName} est déjà en cours. Veuillez patienter.`, 'warning', 3000);
-        return;
-    }
-    
-    // Reset all button states first
-    Object.keys(buttonStates).forEach(type => {
-        buttonStates[type].isDownloading = false;
+    // Check server availability first
+    checkServerAvailability().then(isAvailable => {
+        if (!isAvailable) {
+            // Simply show that server is required
+            showServerRequiredMessage(buttonType);
+            return;
+        }
+        
+        // Check if this button type is in cancellation cooldown
+        if (buttonStates[buttonType].cancelCooldown) {
+            console.log('🚫 [COOLDOWN] import blocked - cancellation cooldown active for:', buttonType);
+            showNotification('Veuillez patienter quelques secondes après l\'annulation avant de relancer.', 'warning', 3000);
+            return;
+        }
+        
+        // Check if any import is in progress
+        if (isAnyimportInProgress()) {
+            // Find which type is importing
+            const importingType = Object.keys(buttonStates).find(type => buttonStates[type].isimporting);
+            const importingName = importingType === 'premiere' ? 'Vidéo' : 
+                                   importingType === 'clip' ? 'Clip' : 'Audio';
+            console.log('🚫 [BLOCK] import blocked - another import is in progress:', importingType);
+            showNotification(`Un téléchargement ${importingName} est déjà en cours. Veuillez patienter.`, 'warning', 3000);
+            return;
+        }
+        
+        // Reset all button states first
+        Object.keys(buttonStates).forEach(type => {
+            buttonStates[type].isimporting = false;
+        });
+        
+        proceedWithImport();
     });
     
+    function proceedWithImport() {
     const button = document.getElementById(
         buttonType === 'premiere' ? 'send-to-premiere-button' :
         buttonType === 'clip' ? 'clip-button' : 'audio-button'
     );
 
     if (button) {
-        // Always proceed with download but check authentication for warnings
+        // Always proceed with import but check authentication for warnings
         enhancedAuthCheck().then(isAuthenticated => {
             if (!isAuthenticated) {
-                // Show warning but continue with download
+                // Show warning but continue with import
                 console.warn('YTP: Authentication warning - user may not be fully logged in');
                 showNotification(
                     'Attention: Authentification YouTube incomplète. Le téléchargement peut échouer pour certaines vidéos privées ou avec restrictions d\'âge.',
@@ -1867,7 +1972,7 @@ function sendURL(downloadType, additionalData = {}) {
                 );
             }
             
-            // Continue with download regardless of authentication status
+            // Continue with import regardless of authentication status
             proceedWithServerCheck();
         }).catch(error => {
             console.error('YTP: Auth check failed:', error);
@@ -1898,23 +2003,23 @@ function sendURL(downloadType, additionalData = {}) {
                 return;
             }
 
-            // Continue with download if license is valid
-            buttonStates[buttonType].isDownloading = true;
+            // Continue with import if license is valid
+            buttonStates[buttonType].isimporting = true;
             button.classList.add('loading');
-            button.dataset.downloading = 'true';
+            button.dataset.importing = 'true';
             
-            // Update global download state
-            isDownloadActive = true;
+            // Update global import state
+            isimportActive = true;
             
-            // Disable all buttons during download
+            // Disable all buttons during import
             disableAllButtons();
                 
                 // Add timeout to prevent infinite loading (5 minutes)
-                button.downloadTimeout = setTimeout(() => {
-                    console.warn('YTP: Download timeout reached for', buttonType);
-                    button.classList.remove('downloading', 'loading');
+                button.importTimeout = setTimeout(() => {
+                    console.warn('YTP: import timeout reached for', buttonType);
+                    button.classList.remove('importing', 'loading');
                     button.classList.add('failure');
-                    buttonStates[buttonType].isDownloading = false;
+                    buttonStates[buttonType].isimporting = false;
                     enableAllButtons(); // Re-enable all buttons on timeout
                     showNotification('Délai d\'attente dépassé pour le téléchargement. Veuillez réessayer.', 'error');
                     setTimeout(() => {
@@ -1958,7 +2063,7 @@ function sendURL(downloadType, additionalData = {}) {
                 getCookiesForServer().then(cookiesData => {
                     console.log('YTP: Cookies retrieved for server:', cookiesData.cookies.length, 'cookies');
                     
-                    // Log authentication status but don't block download
+                    // Log authentication status but don't block import
                     if (cookiesData.cookies.length > 0) {
                         const authCookies = cookiesData.cookies.filter(cookie => 
                             ['SAPISID', 'APISID', 'HSID', 'SSID', 'LOGIN_INFO', '__Secure-3PAPISID', '__Secure-3PSID', 'SID'].includes(cookie.name)
@@ -1982,13 +2087,13 @@ function sendURL(downloadType, additionalData = {}) {
                             console.log(`YTP: Essential cookie found: ${cookie.name} (domain: ${cookie.domain})`);
                         });
                     } else {
-                        console.warn('YTP: No cookies retrieved! This may cause downloads to fail for private or age-restricted videos.');
+                        console.warn('YTP: No cookies retrieved! This may cause imports to fail for private or age-restricted videos.');
                     }
                     
                     // Always send the request with whatever cookies we have
                     const requestData = {
                         url: currentVideoUrl,
-                        type: downloadType,
+                        type: importType,
                         cookies: cookiesData.cookies, // Always send cookies, even if empty
                         userAgent: navigator.userAgent,
                         ...additionalData
@@ -2015,15 +2120,15 @@ function sendURL(downloadType, additionalData = {}) {
                     console.error('Error:', error);
                         
                         // Clear timeout on error
-                        if (button.downloadTimeout) {
-                            clearTimeout(button.downloadTimeout);
-                            button.downloadTimeout = null;
+                        if (button.importTimeout) {
+                            clearTimeout(button.importTimeout);
+                            button.importTimeout = null;
                         }
                         
-                    button.classList.remove('downloading', 'loading');
+                    button.classList.remove('importing', 'loading');
                     button.classList.add('failure');
-                        buttonStates[buttonType].isDownloading = false;
-                        enableAllButtons(); // Re-enable all buttons on download error
+                        buttonStates[buttonType].isimporting = false;
+                        enableAllButtons(); // Re-enable all buttons on import error
                         
                     if (error.message === 'Failed to fetch') {
                         showNotification('Connexion au serveur échouée. Assurez-vous qu\'Adobe Premiere Pro est ouvert et que YoutubetoPremiere fonctionne.', 'error');
@@ -2045,7 +2150,7 @@ function sendURL(downloadType, additionalData = {}) {
                 showNotification('Impossible de détecter l\'ID de la vidéo YouTube.', 'error');
                 setTimeout(() => {
                     button.classList.remove('failure');
-                    buttonStates[buttonType].isDownloading = false;
+                    buttonStates[buttonType].isimporting = false;
                 }, 1000);
             }
         })
@@ -2059,6 +2164,7 @@ function sendURL(downloadType, additionalData = {}) {
             }, 1000);
         });
         }
+    }
     }
 }
 
@@ -2208,7 +2314,7 @@ function startDrag(e) {
     e.stopPropagation();
     
     // Don't start drag if clicking on a button
-    if (e.target.closest('.download-button, .ytp-toggle-button')) {
+    if (e.target.closest('.import-button, .ytp-toggle-button')) {
         return;
     }
     
@@ -2417,7 +2523,7 @@ function addButtons() {
             mainContainer.className = 'ytp-main-container';
             mainContainer.id = 'ytp-main-container';
             
-            // Create container for download buttons
+            // Create container for import buttons
             const buttonsContainer = document.createElement('div');
             buttonsContainer.className = 'ytp-buttons-container';
             buttonsContainer.id = 'ytp-buttons-container';
@@ -2427,7 +2533,7 @@ function addButtons() {
                 mainContainer.classList.add('buttons-collapsed');
             }
             
-            // Add download buttons to container
+            // Add import buttons to container
             buttonsContainer.appendChild(createButton('send-to-premiere-button', 'Vidéo', () => {
                 sendURL('full');
             }));
@@ -2444,10 +2550,13 @@ function addButtons() {
                 sendURL('audio');
             }));
             
-            // Check if any download is in progress and disable buttons accordingly
-            if (isAnyDownloadInProgress()) {
+            // Check if any import is in progress and disable buttons accordingly
+            if (isAnyimportInProgress()) {
                 disableAllButtons();
             }
+            
+            // Check server availability and update button states
+            checkServerAvailability();
             
             // Create toggle button
             const toggleButton = createToggleButton();
@@ -2899,9 +3008,9 @@ setTimeout(() => {
     }
 }, 1000);
 
-// Handle download completion with success animation
-function handleDownloadComplete(data) {
-    console.log('🎯 [COMPLETE] HandleDownloadComplete called with:', JSON.stringify(data));
+// Handle import completion with success animation
+function handleimportComplete(data) {
+    console.log('🎯 [COMPLETE] HandleimportComplete called with:', JSON.stringify(data));
     
     let type = data.type;
     let buttonType = null;
@@ -2917,20 +3026,20 @@ function handleDownloadComplete(data) {
         console.log('🎯 [COMPLETE] Using specified type:', type, '-> buttonType:', buttonType);
     }
     
-    // If no type specified or button not found, find the downloading button
+    // If no type specified or button not found, find the importing button
     if (!button || !type) {
-        console.log('🎯 [COMPLETE] No type specified or button not found, searching for downloading button...');
+        console.log('🎯 [COMPLETE] No type specified or button not found, searching for importing button...');
         
-        // Check which button is currently downloading
+        // Check which button is currently importing
         for (const [checkType, state] of Object.entries(buttonStates)) {
-            if (state.isDownloading) {
+            if (state.isimporting) {
                 buttonType = checkType;
                 type = checkType === 'premiere' ? 'full' : checkType;
                 button = document.getElementById(
                     buttonType === 'premiere' ? 'send-to-premiere-button' :
                     buttonType === 'clip' ? 'clip-button' : 'audio-button'
                 );
-                console.log('🎯 [COMPLETE] Found downloading button:', buttonType, 'isDownloading:', state.isDownloading);
+                console.log('🎯 [COMPLETE] Found importing button:', buttonType, 'isimporting:', state.isimporting);
                 break;
             }
         }
@@ -2939,25 +3048,25 @@ function handleDownloadComplete(data) {
     console.log('🎯 [COMPLETE] Final determination - type:', type, 'buttonType:', buttonType, 'button found:', !!button);
     
     // Debug: Log all button states for troubleshooting
-    console.log('🎯 [COMPLETE] Current button states:', Object.entries(buttonStates).map(([k,v]) => ({type: k, isDownloading: v.isDownloading})));
+    console.log('🎯 [COMPLETE] Current button states:', Object.entries(buttonStates).map(([k,v]) => ({type: k, isimporting: v.isimporting})));
 
     if (button) {
         console.log('🎯 [COMPLETE] Button found:', button.id, 'current state:', {
             classes: button.className,
-            isDownloading: buttonStates[buttonType]?.isDownloading,
+            isimporting: buttonStates[buttonType]?.isimporting,
             textContent: button.textContent.substring(0, 50)
         });
         
         // Clear any timeout
-        if (button.downloadTimeout) {
-            clearTimeout(button.downloadTimeout);
-            button.downloadTimeout = null;
+        if (button.importTimeout) {
+            clearTimeout(button.importTimeout);
+            button.importTimeout = null;
         }
         
         // Show success state
-        button.classList.remove('downloading', 'loading');
+        button.classList.remove('importing', 'loading');
         button.classList.add('success');
-        buttonStates[buttonType].isDownloading = false;
+        buttonStates[buttonType].isimporting = false;
         
         const progressText = button.querySelector('.progress-text');
         if (progressText) {
@@ -2984,16 +3093,16 @@ function handleDownloadComplete(data) {
 // Function to reset all buttons to their default state
 function resetAllButtons() {
     Object.keys(buttonStates).forEach(type => {
-        buttonStates[type].isDownloading = false;
+        buttonStates[type].isimporting = false;
         const button = document.getElementById(
             type === 'premiere' ? 'send-to-premiere-button' :
             type === 'clip' ? 'clip-button' : 'audio-button'
         );
         if (button) {
             // Clear any timeout
-            if (button.downloadTimeout) {
-                clearTimeout(button.downloadTimeout);
-                button.downloadTimeout = null;
+            if (button.importTimeout) {
+                clearTimeout(button.importTimeout);
+                button.importTimeout = null;
             }
             resetButtonState(button);
         }
@@ -3116,7 +3225,7 @@ async function enhancedAuthCheck() {
         const authStatus = await checkYouTubeAuth();
         
         if (!authStatus.isLoggedIn) {
-            // Only show notification if we're on a video page where downloads might happen
+            // Only show notification if we're on a video page where imports might happen
             if (isVideoPage()) {
                 showNotification(
                     'Non connecté à YouTube. Les téléchargements peuvent échouer.',

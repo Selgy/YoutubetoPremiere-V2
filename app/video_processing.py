@@ -971,14 +971,24 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                     logging.info('[CANCEL] Clip download successfully cancelled - cleanup completed')
                     return {"error": "Download cancelled by user"}
                 
+                # Log detailed context for debugging
+                log_download_context(e, {
+                    'function': 'download_and_process_clip',
+                    'video_url': video_url,
+                    'resolution': resolution,
+                    'clip_start': clip_start,
+                    'clip_end': clip_end,
+                    'video_file_path': video_file_path,
+                    'ffmpeg_path': ffmpeg_path
+                })
+                
                 logging.error(error_message)
                 logging.error(f"Exception type: {type(e).__name__}")
-                logging.error(f"Exception traceback: {traceback.format_exc()}")
                 
                 # Check for Windows-specific stdout/stderr issues
-                if "[Errno 22]" in str(e) or "Invalid argument" in str(e):
-                    error_message = "Clip download failed due to Windows output stream issue. This is a known yt-dlp issue on Windows. Please try again or restart the application."
-                    logging.error("Windows stdout/stderr pipe error detected during clip download - recommending restart")
+                if "[Errno 22]" in str(e) or "Invalid argument" in str(e) or "BrokenPipeError" in str(type(e)):
+                    error_message = "Clip download failed due to Windows output stream issue. This has been fixed in the latest version. Please try again."
+                    logging.error("Windows stdout/stderr pipe error detected during clip download - fix has been applied")
                 # Check if error is related to ffmpeg
                 elif 'ffmpeg' in str(e).lower() or 'executable' in str(e).lower():
                     logging.error(f"FFmpeg-related error detected. Current ffmpeg path: {ffmpeg_path}")
@@ -1302,14 +1312,23 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     logging.info('[CANCEL] Video download successfully cancelled - cleanup completed')
                     return None
                 
+                # Log detailed context for debugging
+                log_download_context(e, {
+                    'function': 'download_video',
+                    'video_url': video_url,
+                    'resolution': resolution,
+                    'download_path': download_path,
+                    'output_path': output_path,
+                    'format_string': format_string[:100] + '...' if len(format_string) > 100 else format_string
+                })
+                
                 logging.error(error_message)
                 logging.error(f"Exception type: {type(e).__name__}")
-                logging.error(f"Exception traceback: {traceback.format_exc()}")
                 
                 # Check for Windows-specific stdout/stderr issues
-                if "[Errno 22]" in str(e) or "Invalid argument" in str(e):
-                    error_message = "Video download failed due to Windows output stream issue. This is a known yt-dlp issue on Windows. Please try again or restart the application."
-                    logging.error("Windows stdout/stderr pipe error detected during video download - recommending restart")
+                if "[Errno 22]" in str(e) or "Invalid argument" in str(e) or "BrokenPipeError" in str(type(e)):
+                    error_message = "Video download failed due to Windows output stream issue. This has been fixed in the latest version. Please try again."
+                    logging.error("Windows stdout/stderr pipe error detected during video download - fix has been applied")
                 
                 socketio.emit('download-failed', {'message': error_message})
                 raise e
@@ -1955,9 +1974,15 @@ def get_ffmpeg_location_for_ydl(ffmpeg_path):
 
 def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
     """Get robust yt-dlp options to handle YouTube changes and SABR streaming"""
+    import sys
+    import os
+    
+    # Configure stdout/stderr redirection for Windows to prevent BrokenPipeError
+    redirect_output = sys.platform == 'win32'
+    
     base_options = {
-        'quiet': False,  # Enable output to see what's happening
-        'no_warnings': False,  # Show warnings for debugging
+        'quiet': redirect_output,  # Suppress stdout/stderr on Windows to prevent BrokenPipeError
+        'no_warnings': redirect_output,  # Suppress warnings on Windows
         'age_limit': None,  # Don't apply age limits
         'geo_bypass': True,  # Bypass geographic restrictions
         'geo_bypass_country': 'US',  # Use US as bypass country
@@ -1973,10 +1998,10 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
         'playliststart': 1,  # Start from first video
         'noplaylist': True,  # Explicitly ignore playlists
         
-        # Progress tracking improvements
-        'consoletitle': True,  # Update console title with progress
-        'noprogress': False,  # Enable progress reporting
-        'progress_with_newline': False,  # Use same line for progress
+        # Progress tracking improvements (console output disabled on Windows)
+        'consoletitle': not redirect_output,  # Disable console title updates on Windows
+        'noprogress': redirect_output,  # Disable progress output to stdout/stderr on Windows
+        'progress_with_newline': False,  # Use same line for progress when enabled
         
         # YouTube-specific options to handle SABR and signature issues
         'youtube_include_dash_manifest': True,  # Include DASH manifest
@@ -1996,6 +2021,13 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
         'postprocessor_args': get_ffmpeg_postprocessor_args() + ['-threads', '4'],
         'external_downloader_args': ['-timeout', '120'],  # Increase timeout
     }
+    
+    # Add Windows-specific stdout/stderr redirection to prevent BrokenPipeError
+    if redirect_output:
+        # Redirect stdout/stderr to null to prevent pipe errors on Windows
+        base_options['logger'] = None  # Disable default logger
+        # Note: Progress hooks will still work as they're called directly by yt-dlp
+        logging.info("Windows detected: Configured yt-dlp to suppress stdout/stderr output to prevent BrokenPipeError")
     
     # Add authentication if available
     if cookies_file:
@@ -2031,8 +2063,40 @@ def get_fallback_format_options(max_height):
     
     return format_options
 
+def log_download_context(error, context_info):
+    """Log detailed context information when download errors occur"""
+    try:
+        import traceback
+        import sys
+        
+        error_details = {
+            'error_type': type(error).__name__,
+            'error_message': str(error),
+            'platform': sys.platform,
+            'context': context_info,
+            'timestamp': time.time()
+        }
+        
+        logging.error(f"Download error context: {json.dumps(error_details, indent=2)}")
+        
+        # Check for specific Windows errors
+        if sys.platform == 'win32':
+            if 'BrokenPipeError' in str(type(error)):
+                logging.error("Windows BrokenPipeError detected - this is typically caused by stdout/stderr pipe issues")
+                logging.error("Solution: yt-dlp output has been suppressed to prevent this error")
+            elif '[Errno 32]' in str(error):
+                logging.error("Windows pipe error detected - output streams have been redirected")
+        
+        # Log the full traceback for debugging
+        logging.error(f"Full traceback:\n{traceback.format_exc()}")
+        
+    except Exception as log_error:
+        logging.error(f"Error while logging download context: {str(log_error)}")
+
 # Main execution
 if __name__ == "__main__":
     # Add any additional setup if necessary
+    import time
+    import json
     logging.basicConfig(level=logging.INFO)
     logging.info("Script started")

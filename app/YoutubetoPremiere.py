@@ -320,27 +320,46 @@ def not_found_error(error):
 @app.errorhandler(500)
 def internal_error(error):
     try:
+        app_logger.error(f'Internal server error: {str(error)}')
         return jsonify({'error': 'Internal server error'}), 500
     except Exception as e:
+        app_logger.error(f'Error in internal_error handler: {str(e)}')
         return "Internal server error", 500
 
-# Add handler for Werkzeug assertion errors
-@app.errorhandler(AssertionError)
-def handle_assertion_error(error):
-    app_logger.error(f'Assertion error: {str(error)}')
+# Add handler for all other exceptions
+@app.errorhandler(Exception)
+def handle_general_exception(error):
     try:
-        return jsonify({'error': 'Request processing error'}), 500
-    except:
-        return "Request processing error", 500
+        error_msg = str(error)
+        app_logger.error(f'Unhandled exception: {error_msg}')
+        
+        # Check for specific error patterns
+        if "write() before start_response" in error_msg:
+            app_logger.error('Flask response timing error detected')
+            return "Response Error", 500
+        elif "broken pipe" in error_msg.lower():
+            app_logger.error('Client disconnected during response')
+            return "Client Disconnected", 500
+        else:
+            return jsonify({'error': 'An unexpected error occurred'}), 500
+    except Exception as e:
+        app_logger.error(f'Error in general exception handler: {str(e)}')
+        return "Server Error", 500
 
-# Enable CORS
+# Enable CORS with better error handling
 @app.after_request
 def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
-    return response
+    try:
+        # Only add CORS headers if response is valid
+        if response and hasattr(response, 'headers'):
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
+            response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+            response.headers.add('Access-Control-Allow-Credentials', 'true')
+        return response
+    except Exception as e:
+        app_logger.error(f'Error in after_request handler: {str(e)}')
+        return response
 
 # Handle OPTIONS requests
 @app.route('/', methods=['OPTIONS'])
@@ -414,11 +433,20 @@ def cleanup_disconnected_client(sid):
 # Add pre-connection debugging
 @app.before_request
 def log_request_info():
-    if request.path.startswith('/socket.io/'):
-        app_logger.info(f'🌐 SocketIO request: {request.method} {request.path}')
-        app_logger.info(f'🌐 Headers: User-Agent={request.headers.get("User-Agent", "unknown")[:50]}...')
-        app_logger.info(f'🌐 Query params: {dict(request.args)}')
-        app_logger.info(f'🌐 Remote addr: {request.environ.get("REMOTE_ADDR", "unknown")}')
+    try:
+        if request.path.startswith('/socket.io/'):
+            app_logger.info(f'🌐 SocketIO request: {request.method} {request.path}')
+            app_logger.info(f'🌐 Headers: User-Agent={request.headers.get("User-Agent", "unknown")[:50]}...')
+            app_logger.info(f'🌐 Query params: {dict(request.args)}')
+            app_logger.info(f'🌐 Remote addr: {request.environ.get("REMOTE_ADDR", "unknown")}')
+        
+        # Validate request for potential conflicts
+        if request.content_length and request.content_length > 10 * 1024 * 1024:  # 10MB limit
+            app_logger.warning(f'Large request detected: {request.content_length} bytes')
+            
+    except Exception as e:
+        app_logger.error(f'Error in before_request handler: {str(e)}')
+        # Don't block the request even if logging fails
 
 @socketio.on('connect')
 def handle_connect():
