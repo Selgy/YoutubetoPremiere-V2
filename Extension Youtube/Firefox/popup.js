@@ -1,5 +1,8 @@
-// YouTube to Premiere Extension - Settings Popup
-console.log('YTP Popup: Script loaded');
+// YouTube to Premiere Extension - Settings Popup - Firefox Version
+console.log('YTP Popup: Script loaded (Firefox)');
+
+// Firefox compatibility layer
+const extensionAPI = typeof browser !== 'undefined' ? browser : chrome;
 
 // Settings keys
 const SETTINGS_KEYS = {
@@ -31,7 +34,7 @@ async function initializePopup() {
 
 function loadSettings() {
     // Load all settings from storage
-    chrome.storage.local.get(Object.values(SETTINGS_KEYS), (result) => {
+    extensionAPI.storage.local.get(Object.values(SETTINGS_KEYS), (result) => {
         console.log('YTP Popup: Loaded settings:', result);
         
         // Panel visibility (default: true)
@@ -61,7 +64,7 @@ function saveSettings() {
         [SETTINGS_KEYS.AUTO_HIDE]: document.getElementById('auto-hide').checked
     };
     
-    chrome.storage.local.set(settings, () => {
+    extensionAPI.storage.local.set(settings, () => {
         console.log('YTP Popup: Settings saved:', settings);
         
         // Notify content script of changes
@@ -98,7 +101,7 @@ function setupEventListeners() {
     // Reset position button
     document.getElementById('reset-position').addEventListener('click', () => {
         const defaultPosition = { x: 20, y: 20 };
-        chrome.storage.local.set({ [SETTINGS_KEYS.CONTAINER_POSITION]: JSON.stringify(defaultPosition) }, () => {
+        extensionAPI.storage.local.set({ [SETTINGS_KEYS.CONTAINER_POSITION]: JSON.stringify(defaultPosition) }, () => {
             console.log('YTP Popup: Position reset to default');
             notifyContentScript('RESET_POSITION', defaultPosition);
             showFeedback('Position réinitialisée');
@@ -121,7 +124,7 @@ function setupEventListeners() {
     // About link
     document.getElementById('about-link').addEventListener('click', (e) => {
         e.preventDefault();
-        chrome.tabs.create({ url: 'https://github.com/your-repo/youtube-to-premiere' });
+        extensionAPI.tabs.create({ url: 'https://github.com/your-repo/youtube-to-premiere' });
     });
 }
 
@@ -140,7 +143,7 @@ function resetAllSettings() {
         [SETTINGS_KEYS.BUTTONS_VISIBLE]: 'true'
     };
     
-    chrome.storage.local.set(defaultSettings, () => {
+    extensionAPI.storage.local.set(defaultSettings, () => {
         console.log('YTP Popup: All settings reset to defaults');
         loadSettings(); // Reload UI
         notifyContentScript('RESET_ALL_SETTINGS', defaultSettings);
@@ -162,28 +165,28 @@ async function checkServerStatus() {
         if (response.ok) {
             statusElement.className = 'status connected';
             statusIcon.textContent = 'cloud_done';
-            statusText.textContent = 'Serveur connecté';
+            statusText.textContent = 'YoutubetoPremiere connecté';
         } else {
             throw new Error('Server not responding');
         }
     } catch (error) {
         statusElement.className = 'status disconnected';
         statusIcon.textContent = 'cloud_off';
-        statusText.textContent = 'Serveur déconnecté';
+        statusText.textContent = 'YoutubetoPremiere déconnecté';
     }
 }
 
 function notifyContentScript(action, data = {}) {
     // Get active tab and send message to content script
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    extensionAPI.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs[0]) {
-            chrome.tabs.sendMessage(tabs[0].id, {
+            extensionAPI.tabs.sendMessage(tabs[0].id, {
                 type: 'YTP_POPUP_MESSAGE',
                 action: action,
                 data: data
             }, (response) => {
-                if (chrome.runtime.lastError) {
-                    console.log('YTP Popup: Content script not responding:', chrome.runtime.lastError.message);
+                if (extensionAPI.runtime.lastError) {
+                    console.log('YTP Popup: Content script not responding:', extensionAPI.runtime.lastError.message);
                 } else {
                     console.log('YTP Popup: Message sent to content script:', action, data);
                 }
@@ -231,7 +234,7 @@ function showFeedback(message) {
 }
 
 // Listen for messages from content script
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+extensionAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'YTP_CONTENT_MESSAGE') {
         console.log('YTP Popup: Received message from content script:', message);
         

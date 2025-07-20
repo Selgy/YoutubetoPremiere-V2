@@ -54,7 +54,7 @@ function updateButtonsServerStatus() {
     // Update status indicator
     if (statusIndicator) {
         statusIndicator.className = serverAvailable ? 'ytp-status-connected' : 'ytp-status-disconnected';
-        statusIndicator.title = serverAvailable ? 'Connecté au serveur YoutubetoPremiere' : 'Serveur YoutubetoPremiere non détecté';
+        statusIndicator.title = serverAvailable ? 'YoutubetoPremiere connecté' : 'YoutubetoPremiere non détecté';
     }
 }
 
@@ -69,7 +69,7 @@ function showServerRequiredMessage(buttonType) {
     const feature = features[buttonType] || 'utiliser cette fonctionnalité';
     
     showNotification(
-        `Pour ${feature}, l'application YoutubetoPremiere doit être installée et en cours d'exécution.`,
+        `Pour ${feature}, l'application YoutubetoPremiere doit être installée et démarrée.`,
         'info',
         4000
     );
@@ -1398,7 +1398,7 @@ function initializeSocket() {
             // Silently handle server errors to prevent console spam
             if (!validateExtensionContext()) return;
             resetAllButtons();
-            showNotification(data.message || 'Erreur du serveur', 'error');
+            showNotification(data.message || 'Erreur de traitement', 'error');
         });
             
         // Handle processing status updates (especially useful for clips)
@@ -1579,7 +1579,7 @@ function attemptReconnection() {
         // Silently handle reconnection errors
         if (reconnectAttempts >= maxReconnectAttempts) {
             showNotification(
-                'Impossible de se reconnecter au serveur. Veuillez rafraîchir la page.',
+                'Impossible de se reconnecter à YoutubetoPremiere. Veuillez rafraîchir la page.',
                 'error',
                 10000
             );
@@ -2131,7 +2131,7 @@ function sendURL(importType, additionalData = {}) {
                         enableAllButtons(); // Re-enable all buttons on import error
                         
                     if (error.message === 'Failed to fetch') {
-                        showNotification('Connexion au serveur échouée. Assurez-vous qu\'Adobe Premiere Pro est ouvert et que YoutubetoPremiere fonctionne.', 'error');
+                        showNotification('Connexion à YoutubetoPremiere échouée. Assurez-vous qu\'Adobe Premiere Pro est ouvert et que YoutubetoPremiere fonctionne.', 'error');
                     } else if (error.message === 'License validation failed') {
                         // Don't show another notification since we already showed one above
                     } else {
