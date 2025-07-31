@@ -1,6 +1,18 @@
 // YouTube to Premiere Extension - Settings Popup
 console.log('YTP Popup: Script loaded');
 
+// Update configuration
+const GITHUB_REPO = 'Selgy/YoutubetoPremiere-V2';
+const DOWNLOAD_URLS = {
+    windows: 'https://github.com/Selgy/YoutubetoPremiere-V2/releases/latest/download/YouTubetoPremiere-Windows.exe',
+    mac: 'https://github.com/Selgy/YoutubetoPremiere-V2/releases/latest/download/YouTubetoPremiere-macOS.pkg'
+};
+
+// Get extension version from manifest
+function getExtensionVersion() {
+    return chrome.runtime.getManifest().version;
+}
+
 // Settings keys
 const SETTINGS_KEYS = {
     PANEL_VISIBLE: 'ytp-panel-visible',
@@ -19,6 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initializePopup();
     loadSettings();
     checkServerStatus();
+    checkForUpdates();
     setupEventListeners();
 });
 
@@ -117,12 +130,6 @@ function setupEventListeners() {
             resetAllSettings();
         }
     });
-    
-    // About link
-    document.getElementById('about-link').addEventListener('click', (e) => {
-        e.preventDefault();
-        chrome.tabs.create({ url: 'https://github.com/your-repo/youtube-to-premiere' });
-    });
 }
 
 function updateSizeLabel() {
@@ -170,6 +177,111 @@ async function checkServerStatus() {
         statusElement.className = 'status disconnected';
         statusIcon.textContent = 'cloud_off';
         statusText.textContent = 'YoutubetoPremiere déconnecté';
+    }
+}
+
+function detectOperatingSystem() {
+    const userAgent = navigator.userAgent.toLowerCase();
+    
+    if (userAgent.includes('mac')) {
+        return 'mac';
+    } else if (userAgent.includes('win')) {
+        return 'windows';
+    } else if (userAgent.includes('linux')) {
+        return 'linux';
+    } else {
+        return 'unknown';
+    }
+}
+
+function compareVersions(current, latest) {
+    const currentParts = current.replace('v', '').split('.').map(Number);
+    const latestParts = latest.replace('v', '').split('.').map(Number);
+    
+    for (let i = 0; i < Math.max(currentParts.length, latestParts.length); i++) {
+        const currentPart = currentParts[i] || 0;
+        const latestPart = latestParts[i] || 0;
+        
+        if (latestPart > currentPart) return 1;
+        if (latestPart < currentPart) return -1;
+    }
+    
+    return 0;
+}
+
+async function checkForUpdates() {
+    const updateElement = document.getElementById('update-status');
+    const updateIcon = updateElement.querySelector('.material-symbols-outlined');
+    const updateText = updateElement.querySelector('span:last-child');
+    
+    updateElement.style.display = 'flex';
+    updateElement.className = 'status';
+    updateIcon.textContent = 'system_update';
+    updateText.textContent = 'Vérification des mises à jour...';
+    
+    try {
+        const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
+            method: 'GET',
+            timeout: 5000
+        });
+        
+        if (!response.ok) {
+            throw new Error('Unable to fetch release info');
+        }
+        
+        const releaseData = await response.json();
+        const latestVersion = releaseData.tag_name;
+        const currentVersion = getExtensionVersion();
+        const os = detectOperatingSystem();
+        
+        console.log('YTP Popup: Current version:', currentVersion, 'Latest version:', latestVersion);
+        
+        const versionComparison = compareVersions(currentVersion, latestVersion);
+        
+        if (versionComparison > 0) {
+            // New version available
+            updateElement.className = 'status update-available';
+            updateIcon.textContent = 'download';
+            
+            if (os === 'windows' || os === 'mac') {
+                updateText.textContent = `Mise à jour disponible (${latestVersion}) - Cliquer pour télécharger`;
+                updateElement.style.cursor = 'pointer';
+                
+                updateElement.onclick = () => {
+                    const downloadUrl = DOWNLOAD_URLS[os];
+                    if (downloadUrl) {
+                        chrome.tabs.create({ url: downloadUrl });
+                        showFeedback('Téléchargement de la mise à jour commencé...');
+                    }
+                };
+            } else {
+                updateText.textContent = `Mise à jour disponible (${latestVersion}) - Visitez GitHub`;
+                updateElement.onclick = () => {
+                    chrome.tabs.create({ url: `https://github.com/${GITHUB_REPO}/releases/latest` });
+                };
+            }
+        } else {
+            // Up to date
+            updateElement.className = 'status up-to-date';
+            updateIcon.textContent = 'check_circle';
+            updateText.textContent = `À jour (${currentVersion})`;
+            
+            // Hide after 3 seconds if up to date
+            setTimeout(() => {
+                updateElement.style.display = 'none';
+            }, 3000);
+        }
+        
+    } catch (error) {
+        console.error('YTP Popup: Error checking for updates:', error);
+        updateElement.className = 'status disconnected';
+        updateIcon.textContent = 'error';
+        updateText.textContent = 'Impossible de vérifier les mises à jour';
+        
+        // Hide error after 5 seconds
+        setTimeout(() => {
+            updateElement.style.display = 'none';
+        }, 5000);
     }
 }
 

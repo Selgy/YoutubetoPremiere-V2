@@ -2,17 +2,14 @@
     "manifest_version":  3,
     "name":  "Youtube to Premiere Pro V3",
     "version": "3.0.0",
-    "description": "Import YouTube videos and metadata directly into Adobe Premiere Pro for seamless video editing workflow.",
+    "description": "",
     "permissions":  [
                         "activeTab",
                         "storage",
                         "cookies"
                     ],
     "host_permissions":  [
-                             "https://www.youtube.com/*",
-                             "https://youtu.be/*",
-                             "https://youtube.com/*",
-                             "https://m.youtube.com/*"
+                             "https://www.youtube.com/*"
                          ],
     "action":  {
                    "default_icon":  {
