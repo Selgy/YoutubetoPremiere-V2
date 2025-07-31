@@ -74,3 +74,7 @@ ffmpeg.exe
 # Certificates
 *.p12
 *.cert
+
+.cursor
+.vscode
+.cursor/

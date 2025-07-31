@@ -10,7 +10,9 @@
         "https://www.youtube.com/*",
         "https://youtu.be/*",
         "https://youtube.com/*",
-        "https://m.youtube.com/*"
+        "https://m.youtube.com/*",
+        "https://*.google.com/*",
+        "https://*.googleapis.com/*"
     ],
     "browser_action": {
         "default_icon": {

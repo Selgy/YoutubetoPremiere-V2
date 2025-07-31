@@ -9,7 +9,10 @@
                         "cookies"
                     ],
     "host_permissions":  [
-                             "https://www.youtube.com/*"
+                             "https://www.youtube.com/*",
+                             "https://youtube.com/*",
+                             "https://*.google.com/*",
+                             "https://*.googleapis.com/*"
                          ],
     "action":  {
                    "default_icon":  {
