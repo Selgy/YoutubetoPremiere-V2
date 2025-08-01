@@ -198,9 +198,14 @@ def write_cookie_to_file(file_handle, cookie, index):
         domain = str(domain).replace('\t', '').replace('\n', '').replace('\r', '')
         path = str(path).replace('\t', '').replace('\n', '').replace('\r', '')
         
-        # Skip cookies with problematic values
-        if not name or not value or '\t' in name or '\t' in value:
+        # Skip cookies with problematic values or overly long values that might cause parsing issues
+        if not name or not value or '\t' in name or '\t' in value or len(value) > 8192:
             logging.debug(f"Skipping cookie with problematic format {index}: name='{name[:20]}...', value='{value[:20]}...'")
+            return False
+        
+        # Skip cookies with purely numeric values that are excessively long (likely session identifiers)
+        if name in ['user_id', 'session_id', 'gid'] and value.isdigit() and len(value) > 20:
+            logging.debug(f"Skipping potentially problematic numeric cookie: {name} with length {len(value)}")
             return False
         
         # Filter out known problematic cookies that aren't needed for YouTube auth
@@ -209,7 +214,7 @@ def write_cookie_to_file(file_handle, cookie, index):
             'WML', 'GX', 'SMSV', 'ACCOUNT_CHOOSER', 'UULE', '__Host-GMAIL_SCH_GMN',
             '__Host-GMAIL_SCH_GMS', '__Host-GMAIL_SCH_GML', '__Host-GMAIL_SCH',
             '__Host-GAPS', '__Host-1PLSID', '__Host-3PLSID', '__Secure-DIVERSION_ID',
-            'LSOLH', '__Secure-ENID', 'OTZ', 'LSID'
+            'LSOLH', '__Secure-ENID', 'OTZ', 'LSID', 'user_id'
         ]
         
         # Filter out __Host-* cookies as they often have problematic formats
