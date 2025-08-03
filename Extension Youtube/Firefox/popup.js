@@ -4,6 +4,13 @@ console.log('YTP Popup: Script loaded (Firefox)');
 // Firefox compatibility layer
 const extensionAPI = typeof browser !== 'undefined' ? browser : chrome;
 
+// Download URLs for application installation
+const DOWNLOAD_URLS = {
+    windows: 'https://github.com/Selgy/YoutubetoPremiere-V2/releases/latest/download/YouTubetoPremiere-Windows.exe',
+    mac: 'https://github.com/Selgy/YoutubetoPremiere-V2/releases/latest/download/YouTubetoPremiere-macOS.pkg',
+    github: 'https://github.com/Selgy/YoutubetoPremiere-V2/releases/latest'
+};
+
 // Settings keys
 const SETTINGS_KEYS = {
     PANEL_VISIBLE: 'ytp-panel-visible',
@@ -164,15 +171,54 @@ async function checkServerStatus() {
         
         if (response.ok) {
             statusElement.className = 'status connected';
-            statusIcon.textContent = 'cloud_done';
-            statusText.textContent = 'YoutubetoPremiere connecté';
+            statusIcon.textContent = 'check_circle';
+            statusText.textContent = 'Extension prête à utiliser';
         } else {
             throw new Error('Server not responding');
         }
     } catch (error) {
-        statusElement.className = 'status disconnected';
-        statusIcon.textContent = 'cloud_off';
-        statusText.textContent = 'YoutubetoPremiere déconnecté';
+        showInstallationInstructions(statusElement, statusIcon, statusText);
+    }
+}
+
+function showInstallationInstructions(statusElement, statusIcon, statusText) {
+    const os = detectOperatingSystem();
+    
+    statusElement.className = 'status disconnected clickable';
+    statusIcon.textContent = 'download';
+    
+    if (os === 'windows' || os === 'mac') {
+        statusText.textContent = 'Application Premiere Pro non détectée - Cliquer pour installer';
+        
+        statusElement.style.cursor = 'pointer';
+        statusElement.onclick = () => {
+            const downloadUrl = DOWNLOAD_URLS[os];
+            if (downloadUrl) {
+                extensionAPI.tabs.create({ url: downloadUrl });
+                showFeedback('Téléchargement de l\'application commencé...');
+            }
+        };
+    } else {
+        statusText.textContent = 'Application Premiere Pro non détectée - Voir GitHub';
+        statusElement.style.cursor = 'pointer';
+        statusElement.onclick = () => {
+            extensionAPI.tabs.create({ url: DOWNLOAD_URLS.github });
+            showFeedback('Page de téléchargement ouverte...');
+        };
+    }
+}
+
+function detectOperatingSystem() {
+    const userAgent = navigator.userAgent.toLowerCase();
+    
+    if (userAgent.includes('mac')) {
+        return 'mac';
+    } else if (userAgent.includes('win')) {
+        return 'windows';
+    } else if (userAgent.includes('linux')) {
+        return 'linux';
+    } else {
+        return 'unknown';
     }
 }
 

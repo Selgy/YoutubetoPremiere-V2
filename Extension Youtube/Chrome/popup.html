@@ -301,24 +301,18 @@
             box-shadow: 0 4px 12px rgba(239, 68, 68, 0.2);
         }
 
-        .status.update-available {
+        .status.disconnected.clickable {
             background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
             color: #d97706;
             border: 1px solid #fbbf24;
             box-shadow: 0 4px 12px rgba(245, 158, 11, 0.2);
             cursor: pointer;
+            transition: all 0.3s ease;
         }
 
-        .status.update-available:hover {
+        .status.disconnected.clickable:hover {
             background: linear-gradient(135deg, #fde68a 0%, #fcd34d 100%);
             transform: scale(1.02);
-        }
-
-        .status.up-to-date {
-            background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
-            color: #166534;
-            border: 1px solid #86efac;
-            box-shadow: 0 4px 12px rgba(34, 197, 94, 0.2);
         }
 
 
@@ -337,16 +331,10 @@
     </div>
 
     <div class="content">
-        <!-- Update Status -->
-        <div id="update-status" class="status" style="display: none;">
-            <span class="material-symbols-outlined">system_update</span>
-            <span>Vérification des mises à jour...</span>
-        </div>
-
-        <!-- Status -->
+        <!-- Application Status -->
         <div id="server-status" class="status disconnected">
-            <span class="material-symbols-outlined">cloud_off</span>
-            <span>Vérification de la connexion...</span>
+            <span class="material-symbols-outlined">sync</span>
+            <span>Vérification de l'application...</span>
         </div>
 
         <!-- Panel Visibility -->

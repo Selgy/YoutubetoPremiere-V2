@@ -301,6 +301,20 @@
             box-shadow: 0 4px 12px rgba(239, 68, 68, 0.2);
         }
 
+        .status.disconnected.clickable {
+            background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+            color: #d97706;
+            border: 1px solid #fbbf24;
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.2);
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .status.disconnected.clickable:hover {
+            background: linear-gradient(135deg, #fde68a 0%, #fcd34d 100%);
+            transform: scale(1.02);
+        }
+
         .footer {
             padding: 16px 20px;
             background: rgba(255, 255, 255, 0.1);
@@ -336,10 +350,10 @@
     </div>
 
     <div class="content">
-        <!-- Status -->
+        <!-- Application Status -->
         <div id="server-status" class="status disconnected">
-            <span class="material-symbols-outlined">cloud_off</span>
-            <span>Vérification de la connexion...</span>
+            <span class="material-symbols-outlined">sync</span>
+            <span>Vérification de l'application...</span>
         </div>
 
         <!-- Panel Visibility -->
