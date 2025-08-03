@@ -43,35 +43,67 @@ if (Test-Path "package.json") {
 }
 
 # Chrome Extension manifest
-if (Test-Path "ChromeExtension/manifest.json") {
-    $manifest = Get-Content "ChromeExtension/manifest.json" | ConvertFrom-Json
+if (Test-Path "Extension Youtube/Chrome/manifest.json") {
+    $manifest = Get-Content "Extension Youtube/Chrome/manifest.json" | ConvertFrom-Json
     $manifest.version = $Version
-    $manifest | ConvertTo-Json -Depth 10 | Set-Content "ChromeExtension/manifest.json"
+    $manifest | ConvertTo-Json -Depth 10 | Set-Content "Extension Youtube/Chrome/manifest.json"
     Write-Host "  [OK] Chrome manifest" -ForegroundColor Green
 }
 
 # Background.js
-if (Test-Path "ChromeExtension/background.js") {
-    $content = Get-Content "ChromeExtension/background.js" -Raw
+if (Test-Path "Extension Youtube/Chrome/background.js") {
+    $content = Get-Content "Extension Youtube/Chrome/background.js" -Raw
     $content = $content -replace "Version \d+\.\d+\.\d+", "Version $Version"
-    Set-Content "ChromeExtension/background.js" $content
+    Set-Content "Extension Youtube/Chrome/background.js" $content
     Write-Host "  [OK] background.js" -ForegroundColor Green
 }
 
 # Content.js
-if (Test-Path "ChromeExtension/content.js") {
-    $content = Get-Content "ChromeExtension/content.js" -Raw
+if (Test-Path "Extension Youtube/Chrome/content.js") {
+    $content = Get-Content "Extension Youtube/Chrome/content.js" -Raw
     $content = $content -replace "Version \d+\.\d+\.\d+", "Version $Version"
-    Set-Content "ChromeExtension/content.js" $content
+    Set-Content "Extension Youtube/Chrome/content.js" $content
     Write-Host "  [OK] content.js" -ForegroundColor Green
 }
 
 # popup.html
-if (Test-Path "ChromeExtension/popup.html") {
-    $content = Get-Content "ChromeExtension/popup.html" -Raw
+if (Test-Path "Extension Youtube/Chrome/popup.html") {
+    $content = Get-Content "Extension Youtube/Chrome/popup.html" -Raw
     $content = $content -replace "YouTube to Premiere Pro v[^<]*", "YouTube to Premiere Pro v$Version"
-    Set-Content "ChromeExtension/popup.html" $content
+    Set-Content "Extension Youtube/Chrome/popup.html" $content
     Write-Host "  [OK] popup.html" -ForegroundColor Green
+}
+
+# Firefox Extension manifest
+if (Test-Path "Extension Youtube/Firefox/manifest.json") {
+    $manifest = Get-Content "Extension Youtube/Firefox/manifest.json" | ConvertFrom-Json
+    $manifest.version = $Version
+    $manifest | ConvertTo-Json -Depth 10 | Set-Content "Extension Youtube/Firefox/manifest.json"
+    Write-Host "  [OK] Firefox manifest" -ForegroundColor Green
+}
+
+# Firefox Background.js
+if (Test-Path "Extension Youtube/Firefox/background.js") {
+    $content = Get-Content "Extension Youtube/Firefox/background.js" -Raw
+    $content = $content -replace "Version \d+\.\d+\.\d+", "Version $Version"
+    Set-Content "Extension Youtube/Firefox/background.js" $content
+    Write-Host "  [OK] Firefox background.js" -ForegroundColor Green
+}
+
+# Firefox Content.js
+if (Test-Path "Extension Youtube/Firefox/content.js") {
+    $content = Get-Content "Extension Youtube/Firefox/content.js" -Raw
+    $content = $content -replace "Version \d+\.\d+\.\d+", "Version $Version"
+    Set-Content "Extension Youtube/Firefox/content.js" $content
+    Write-Host "  [OK] Firefox content.js" -ForegroundColor Green
+}
+
+# Firefox popup.html
+if (Test-Path "Extension Youtube/Firefox/popup.html") {
+    $content = Get-Content "Extension Youtube/Firefox/popup.html" -Raw
+    $content = $content -replace "YouTube to Premiere Pro v[^<]*", "YouTube to Premiere Pro v$Version"
+    Set-Content "Extension Youtube/Firefox/popup.html" $content
+    Write-Host "  [OK] Firefox popup.html" -ForegroundColor Green
 }
 
 # main.tsx
