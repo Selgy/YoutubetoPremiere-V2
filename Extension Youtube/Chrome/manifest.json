@@ -1,8 +1,8 @@
 {
     "manifest_version":  3,
     "name":  "Youtube to Premiere Pro V3",
-    "version": "3.0.11",
-    "description": "",
+    "version":  "3.0.11",
+    "description":  "",
     "permissions":  [
                         "activeTab",
                         "storage",

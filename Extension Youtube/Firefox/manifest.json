@@ -1,53 +1,55 @@
 {
-    "manifest_version": 2,
-    "name": "Youtube to Premiere Pro V3 (Firefox)",
-    "version": "3.0.0",
-    "description": "Import YouTube videos and metadata directly into Adobe Premiere Pro for seamless video editing workflow.",
-    "permissions": [
-        "activeTab",
-        "storage",
-        "cookies",
-        "https://www.youtube.com/*",
-        "https://youtu.be/*",
-        "https://youtube.com/*",
-        "https://m.youtube.com/*",
-        "https://*.google.com/*",
-        "https://*.googleapis.com/*"
-    ],
-    "browser_action": {
-        "default_icon": {
-            "48": "icon.png"
-        },
-        "default_popup": "popup.html",
-        "default_title": "YouTube to Premiere - Paramètres"
-    },
-    "background": {
-        "scripts": ["background.js"],
-        "persistent": false
-    },
-    "content_scripts": [
-        {
-            "matches": [
-                "https://www.youtube.com/*",
-                "https://youtube.com/*"
-            ],
-            "js": [
-                "socket.io.min.js",
-                "content.js"
-            ],
-            "run_at": "document_idle"
-        }
-    ],
-    "web_accessible_resources": [
-        "icon.png"
-    ],
-    "icons": {
-        "48": "icon.png"
-    },
-    "browser_specific_settings": {
-        "gecko": {
-            "id": "youtube-to-premiere-v3@extension",
-            "strict_min_version": "109.0"
-        }
-    }
+    "manifest_version":  2,
+    "name":  "Youtube to Premiere Pro V3 (Firefox)",
+    "version":  "3.0.11",
+    "description":  "Import YouTube videos and metadata directly into Adobe Premiere Pro for seamless video editing workflow.",
+    "permissions":  [
+                        "activeTab",
+                        "storage",
+                        "cookies",
+                        "https://www.youtube.com/*",
+                        "https://youtu.be/*",
+                        "https://youtube.com/*",
+                        "https://m.youtube.com/*",
+                        "https://*.google.com/*",
+                        "https://*.googleapis.com/*"
+                    ],
+    "browser_action":  {
+                           "default_icon":  {
+                                                "48":  "icon.png"
+                                            },
+                           "default_popup":  "popup.html",
+                           "default_title":  "YouTube to Premiere - Paramètres"
+                       },
+    "background":  {
+                       "scripts":  [
+                                       "background.js"
+                                   ],
+                       "persistent":  false
+                   },
+    "content_scripts":  [
+                            {
+                                "matches":  [
+                                                "https://www.youtube.com/*",
+                                                "https://youtube.com/*"
+                                            ],
+                                "js":  [
+                                           "socket.io.min.js",
+                                           "content.js"
+                                       ],
+                                "run_at":  "document_idle"
+                            }
+                        ],
+    "web_accessible_resources":  [
+                                     "icon.png"
+                                 ],
+    "icons":  {
+                  "48":  "icon.png"
+              },
+    "browser_specific_settings":  {
+                                      "gecko":  {
+                                                    "id":  "youtube-to-premiere-v3@extension",
+                                                    "strict_min_version":  "109.0"
+                                                }
+                                  }
 }
