@@ -116,7 +116,7 @@ jobs:
       - name: Download FFmpeg for macOS
         run: |
           echo "Downloading FFmpeg for macOS..."
-          curl -L "https://evermeet.cx/ffmpeg/ffmpeg-6.1.zip" -o ffmpeg.zip
+          curl -L "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/snapshot/ffmpeg.zip" -o ffmpeg.zip
           unzip ffmpeg.zip
           chmod +x ffmpeg
           echo "FFmpeg downloaded and made executable"
