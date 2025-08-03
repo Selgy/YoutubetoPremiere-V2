@@ -99,10 +99,7 @@ def register_routes(app, socketio, settings):
             
             # Determine OS type for download links
             if system == 'darwin':
-                if 'arm' in machine or 'aarch64' in machine:
-                    os_type = 'mac_arm64'
-                else:
-                    os_type = 'mac_intel'
+                os_type = 'mac_arm64'
             elif system == 'windows':
                 os_type = 'windows'
             else:
@@ -131,13 +128,12 @@ def register_routes(app, socketio, settings):
                     except:
                         is_newer = latest_version != current_version
                     
-                    # Generate download URLs based on OS
+                    # Generate download URLs based on OS (using latest links)
                     download_urls = {}
-                    base_url = f"https://github.com/Selgy/YoutubetoPremiere-V2/releases/download/v{latest_version}"
+                    base_url = "https://github.com/Selgy/YoutubetoPremiere-V2/releases/latest/download"
                     
-                    download_urls['windows'] = f"{base_url}/YoutubetoPremiere_Win_{latest_version}.exe"
-                    download_urls['mac_arm64'] = f"{base_url}/YoutubetoPremiere_Mac_arm64_{latest_version}.pkg"
-                    download_urls['mac_intel'] = f"{base_url}/YoutubetoPremiere_Mac_intel_{latest_version}.pkg"
+                    download_urls['windows'] = f"{base_url}/YouTubetoPremiere-Windows.exe"
+                    download_urls['mac_arm64'] = f"{base_url}/YouTubetoPremiere-macOS.pkg"
                     
                     # Get the appropriate download URL for current OS
                     download_url = download_urls.get(os_type)
