@@ -609,16 +609,16 @@ def register_routes(app, socketio, settings):
                     logging.info(f"Created download folder: {download_path}")
                     # Store the path in settings for future use
                     save_download_path(download_path)
-                    return {'success': True, 'path': download_path}
+                    socketio.emit('project_path_result', {'success': True, 'path': download_path})
                 except Exception as e:
                     logging.error(f"Error creating download folder: {str(e)}")
-                    return {'error': f"Could not create download folder: {str(e)}"}
+                    socketio.emit('project_path_result', {'error': f"Could not create download folder: {str(e)}"})
             else:
                 logging.warning("Received empty project path from Premiere")
-                return {'error': 'Empty project path received'}
+                socketio.emit('project_path_result', {'error': 'Empty project path received'})
         except Exception as e:
             logging.error(f"Error handling project path response: {str(e)}")
-            return {'error': str(e)}
+            socketio.emit('project_path_result', {'error': str(e)})
 
     @app.route('/open-logs-folder', methods=['POST'])
     def open_logs_folder():
