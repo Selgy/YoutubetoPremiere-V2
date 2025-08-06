@@ -1,7 +1,7 @@
 // background.js - Firefox version
 
 // Debug: Version check
-console.log('YTP: Background script loaded - Version 3.0.11 with Enhanced Cookie Extraction (Firefox)');
+console.log('YTP: Background script loaded - Version 3.0.1 with Enhanced Cookie Extraction (Firefox)');
 
 // Firefox compatibility layer
 const extensionAPI = typeof browser !== 'undefined' ? browser : chrome;
@@ -187,6 +187,7 @@ async function getYouTubeCookies() {
         return [];
     }
 }
+
 
 
 
