@@ -180,6 +180,38 @@ Write-Host "  - YoutubetoPremiere_Win_$Version.exe" -ForegroundColor White
 Write-Host ""
 Write-Host "[INFO] Build: environ 15-30 minutes" -ForegroundColor Yellow
 
+# Upload Chrome Extension (optionnel)
+Write-Host ""
+$uploadChrome = Read-Host "Uploader l'extension Chrome ? (y/N)"
+if ($uploadChrome -eq "y" -or $uploadChrome -eq "Y") {
+    Write-Host "[WORK] Upload Chrome Extension..." -ForegroundColor Cyan
+    
+    # Vérifier si les variables d'environnement Chrome sont configurées
+    $chromeVars = @("CHROME_EXTENSION_ID", "CHROME_CLIENT_ID", "CHROME_CLIENT_SECRET", "CHROME_REFRESH_TOKEN")
+    $chromeMissing = @()
+    
+    foreach ($var in $chromeVars) {
+        if (-not [Environment]::GetEnvironmentVariable($var)) {
+            $chromeMissing += $var
+        }
+    }
+    
+    if ($chromeMissing.Count -eq 0) {
+        try {
+            & ".\scripts\upload-chrome.ps1" -Action "publish"
+            Write-Host "  [OK] Extension Chrome publiee et envoyee en examen" -ForegroundColor Green
+        } catch {
+            Write-Host "  [ERREUR] Echec upload Chrome: $($_.Exception.Message)" -ForegroundColor Red
+        }
+    } else {
+        Write-Host "  [SKIP] Variables Chrome manquantes:" -ForegroundColor Yellow
+        foreach ($var in $chromeMissing) {
+            Write-Host "    - $var" -ForegroundColor Yellow
+        }
+        Write-Host "  [INFO] Configurez ces variables pour activer l'upload automatique" -ForegroundColor Yellow
+    }
+}
+
 # Ouverture GitHub Actions
 $response = Read-Host "Ouvrir GitHub Actions ? (y/N)"
 if ($response -eq "y" -or $response -eq "Y") {
