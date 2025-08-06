@@ -193,14 +193,24 @@ def write_cookie_to_file(file_handle, cookie, index):
             return False
         
         # Clean and validate cookie data for Netscape format
-        name = str(name).replace('\t', '').replace('\n', '').replace('\r', '')
-        value = str(value).replace('\t', '').replace('\n', '').replace('\r', '')
-        domain = str(domain).replace('\t', '').replace('\n', '').replace('\r', '')
-        path = str(path).replace('\t', '').replace('\n', '').replace('\r', '')
+        name = str(name).replace('\t', '').replace('\n', '').replace('\r', '').strip()
+        value = str(value).replace('\t', '').replace('\n', '').replace('\r', '').strip()
+        domain = str(domain).replace('\t', '').replace('\n', '').replace('\r', '').strip()
+        path = str(path).replace('\t', '').replace('\n', '').replace('\r', '').strip()
         
         # Skip cookies with problematic values or overly long values that might cause parsing issues
-        if not name or not value or '\t' in name or '\t' in value or len(value) > 8192:
+        if not name or not value or len(value) > 8192:
             logging.debug(f"Skipping cookie with problematic format {index}: name='{name[:20]}...', value='{value[:20]}...'")
+            return False
+            
+        # Additional validation: ensure no tab characters remain and handle special characters
+        if '\t' in name or '\t' in value or '\t' in domain or '\t' in path:
+            logging.debug(f"Skipping cookie with tab characters: {name}")
+            return False
+            
+        # Validate domain format
+        if not domain or domain.count('.') < 1:
+            logging.debug(f"Skipping cookie with invalid domain: {domain}")
             return False
         
         # Skip cookies with purely numeric values that are excessively long (likely session identifiers)
@@ -214,7 +224,7 @@ def write_cookie_to_file(file_handle, cookie, index):
             'WML', 'GX', 'SMSV', 'ACCOUNT_CHOOSER', 'UULE', '__Host-GMAIL_SCH_GMN',
             '__Host-GMAIL_SCH_GMS', '__Host-GMAIL_SCH_GML', '__Host-GMAIL_SCH',
             '__Host-GAPS', '__Host-1PLSID', '__Host-3PLSID', '__Secure-DIVERSION_ID',
-            'LSOLH', '__Secure-ENID', 'OTZ', 'LSID', 'user_id'
+            'LSOLH', '__Secure-ENID', 'OTZ', 'LSID', 'user_id', 'GEM'
         ]
         
         # Filter out __Host-* cookies as they often have problematic formats
@@ -236,7 +246,9 @@ def write_cookie_to_file(file_handle, cookie, index):
             expires = '0'
         
         # Write in Netscape format: domain flag path secure expiration name value
-        cookie_line = f"{domain}\tTRUE\t{path}\t{secure}\t{expires}\t{name}\t{value}\n"
+        # The domain flag should be TRUE only if domain starts with '.' (subdomain inclusion)
+        domain_flag = 'TRUE' if domain.startswith('.') else 'FALSE'
+        cookie_line = f"{domain}\t{domain_flag}\t{path}\t{secure}\t{expires}\t{name}\t{value}\n"
         file_handle.write(cookie_line)
         
         # Log important authentication cookies
@@ -1201,286 +1213,307 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             logging.info("Using User-Agent from extension for info extraction")
         
         # Extract video info first with authentication
-        with yt_dlp.YoutubeDL(initial_ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=False)
-            if not info:
-                raise Exception("Could not extract video information")
-            
-            # Check if any video formats are available (accept both combined and separate video/audio streams)
-            all_formats = info.get('formats', [])
-            video_formats = [f for f in all_formats if f.get('vcodec') != 'none']  # Video streams (can be video-only)
-            audio_formats = [f for f in all_formats if f.get('acodec') != 'none']  # Audio streams (can be audio-only)
-            combined_formats = [f for f in all_formats if f.get('vcodec') != 'none' and f.get('acodec') != 'none']  # Combined streams
-            
-            if not video_formats:
-                error_msg = "This URL contains only images or is not a valid video. Please provide a URL to a video."
-                logging.error(error_msg)
-                logging.error(f"Available formats: {[f.get('format_id', 'unknown') + ' - ' + str(f.get('vcodec', 'none')) + '/' + str(f.get('acodec', 'none')) for f in all_formats[:5]]}")
-                socketio.emit('download-failed', {'message': error_msg})
-                return None
-            
-            logging.info(f"Found {len(video_formats)} video formats, {len(audio_formats)} audio formats, {len(combined_formats)} combined formats")
+        try:
+            with yt_dlp.YoutubeDL(initial_ydl_opts) as ydl:
+                info = ydl.extract_info(video_url, download=False)
+                if not info:
+                    raise Exception("Could not extract video information")
+        except Exception as info_error:
+            # Check for cookie-related errors and retry without cookies
+            if "invalid Netscape format cookies file" in str(info_error) or "CookieLoadError" in str(info_error) or "failed to load cookies" in str(info_error):
+                logging.warning("Cookie format error during info extraction. Retrying without cookies...")
+                try:
+                    # Retry info extraction without cookies
+                    fallback_ydl_opts = get_robust_ydl_options(ffmpeg_path)
+                    fallback_ydl_opts['skip_download'] = True
+                    
+                    with yt_dlp.YoutubeDL(fallback_ydl_opts) as ydl_fallback:
+                        info = ydl_fallback.extract_info(video_url, download=False)
+                        if not info:
+                            raise Exception("Could not extract video information")
+                        logging.info("Successfully extracted video info without cookies")
+                except Exception as fallback_info_error:
+                    logging.error(f"Fallback info extraction also failed: {str(fallback_info_error)}")
+                    raise Exception(f"Info extraction failed with and without cookies: {str(fallback_info_error)}")
+            else:
+                # Re-raise the original error if it's not cookie-related
+                raise info_error
+        
+        # Check if any video formats are available (accept both combined and separate video/audio streams)
+        all_formats = info.get('formats', [])
+        video_formats = [f for f in all_formats if f.get('vcodec') != 'none']  # Video streams (can be video-only)
+        audio_formats = [f for f in all_formats if f.get('acodec') != 'none']  # Audio streams (can be audio-only)
+        combined_formats = [f for f in all_formats if f.get('vcodec') != 'none' and f.get('acodec') != 'none']  # Combined streams
+        
+        if not video_formats:
+            error_msg = "This URL contains only images or is not a valid video. Please provide a URL to a video."
+            logging.error(error_msg)
+            logging.error(f"Available formats: {[f.get('format_id', 'unknown') + ' - ' + str(f.get('vcodec', 'none')) + '/' + str(f.get('acodec', 'none')) for f in all_formats[:5]]}")
+            socketio.emit('download-failed', {'message': error_msg})
+            return None
+        
+        logging.info(f"Found {len(video_formats)} video formats, {len(audio_formats)} audio formats, {len(combined_formats)} combined formats")
 
-            # Get video details
-            title = info.get('title', 'video')
-            
-            # Sanitize the title
-            sanitized_title = sanitize_youtube_title(title)
-            logging.info(f"Sanitized title: {sanitized_title}")
-            
-            # Get unique filename
-            unique_filename = get_unique_filename(download_path, sanitized_title, 'mp4')
-            output_path = os.path.join(download_path, unique_filename)
-            logging.info(f"Setting output path to: {output_path}")
+        # Get video details
+        title = info.get('title', 'video')
+        
+        # Sanitize the title
+        sanitized_title = sanitize_youtube_title(title)
+        logging.info(f"Sanitized title: {sanitized_title}")
+        
+        # Get unique filename
+        unique_filename = get_unique_filename(download_path, sanitized_title, 'mp4')
+        output_path = os.path.join(download_path, unique_filename)
+        logging.info(f"Setting output path to: {output_path}")
 
-            # Configure download options with robust settings
-            ydl_opts = get_robust_ydl_options(ffmpeg_path)
-            ydl_opts.update({
-                'format': format_string,
-                'merge_output_format': 'mp4',
-                'progress_hooks': [progress_hook],
-                'postprocessor_hooks': [lambda d: socketio.emit('percentage', {'percentage': '100%'}) if d['status'] == 'finished' else None],
-                'outtmpl': {
-                    'default': os.path.join(download_path, os.path.splitext(unique_filename)[0] + '.%(ext)s')
-                }
-            })
-            
-            # Apply same authentication as info extraction
-            if cookies_file and os.path.exists(cookies_file):
-                ydl_opts['cookiefile'] = cookies_file
-                logging.info(f"Using cookies file for download: {cookies_file}")
-            elif 'cookiesfrombrowser' in initial_ydl_opts:
-                ydl_opts['cookiesfrombrowser'] = initial_ydl_opts['cookiesfrombrowser']
-                logging.info("Using browser cookies for download")
-            
-            if user_agent:
-                ydl_opts['http_headers'] = {'User-Agent': user_agent}
-                logging.info("Using User-Agent from extension for download")
-
-            # Download the video
-            logging.info("Starting video download...")
-            logging.info(f"[CONFIG] Progress hook configured: {progress_hook}")
-            logging.info(f"[CONFIG] YT-DLP options include progress_hooks: {'progress_hooks' in ydl_opts}")
-            
-            # Emit initial progress
-            progress_data = {
-                'progress': '0',
-                'percentage': '0%',
-                'type': 'full',
-                'status': 'downloading'
+        # Configure download options with robust settings
+        ydl_opts = get_robust_ydl_options(ffmpeg_path)
+        ydl_opts.update({
+            'format': format_string,
+            'merge_output_format': 'mp4',
+            'progress_hooks': [progress_hook],
+            'postprocessor_hooks': [lambda d: socketio.emit('percentage', {'percentage': '100%'}) if d['status'] == 'finished' else None],
+            'outtmpl': {
+                'default': os.path.join(download_path, os.path.splitext(unique_filename)[0] + '.%(ext)s')
             }
-            socketio.emit('progress', progress_data)
-            socketio.emit('percentage', {'percentage': '0%'})
-            logging.info(f"[SENT] initial progress events: progress={progress_data}")
-            
-            # Configure stdout/stderr to prevent Windows pipe issues
-            import contextlib
-            import io
-            
-            # Note: We need to allow yt-dlp to capture progress information
-            # so we can't completely redirect stdout/stderr on Windows.
-            # Instead, we'll use a safer approach that preserves progress hooks
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    current_download['ydl'] = ydl
-                    logging.info('[DOWNLOAD] Set ydl object in current_download structure for video download')
-                    
-                    # Check for cancellation before starting
-                    if is_cancelled[0]:
-                        logging.info("Download cancelled before starting")
-                        logging.info('[CANCEL] Video download successfully cancelled before start')
-                        return None
-                    
-                    ydl.process_ie_result(info, download=True)
-                    
-                    # Check for cancellation after download
-                    if is_cancelled[0]:
-                        logging.info("Download cancelled after completion")
-                        # Remove the downloaded file if it exists
-                        if os.path.exists(output_path):
-                            try:
-                                os.remove(output_path)
-                                logging.info(f"Removed cancelled download file: {output_path}")
-                            except Exception as e:
-                                logging.error(f"Could not remove cancelled download file: {e}")
-                        logging.info('[CANCEL] Video download successfully cancelled after download - cleanup completed')
-                        return None
-                        
-            except Exception as e:
-                error_message = f"Error during video download: {str(e)}"
+        })
+        
+        # Apply same authentication as info extraction
+        if cookies_file and os.path.exists(cookies_file):
+            ydl_opts['cookiefile'] = cookies_file
+            logging.info(f"Using cookies file for download: {cookies_file}")
+        elif 'cookiesfrombrowser' in initial_ydl_opts:
+            ydl_opts['cookiesfrombrowser'] = initial_ydl_opts['cookiesfrombrowser']
+            logging.info("Using browser cookies for download")
+        
+        if user_agent:
+            ydl_opts['http_headers'] = {'User-Agent': user_agent}
+            logging.info("Using User-Agent from extension for download")
+
+        # Download the video
+        logging.info("Starting video download...")
+        logging.info(f"[CONFIG] Progress hook configured: {progress_hook}")
+        logging.info(f"[CONFIG] YT-DLP options include progress_hooks: {'progress_hooks' in ydl_opts}")
+        
+        # Emit initial progress
+        progress_data = {
+            'progress': '0',
+            'percentage': '0%',
+            'type': 'full',
+            'status': 'downloading'
+        }
+        socketio.emit('progress', progress_data)
+        socketio.emit('percentage', {'percentage': '0%'})
+        logging.info(f"[SENT] initial progress events: progress={progress_data}")
+        
+        # Configure stdout/stderr to prevent Windows pipe issues
+        import contextlib
+        import io
+        
+        # Note: We need to allow yt-dlp to capture progress information
+        # so we can't completely redirect stdout/stderr on Windows.
+        # Instead, we'll use a safer approach that preserves progress hooks
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                current_download['ydl'] = ydl
+                logging.info('[DOWNLOAD] Set ydl object in current_download structure for video download')
                 
-                # Check if this is a cancellation exception
-                if 'cancelled' in str(e).lower():
-                    logging.info("Video download cancelled by user")
-                    # Clean up all partial files created by yt-dlp
-                    cleanup_partial_video_files(output_path)
-                    logging.info('[CANCEL] Video download successfully cancelled - cleanup completed')
+                # Check for cancellation before starting
+                if is_cancelled[0]:
+                    logging.info("Download cancelled before starting")
+                    logging.info('[CANCEL] Video download successfully cancelled before start')
                     return None
                 
-                # Log detailed context for debugging
-                log_download_context(e, {
-                    'function': 'download_video',
-                    'video_url': video_url,
-                    'resolution': resolution,
-                    'download_path': download_path,
-                    'output_path': output_path,
-                    'format_string': format_string[:100] + '...' if len(format_string) > 100 else format_string
-                })
+                ydl.process_ie_result(info, download=True)
                 
-                logging.error(error_message)
-                logging.error(f"Exception type: {type(e).__name__}")
-                
-                # Check for Windows-specific stdout/stderr issues
-                if "[Errno 22]" in str(e) or "Invalid argument" in str(e) or "BrokenPipeError" in str(type(e)):
-                    error_message = "Video download failed due to Windows output stream issue. This has been fixed in the latest version. Please try again."
-                    logging.error("Windows stdout/stderr pipe error detected during video download - fix has been applied")
-                
-                socketio.emit('download-failed', {'message': error_message})
-                raise e
-            finally:
-                current_download['ydl'] = None
-                current_download['cancel_callback'] = None
-
-            # Get the final path of the downloaded file
-            final_path = output_path
-            logging.info(f"Expected final path: {final_path}")
-
-            # Check for downloaded files - first try exact path, then look for variants
-            actual_file = None
-            
-            if os.path.exists(final_path):
-                actual_file = final_path
-                logging.info(f"File exists at expected path: {final_path}")
-            else:
-                # Look for separate video/audio files that need merging
-                base_name = os.path.splitext(final_path)[0]
-                base_dir = os.path.dirname(final_path)
-                
-                # Common yt-dlp separate file patterns
-                video_patterns = [f"{base_name}.f*.mp4", f"{base_name}.mp4.f*"]
-                audio_patterns = [f"{base_name}.f*.m4a", f"{base_name}.m4a.f*", 
-                                f"{base_name}.f*.mp3", f"{base_name}.mp3.f*"]
-                
-                import glob
-                video_files = []
-                audio_files = []
-                
-                # Find video and audio files
-                for pattern in video_patterns:
-                    video_files.extend(glob.glob(pattern))
-                for pattern in audio_patterns:
-                    audio_files.extend(glob.glob(pattern))
-                
-                logging.info(f"Found video files: {video_files}")
-                logging.info(f"Found audio files: {audio_files}")
-                
-                if video_files and audio_files:
-                    # Merge video and audio files
-                    video_file = video_files[0]  # Use first found
-                    audio_file = audio_files[0]  # Use first found
-                    
-                    logging.info(f"Merging {video_file} and {audio_file} into {final_path}")
-                    
-                    merge_command = [
-                        ffmpeg_path,
-                        '-i', video_file,
-                        '-i', audio_file,
-                        '-c:v', 'copy',
-                        '-c:a', 'aac'
-                    ] + get_ffmpeg_postprocessor_args() + [
-                        final_path
-                    ]
-                    
-                    try:
-                        run_hidden_subprocess(merge_command, check=True, capture_output=True, text=True)
-                        logging.info(f"Successfully merged files into: {final_path}")
-                        
-                        # Clean up separate files
+                # Check for cancellation after download
+                if is_cancelled[0]:
+                    logging.info("Download cancelled after completion")
+                    # Remove the downloaded file if it exists
+                    if os.path.exists(output_path):
                         try:
-                            os.remove(video_file)
-                            os.remove(audio_file)
-                            logging.info("Cleaned up temporary separate files")
+                            os.remove(output_path)
+                            logging.info(f"Removed cancelled download file: {output_path}")
                         except Exception as e:
-                            logging.warning(f"Could not clean up temporary files: {e}")
-                        
-                        actual_file = final_path
-                        
-                    except subprocess.CalledProcessError as e:
-                        logging.error(f"Error merging files: {e}")
-                        if e.stderr:
-                            logging.error(f"FFmpeg stderr: {e.stderr}")
-                        # Don't fail completely - maybe one of the files is usable
-                        if os.path.exists(video_file):
-                            # Use video file if it exists and seems complete
-                            actual_file = video_file
-                            logging.info(f"Using video file as fallback: {video_file}")
-                
-                # If still no file, look for any files with similar names
-                if not actual_file:
-                    all_files = os.listdir(base_dir) if os.path.exists(base_dir) else []
-                    base_filename = os.path.basename(base_name)
+                            logging.error(f"Could not remove cancelled download file: {e}")
+                    logging.info('[CANCEL] Video download successfully cancelled after download - cleanup completed')
+                    return None
                     
-                    # Look for files that start with our base filename
-                    candidates = [f for f in all_files if f.startswith(base_filename) and f.endswith(('.mp4', '.mkv', '.webm'))]
-                    
-                    if candidates:
-                        # Use the most recently modified file
-                        candidates_full = [os.path.join(base_dir, f) for f in candidates]
-                        candidates_full.sort(key=os.path.getmtime, reverse=True)
-                        actual_file = candidates_full[0]
-                        logging.info(f"Using most recent candidate file: {actual_file}")
-                        
-                        # Move it to the expected location if different
-                        if actual_file != final_path:
-                            try:
-                                os.rename(actual_file, final_path)
-                                actual_file = final_path
-                                logging.info(f"Moved file to expected location: {final_path}")
-                            except Exception as e:
-                                logging.warning(f"Could not move file to expected location: {e}")
+        except Exception as e:
+            error_message = f"Error during video download: {str(e)}"
+            
+            # Check if this is a cancellation exception
+            if 'cancelled' in str(e).lower():
+                logging.info("Video download cancelled by user")
+                # Clean up all partial files created by yt-dlp
+                cleanup_partial_video_files(output_path)
+                logging.info('[CANCEL] Video download successfully cancelled - cleanup completed')
+                return None
+            
+            # Log detailed context for debugging
+            log_download_context(e, {
+                'function': 'download_video',
+                'video_url': video_url,
+                'resolution': resolution,
+                'download_path': download_path,
+                'output_path': output_path,
+                'format_string': format_string[:100] + '...' if len(format_string) > 100 else format_string
+            })
+            
+            logging.error(error_message)
+            logging.error(f"Exception type: {type(e).__name__}")
+            
+            # Check for Windows-specific stdout/stderr issues
+            if "[Errno 22]" in str(e) or "Invalid argument" in str(e) or "BrokenPipeError" in str(type(e)):
+                error_message = "Video download failed due to Windows output stream issue. This has been fixed in the latest version. Please try again."
+                logging.error("Windows stdout/stderr pipe error detected during video download - fix has been applied")
+            
+            socketio.emit('download-failed', {'message': error_message})
+            raise e
+        finally:
+            current_download['ydl'] = None
+            current_download['cancel_callback'] = None
 
-            if actual_file and os.path.exists(actual_file):
-                logging.info(f"Using file: {actual_file}")
+        # Get the final path of the downloaded file
+        final_path = output_path
+        logging.info(f"Expected final path: {final_path}")
+
+        # Check for downloaded files - first try exact path, then look for variants
+        actual_file = None
+        
+        if os.path.exists(final_path):
+            actual_file = final_path
+            logging.info(f"File exists at expected path: {final_path}")
+        else:
+            # Look for separate video/audio files that need merging
+            base_name = os.path.splitext(final_path)[0]
+            base_dir = os.path.dirname(final_path)
+            
+            # Common yt-dlp separate file patterns
+            video_patterns = [f"{base_name}.f*.mp4", f"{base_name}.mp4.f*"]
+            audio_patterns = [f"{base_name}.f*.m4a", f"{base_name}.m4a.f*", 
+                            f"{base_name}.f*.mp3", f"{base_name}.mp3.f*"]
+            
+            import glob
+            video_files = []
+            audio_files = []
+            
+            # Find video and audio files
+            for pattern in video_patterns:
+                video_files.extend(glob.glob(pattern))
+            for pattern in audio_patterns:
+                audio_files.extend(glob.glob(pattern))
+            
+            logging.info(f"Found video files: {video_files}")
+            logging.info(f"Found audio files: {audio_files}")
+            
+            if video_files and audio_files:
+                # Merge video and audio files
+                video_file = video_files[0]  # Use first found
+                audio_file = audio_files[0]  # Use first found
                 
-                # Add URL to metadata
-                metadata_command = [
-                    ffmpeg_path,  # Use the full path here
-                    '-i', actual_file,
-                    '-metadata', f'comment={video_url}',
-                    '-codec', 'copy'
+                logging.info(f"Merging {video_file} and {audio_file} into {final_path}")
+                
+                merge_command = [
+                    ffmpeg_path,
+                    '-i', video_file,
+                    '-i', audio_file,
+                    '-c:v', 'copy',
+                    '-c:a', 'aac'
                 ] + get_ffmpeg_postprocessor_args() + [
-                    f'{actual_file}_with_metadata.mp4'
+                    final_path
                 ]
-                logging.info(f"Running FFmpeg command: {' '.join(metadata_command)}")
-
-                try:
-                    run_hidden_subprocess(metadata_command, check=True)
-                    os.replace(f'{actual_file}_with_metadata.mp4', actual_file)
-                    
-                    logging.info(f"Video downloaded and processed: {actual_file}")
-                    socketio.emit('import_video', {'path': actual_file})
-                    # Emit both formats to ensure compatibility
-                    socketio.emit('download-complete', {'url': video_url, 'path': actual_file})  # Hyphenated format for Chrome extension
-                    
-                    return actual_file
-                except subprocess.CalledProcessError as e:
-                    logging.error(f"Error adding metadata: {e}")
-                    logging.error(f"FFmpeg stderr: {e.stderr if hasattr(e, 'stderr') else 'No stderr'}")
-                    # Still return the file even if metadata failed
-                    logging.info(f"Returning file without metadata: {actual_file}")
-                    socketio.emit('import_video', {'path': actual_file})
-                    socketio.emit('download-complete', {'url': video_url, 'path': actual_file})
-                    return actual_file
-            else:
-                logging.error(f"No suitable file found. Expected: {final_path}")
-                # List all files in directory for debugging
-                try:
-                    all_files = os.listdir(os.path.dirname(final_path))
-                    logging.error(f"Files in download directory: {all_files}")
-                except Exception as e:
-                    logging.error(f"Could not list directory contents: {e}")
                 
-                raise Exception(f"Downloaded file not found at {final_path}")
+                try:
+                    run_hidden_subprocess(merge_command, check=True, capture_output=True, text=True)
+                    logging.info(f"Successfully merged files into: {final_path}")
+                    
+                    # Clean up separate files
+                    try:
+                        os.remove(video_file)
+                        os.remove(audio_file)
+                        logging.info("Cleaned up temporary separate files")
+                    except Exception as e:
+                        logging.warning(f"Could not clean up temporary files: {e}")
+                    
+                    actual_file = final_path
+                    
+                except subprocess.CalledProcessError as e:
+                    logging.error(f"Error merging files: {e}")
+                    if e.stderr:
+                        logging.error(f"FFmpeg stderr: {e.stderr}")
+                    # Don't fail completely - maybe one of the files is usable
+                    if os.path.exists(video_file):
+                        # Use video file if it exists and seems complete
+                        actual_file = video_file
+                        logging.info(f"Using video file as fallback: {video_file}")
+            
+            # If still no file, look for any files with similar names
+            if not actual_file:
+                all_files = os.listdir(base_dir) if os.path.exists(base_dir) else []
+                base_filename = os.path.basename(base_name)
+                
+                # Look for files that start with our base filename
+                candidates = [f for f in all_files if f.startswith(base_filename) and f.endswith(('.mp4', '.mkv', '.webm'))]
+                
+                if candidates:
+                    # Use the most recently modified file
+                    candidates_full = [os.path.join(base_dir, f) for f in candidates]
+                    candidates_full.sort(key=os.path.getmtime, reverse=True)
+                    actual_file = candidates_full[0]
+                    logging.info(f"Using most recent candidate file: {actual_file}")
+                    
+                    # Move it to the expected location if different
+                    if actual_file != final_path:
+                        try:
+                            os.rename(actual_file, final_path)
+                            actual_file = final_path
+                            logging.info(f"Moved file to expected location: {final_path}")
+                        except Exception as e:
+                            logging.warning(f"Could not move file to expected location: {e}")
+
+        if actual_file and os.path.exists(actual_file):
+            logging.info(f"Using file: {actual_file}")
+            
+            # Add URL to metadata
+            metadata_command = [
+                ffmpeg_path,  # Use the full path here
+                '-i', actual_file,
+                '-metadata', f'comment={video_url}',
+                '-codec', 'copy'
+            ] + get_ffmpeg_postprocessor_args() + [
+                f'{actual_file}_with_metadata.mp4'
+            ]
+            logging.info(f"Running FFmpeg command: {' '.join(metadata_command)}")
+
+            try:
+                run_hidden_subprocess(metadata_command, check=True)
+                os.replace(f'{actual_file}_with_metadata.mp4', actual_file)
+                
+                logging.info(f"Video downloaded and processed: {actual_file}")
+                socketio.emit('import_video', {'path': actual_file})
+                # Emit both formats to ensure compatibility
+                socketio.emit('download-complete', {'url': video_url, 'path': actual_file})  # Hyphenated format for Chrome extension
+                
+                return actual_file
+            except subprocess.CalledProcessError as e:
+                logging.error(f"Error adding metadata: {e}")
+                logging.error(f"FFmpeg stderr: {e.stderr if hasattr(e, 'stderr') else 'No stderr'}")
+                # Still return the file even if metadata failed
+                logging.info(f"Returning file without metadata: {actual_file}")
+                socketio.emit('import_video', {'path': actual_file})
+                socketio.emit('download-complete', {'url': video_url, 'path': actual_file})
+                return actual_file
+        else:
+            logging.error(f"No suitable file found. Expected: {final_path}")
+            # List all files in directory for debugging
+            try:
+                all_files = os.listdir(os.path.dirname(final_path))
+                logging.error(f"Files in download directory: {all_files}")
+            except Exception as e:
+                logging.error(f"Could not list directory contents: {e}")
+            
+            raise Exception(f"Downloaded file not found at {final_path}")
 
     except Exception as e:
         error_message = f"Error downloading video: {str(e)}"
@@ -1488,8 +1521,53 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         logging.error(f"Exception type: {type(e)}")
         logging.error(f"Exception traceback: {traceback.format_exc()}")
         
+        # Check for cookie-related errors and retry without cookies
+        if "invalid Netscape format cookies file" in str(e) or "CookieLoadError" in str(e) or "failed to load cookies" in str(e):
+            logging.warning("Cookie format error detected. Attempting download without cookies...")
+            try:
+                # Retry without cookies
+                fallback_ydl_opts = get_robust_ydl_options(ffmpeg_path)
+                fallback_ydl_opts.update({
+                    'format': format_string,
+                    'merge_output_format': 'mp4',
+                    'progress_hooks': [progress_hook],
+                    'postprocessor_hooks': [lambda d: socketio.emit('percentage', {'percentage': '100%'}) if d['status'] == 'finished' else None],
+                    'outtmpl': {
+                        'default': os.path.join(download_path, os.path.splitext(unique_filename)[0] + '.%(ext)s')
+                    }
+                })
+                
+                # No cookies or browser auth for fallback
+                logging.info("Retrying download without authentication...")
+                
+                with yt_dlp.YoutubeDL(fallback_ydl_opts) as ydl_fallback:
+                    current_download['ydl'] = ydl_fallback
+                    
+                    # Extract info again without cookies
+                    info_fallback = ydl_fallback.extract_info(video_url, download=False)
+                    if info_fallback:
+                        ydl_fallback.process_ie_result(info_fallback, download=True)
+                        
+                        # Find the downloaded file
+                        final_path = os.path.join(download_path, unique_filename)
+                        
+                        # Check for the actual downloaded file with various extensions
+                        for ext in ['mp4', 'webm', 'mkv']:
+                            test_path = os.path.splitext(final_path)[0] + '.' + ext
+                            if os.path.exists(test_path):
+                                logging.info(f"Found fallback downloaded file: {test_path}")
+                                socketio.emit('import_video', {'path': test_path})
+                                socketio.emit('download-complete', {'url': video_url, 'path': test_path})
+                                return test_path
+                        
+                        logging.warning("Fallback download completed but file not found at expected location")
+                        
+            except Exception as fallback_error:
+                logging.error(f"Fallback download also failed: {str(fallback_error)}")
+                error_message = f"Download failed with cookies, and fallback without cookies also failed: {str(fallback_error)}"
+        
         # Check for Windows-specific stdout/stderr issues
-        if "[Errno 22]" in str(e) or "Invalid argument" in str(e):
+        elif "[Errno 22]" in str(e) or "Invalid argument" in str(e):
             error_message = "Download failed due to Windows output stream issue. This is a known yt-dlp issue on Windows. Please try again or restart the application."
             logging.error("Windows stdout/stderr pipe error detected - recommending restart")
         

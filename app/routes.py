@@ -773,6 +773,24 @@ def register_routes(app, socketio, settings):
                     name = cookie.get('name', '')
                     value = cookie.get('value', '')
                     
+                    # Skip problematic cookies that aren't needed for YouTube auth
+                    problematic_cookies = [
+                        'GMAIL_AT', 'COMPASS', '__utma', '__utmb', '__utmc', '__utmz', 'IDE', 'DV', 
+                        'WML', 'GX', 'SMSV', 'ACCOUNT_CHOOSER', 'UULE', '__Host-GMAIL_SCH_GMN',
+                        '__Host-GMAIL_SCH_GMS', '__Host-GMAIL_SCH_GML', '__Host-GMAIL_SCH',
+                        '__Host-GAPS', '__Host-1PLSID', '__Host-3PLSID', '__Secure-DIVERSION_ID',
+                        'LSOLH', '__Secure-ENID', 'OTZ', 'LSID', 'user_id', 'GEM'
+                    ]
+                    
+                    # Skip problematic cookies and __Host-* cookies
+                    if name.startswith('__Host-') or name in problematic_cookies:
+                        continue
+                    
+                    # Only keep cookies from core YouTube/Google domains
+                    allowed_domains = ['.youtube.com', 'www.youtube.com', 'youtube.com', 'm.youtube.com', '.google.com', 'accounts.google.com']
+                    if domain not in allowed_domains:
+                        continue
+                    
                     # Write in Netscape format: domain flag path secure expiration name value
                     f.write(f"{domain}\t{flag}\t{path}\t{secure}\t{expiration}\t{name}\t{value}\n")
             
