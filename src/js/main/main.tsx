@@ -218,16 +218,14 @@ const Main = () => {
     console.log('Attempting to connect to WebSocket server at:', serverIP);
     const socket = io(`http://${serverIP}:3002`, {
       transports: ['polling', 'websocket'],
-      reconnectionAttempts: 10,
-      reconnectionDelay: 2000,
-      reconnectionDelayMax: 10000,
-      timeout: 10000,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 20000,
       forceNew: true,
       upgrade: true,
       rememberUpgrade: false,
-      rejectUnauthorized: false,
       autoConnect: true,
-      withCredentials: false,
       query: { client_type: 'premiere' }
     });
 
@@ -243,10 +241,22 @@ const Main = () => {
       console.error('Connection error:', error);
       retryCount++;
       
-      console.log(`Retrying connection (attempt ${retryCount})`);
-      setTimeout(() => {
-        socket.connect();
-      }, Math.min(1000 * Math.pow(2, retryCount % 10), 10000));
+      // Only retry if within reasonable limits
+      if (retryCount <= 5) {
+        console.log(`Retrying connection (attempt ${retryCount}/5)`);
+        setTimeout(() => {
+          socket.connect();
+        }, Math.min(1000 * retryCount, 5000));
+      } else {
+        console.log('Max retry attempts reached, stopping automatic reconnection');
+        console.error('Unable to establish connection to YouTube to Premiere server. Please check if the application is running properly.');
+        // Try to clear localStorage and reset to localhost
+        localStorage.removeItem('serverIP');
+        if (serverIP !== 'localhost') {
+          console.log('Falling back to localhost connection');
+          setServerIP('localhost');
+        }
+      }
     });
 
     socket.on('disconnect', (reason: any) => {

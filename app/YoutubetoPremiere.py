@@ -288,20 +288,22 @@ try:
     socketio = SocketIO(app, 
         cors_allowed_origins="*",
         async_mode='threading',
-        ping_timeout=120,  # Increased back to 120 for stability
-        ping_interval=60,  # Increased to 60 seconds for less aggressive pinging
-        max_http_buffer_size=50 * 1024 * 1024,  # 50MB buffer
-        transports=['websocket', 'polling'],
+        ping_timeout=60,  # Match client timeout
+        ping_interval=25,  # Match client interval (in seconds, not ms)
+        max_http_buffer_size=100 * 1024 * 1024,  # Increased to 100MB buffer
+        transports=['polling', 'websocket'],  # Start with polling first
         logger=False,
         engineio_logger=False,
         always_connect=False,
         reconnection=True,
-        reconnection_attempts=3,  # Reduced to 3 attempts to avoid infinite loops
-        reconnection_delay=2000,  # Increased delay
-        reconnection_delay_max=10000,  # Increased max delay
+        reconnection_attempts=5,  # Match client attempts
+        reconnection_delay=1000,  # Match client delay
+        reconnection_delay_max=5000,  # Match client max delay
         allow_upgrades=True,
         cookie=None,
-        manage_session=False
+        manage_session=False,
+        # Additional server stability options
+        cors_credentials=False
     )
 
     logging.info("Flask and SocketIO initialized successfully")

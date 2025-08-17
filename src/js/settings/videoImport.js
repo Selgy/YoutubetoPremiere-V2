@@ -2,15 +2,42 @@ import { io } from 'socket.io-client';
 import { evalTS, evalFile } from '../lib/utils/bolt';
 
 const getServerIP = async () => {
-    const possibleAddresses = ['localhost', '127.0.0.1', '192.168.56.1'];
+    const possibleAddresses = ['localhost', '127.0.0.1'];
     
     for (const address of possibleAddresses) {
         try {
-            const response = await fetch(`http://${address}:3002/get-ip`);
-            if (response.ok) {
-                const data = await response.json();
-                console.log('Successfully connected to server at:', address);
-                return data.ip;
+            // First try health check to see if server is running
+            const healthController = new AbortController();
+            const healthTimeout = setTimeout(() => healthController.abort(), 2000);
+            
+            const healthResponse = await fetch(`http://${address}:3002/health`, {
+                signal: healthController.signal
+            });
+            clearTimeout(healthTimeout);
+            
+            if (healthResponse.ok) {
+                console.log('Server health check passed for:', address);
+                
+                // Then try to get the IP  
+                try {
+                    const ipController = new AbortController();
+                    const ipTimeout = setTimeout(() => ipController.abort(), 2000);
+                    
+                    const response = await fetch(`http://${address}:3002/get-ip`, {
+                        signal: ipController.signal
+                    });
+                    clearTimeout(ipTimeout);
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        console.log('Successfully connected to server at:', address, 'with IP:', data.ip);
+                        return data.ip;
+                    }
+                } catch (ipError) {
+                    console.log(`IP endpoint failed for ${address}, using address directly:`, ipError);
+                    // If get-ip fails but health check passed, use the address directly
+                    return address;
+                }
             }
         } catch (error) {
             console.log(`Failed to connect to ${address}:`, error);
@@ -19,12 +46,27 @@ const getServerIP = async () => {
     
     // If we get here, try to use the last known working IP
     const lastKnownIP = localStorage.getItem('serverIP');
-    if (lastKnownIP) {
-        console.log('Using last known IP:', lastKnownIP);
-        return lastKnownIP;
+    if (lastKnownIP && lastKnownIP !== 'localhost') {
+        console.log('Trying last known IP:', lastKnownIP);
+        try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 2000);
+            
+            const response = await fetch(`http://${lastKnownIP}:3002/health`, {
+                signal: controller.signal
+            });
+            clearTimeout(timeout);
+            
+            if (response.ok) {
+                console.log('Last known IP still works:', lastKnownIP);
+                return lastKnownIP;
+            }
+        } catch (error) {
+            console.log('Last known IP failed:', error);
+        }
     }
     
-    console.error('Could not determine server IP, falling back to localhost');
+    console.log('Could not determine server IP, falling back to localhost');
     return 'localhost';
 };
 
@@ -44,16 +86,14 @@ export async function setupVideoImportHandler(csInterface) {
         socket = io(`http://${serverIP}:3002`, {
             transports: ['polling', 'websocket'],
             reconnection: true,
-            reconnectionAttempts: Infinity,
+            reconnectionAttempts: 5,
             reconnectionDelay: 1000,
             reconnectionDelayMax: 5000,
             timeout: 20000,
             forceNew: true,
             upgrade: true,
-            rememberUpgrade: true,
-            rejectUnauthorized: false,
+            rememberUpgrade: false,
             autoConnect: true,
-            withCredentials: true,
             query: { client_type: 'premiere' }
         });
 
@@ -73,10 +113,18 @@ export async function setupVideoImportHandler(csInterface) {
 
         socket.on('connect_error', (error) => {
             console.error('Connection error:', error);
-            if (!reconnectInterval) {
+            if (!reconnectInterval && reconnectAttempts < 5) {
                 reconnectInterval = setInterval(() => {
                     reconnectAttempts++;
-                    console.log(`Attempting to reconnect... (${reconnectAttempts})`);
+                    console.log(`Attempting to reconnect... (${reconnectAttempts}/5)`);
+                    if (reconnectAttempts >= 5) {
+                        clearInterval(reconnectInterval);
+                        reconnectInterval = null;
+                        console.log('Max reconnection attempts reached for video import handler');
+                        // Try to fall back to localhost
+                        localStorage.removeItem('serverIP');
+                        return;
+                    }
                     connectSocket();
                 }, 5000);
             }
