@@ -13,7 +13,7 @@ declare const window: Window & {
 
 // Get the local IP address from the server
 const getLocalIP = async () => {
-  const possibleAddresses = ['localhost', '127.0.0.1'];
+  const possibleAddresses = ['localhost', '127.0.0.1', '192.168.56.1'];
   
   for (const address of possibleAddresses) {
     try {

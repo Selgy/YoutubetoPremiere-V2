@@ -2,7 +2,7 @@ import { io } from 'socket.io-client';
 import { evalTS, evalFile } from '../lib/utils/bolt';
 
 const getServerIP = async () => {
-    const possibleAddresses = ['localhost', '127.0.0.1'];
+    const possibleAddresses = ['localhost', '127.0.0.1', '192.168.56.1'];
     
     for (const address of possibleAddresses) {
         try {
