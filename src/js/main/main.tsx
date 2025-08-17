@@ -13,15 +13,42 @@ declare const window: Window & {
 
 // Get the local IP address from the server
 const getLocalIP = async () => {
-  const possibleAddresses = ['localhost', '127.0.0.1', '192.168.56.1'];
+  const possibleAddresses = ['localhost', '127.0.0.1'];
   
   for (const address of possibleAddresses) {
     try {
-      const response = await fetch(`http://${address}:3002/get-ip`);
-      if (response.ok) {
-        const data = await response.json();
-        console.log('Successfully connected to server at:', address);
-        return data.ip;
+      // First try to check if server is alive with health check
+      const healthController = new AbortController();
+      const healthTimeout = setTimeout(() => healthController.abort(), 2000);
+      
+      const healthResponse = await fetch(`http://${address}:3002/health`, {
+        signal: healthController.signal
+      });
+      clearTimeout(healthTimeout);
+      
+      if (healthResponse.ok) {
+        console.log('Server health check passed for:', address);
+        
+        // Then try to get the IP
+        try {
+          const ipController = new AbortController();
+          const ipTimeout = setTimeout(() => ipController.abort(), 2000);
+          
+          const ipResponse = await fetch(`http://${address}:3002/get-ip`, {
+            signal: ipController.signal
+          });
+          clearTimeout(ipTimeout);
+          
+          if (ipResponse.ok) {
+            const data = await ipResponse.json();
+            console.log('Successfully connected to server at:', address, 'with IP:', data.ip);
+            return data.ip;
+          }
+        } catch (ipError) {
+          console.log(`IP endpoint failed for ${address}, using address directly:`, ipError);
+          // If get-ip fails but health check passed, use the address directly
+          return address;
+        }
       }
     } catch (error) {
       console.log(`Failed to connect to ${address}:`, error);
@@ -30,12 +57,27 @@ const getLocalIP = async () => {
   
   // If we get here, try to use the last known working IP
   const lastKnownIP = localStorage.getItem('serverIP');
-  if (lastKnownIP) {
-    console.log('Using last known IP:', lastKnownIP);
-    return lastKnownIP;
+  if (lastKnownIP && lastKnownIP !== 'localhost') {
+    console.log('Trying last known IP:', lastKnownIP);
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 2000);
+      
+      const response = await fetch(`http://${lastKnownIP}:3002/health`, {
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+      
+      if (response.ok) {
+        console.log('Last known IP still works:', lastKnownIP);
+        return lastKnownIP;
+      }
+    } catch (error) {
+      console.log('Last known IP failed:', error);
+    }
   }
   
-  console.error('Could not determine server IP, falling back to localhost');
+  console.log('Could not determine server IP, falling back to localhost');
   return 'localhost';
 };
 
@@ -139,7 +181,14 @@ const Main = () => {
     const checkLicenseAndStart = async () => {
       setIsLoading(true);
       try {
-        const response = await fetch(`http://${serverIP}:3002/check-license`);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        
+        const response = await fetch(`http://${serverIP}:3002/check-license`, {
+          signal: controller.signal
+        });
+        clearTimeout(timeout);
+        
         const data = await response.json();
         
         if (data.isValid) {
@@ -152,32 +201,33 @@ const Main = () => {
       setIsLoading(false);
     };
 
-    if (serverIP !== 'localhost') {
+    if (serverIP && serverIP !== '') {
       checkLicenseAndStart();
     }
   }, [serverIP]);
 
   useEffect(() => {
-    if (serverIP !== 'localhost') {
+    if (serverIP && serverIP !== '' && serverIP !== 'localhost') {
       checkForUpdates();
     }
   }, [serverIP]);
 
   useEffect(() => {
-    if (serverIP === 'localhost') return;
+    if (!serverIP || serverIP === '') return;
 
+    console.log('Attempting to connect to WebSocket server at:', serverIP);
     const socket = io(`http://${serverIP}:3002`, {
       transports: ['polling', 'websocket'],
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      timeout: 60000,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 2000,
+      reconnectionDelayMax: 10000,
+      timeout: 10000,
       forceNew: true,
       upgrade: true,
-      rememberUpgrade: true,
+      rememberUpgrade: false,
       rejectUnauthorized: false,
       autoConnect: true,
-      withCredentials: true,
+      withCredentials: false,
       query: { client_type: 'premiere' }
     });
 

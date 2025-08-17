@@ -551,12 +551,33 @@ def register_routes(app, socketio, settings):
             hostname = socket.gethostname()
             possible_ips = []
             
-            # Get all network interfaces
-            for interface in socket.getaddrinfo(hostname, None):
-                ip = interface[4][0]
-                # Only include IPv4 addresses that aren't localhost
-                if '.' in ip and ip != '127.0.0.1':
-                    possible_ips.append(ip)
+            # Get all network interfaces - improved for macOS
+            try:
+                for interface in socket.getaddrinfo(hostname, None):
+                    ip = interface[4][0]
+                    # Only include IPv4 addresses that aren't localhost
+                    if '.' in ip and ip != '127.0.0.1' and not ip.startswith('169.254'):
+                        possible_ips.append(ip)
+            except Exception as e:
+                logging.warning(f'getaddrinfo failed: {e}')
+            
+            # Additional method for macOS - try netifaces-like approach
+            if not possible_ips:
+                try:
+                    import subprocess
+                    if sys.platform == 'darwin':
+                        # Use ifconfig to get IP addresses on macOS
+                        result = subprocess.run(['ifconfig'], capture_output=True, text=True, timeout=5)
+                        if result.returncode == 0:
+                            import re
+                            # Look for inet addresses
+                            ip_pattern = r'inet (\d+\.\d+\.\d+\.\d+)'
+                            ips = re.findall(ip_pattern, result.stdout)
+                            for ip in ips:
+                                if ip != '127.0.0.1' and not ip.startswith('169.254'):
+                                    possible_ips.append(ip)
+                except Exception as e:
+                    logging.warning(f'ifconfig method failed: {e}')
             
             # If we found any valid IPs, return the first one
             if possible_ips:
@@ -564,10 +585,19 @@ def register_routes(app, socketio, settings):
                 logging.info(f'Found {len(possible_ips)} IP address(es)')
                 return jsonify({'ip': possible_ips[0]})
             
-            # Fallback to the basic method
-            local_ip = socket.gethostbyname(hostname)
-            logging.info(f'Using fallback IP method')
-            return jsonify({'ip': local_ip})
+            # Fallback methods
+            try:
+                # Try the basic hostname method
+                local_ip = socket.gethostbyname(hostname)
+                if local_ip != '127.0.0.1':
+                    logging.info(f'Using hostname fallback method')
+                    return jsonify({'ip': local_ip})
+            except Exception as e:
+                logging.warning(f'hostname method failed: {e}')
+            
+            # Last resort: return localhost
+            logging.info(f'All IP detection methods failed, returning localhost')
+            return jsonify({'ip': 'localhost'})
             
         except Exception as e:
             logging.error(f'Error getting IP address: {e}')
