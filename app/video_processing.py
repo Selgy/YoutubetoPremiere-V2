@@ -22,7 +22,7 @@ import glob
 import json
 import tempfile
 import shutil
-from yt_dlp.utils import download_range_func  # Importer la fonction correcte
+# Removed incorrect import of download_range_func
 import urllib.parse as urlparse
 
 # Global variable to store emit_to_client_type function
@@ -875,8 +875,9 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             format_str = f'bestvideo[height<={sanitized_resolution}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/best[vcodec^=avc1][ext=mp4]/best'
         logging.info(f"Using format string with AVC1 codec and language preference: {format_str}")
         
-        # CORRECTION: Utiliser download_ranges au lieu de download_sections
-        logging.info(f"Using download ranges: start={clip_start}, end={clip_end}")
+        # Configure download ranges for clip extraction
+        clip_duration = clip_end - clip_start
+        logging.info(f"Clip download configured: start={clip_start}s, end={clip_end}s, duration={clip_duration}s")
         
         # Progress hook to track download progress and send updates
         # Progress throttling variables for clips
@@ -911,7 +912,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             'format': format_str,
             'outtmpl': video_file_path,
             'force_keyframes_at_cuts': True,
-            'download_ranges': download_range_func(None, [(clip_start, clip_end)]),  # Use correct function
+            'download_ranges': lambda info_dict, ydl: [{'start_time': clip_start, 'end_time': clip_end}],  # Function that returns ranges as dicts
             'no_part': True,
             'progress_hooks': [progress_hook],
         })

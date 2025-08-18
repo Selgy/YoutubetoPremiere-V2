@@ -2539,10 +2539,32 @@ function addButtons() {
             }));
             
             buttonsContainer.appendChild(createButton('clip-button', 'Clip', () => {
-                const videoPlayer = document.querySelector('video');
+                // Try multiple selectors to find the main YouTube video player
+                let videoPlayer = document.querySelector('video.html5-main-video');
+                if (!videoPlayer) {
+                    videoPlayer = document.querySelector('#movie_player video');
+                }
+                if (!videoPlayer) {
+                    videoPlayer = document.querySelector('.html5-video-player video');
+                }
+                if (!videoPlayer) {
+                    // Fallback to any video element
+                    const videos = document.querySelectorAll('video');
+                    videoPlayer = videos.length > 0 ? videos[0] : null;
+                }
+                
+                console.log('YTP: Video player found:', videoPlayer);
+                console.log('YTP: All video elements:', document.querySelectorAll('video'));
+                
                 if (videoPlayer) {
                     const currentTime = videoPlayer.currentTime;
+                    console.log('YTP: Current time from video player:', currentTime);
+                    console.log('YTP: Video duration:', videoPlayer.duration);
+                    console.log('YTP: Video paused:', videoPlayer.paused);
+                    console.log('YTP: Video src:', videoPlayer.src || videoPlayer.currentSrc);
                     sendURL('clip', { currentTime });
+                } else {
+                    console.error('YTP: No video player found with any selector');
                 }
             }));
             
