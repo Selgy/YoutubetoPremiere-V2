@@ -164,7 +164,7 @@ def is_port_in_use(port, host='localhost'):
         except socket.error:
             return True
 
-def check_server_running(port=3002):
+def check_server_running(port=17845):
     """Check if server is already running by testing if the port is in use and if API responds"""
     # First check if port is in use
     if not is_port_in_use(port):
@@ -267,8 +267,8 @@ if not ffmpeg_found:
     logging.error("FFmpeg not found in any of the expected locations")
 
 # Check if the server is already running before starting
-if check_server_running(3002):
-    logging.info("Server already running on port 3002. Exiting.")
+if check_server_running(17845):
+    logging.info("Server already running on port 17845. Exiting.")
     print("YoutubetoPremiere server is already running.")
     # Don't exit immediately if running in development mode
     if not getattr(sys, 'frozen', False):
@@ -824,7 +824,7 @@ def run_server():
     cleanup_thread = periodic_cleanup()
 
     # Start server without exposing IP addresses
-    logging.info(f'Starting server on all interfaces on port 3002')
+    logging.info(f'Starting server on all interfaces on port 17845')
 
     # Disable Werkzeug production warning
     import warnings
@@ -836,7 +836,7 @@ def run_server():
             socketio.run(
         app, 
         host='0.0.0.0',  # Bind to all available interfaces
-        port=3002,
+        port=17845,
         debug=False,
                 use_reloader=False,
                 log_output=False  # Disable Werkzeug logs
@@ -847,7 +847,7 @@ def run_server():
                 logging.warning("Falling back to Flask app.run() due to Werkzeug restrictions")
                 app.run(
                     host='0.0.0.0',
-                    port=3002,
+                    port=17845,
                     debug=False,
                     use_reloader=False,
                     threaded=True

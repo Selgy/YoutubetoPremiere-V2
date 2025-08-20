@@ -1,8 +1,9 @@
 import { io } from 'socket.io-client';
-import { evalTS, evalFile } from '../lib/utils/bolt';
+import { evalTS, evalFile, evalES } from '../lib/utils/bolt';
 
 const getServerIP = async () => {
-    const possibleAddresses = ['localhost', '127.0.0.1'];
+    // Prioritize 127.0.0.1 to avoid firewall/antivirus issues
+    const possibleAddresses = ['127.0.0.1', 'localhost'];
     
     for (const address of possibleAddresses) {
         try {
@@ -10,7 +11,7 @@ const getServerIP = async () => {
             const healthController = new AbortController();
             const healthTimeout = setTimeout(() => healthController.abort(), 2000);
             
-            const healthResponse = await fetch(`http://${address}:3002/health`, {
+            const healthResponse = await fetch(`http://${address}:17845/health`, {
                 signal: healthController.signal
             });
             clearTimeout(healthTimeout);
@@ -23,7 +24,7 @@ const getServerIP = async () => {
                     const ipController = new AbortController();
                     const ipTimeout = setTimeout(() => ipController.abort(), 2000);
                     
-                    const response = await fetch(`http://${address}:3002/get-ip`, {
+                    const response = await fetch(`http://${address}:17845/get-ip`, {
                         signal: ipController.signal
                     });
                     clearTimeout(ipTimeout);
@@ -31,11 +32,23 @@ const getServerIP = async () => {
                     if (response.ok) {
                         const data = await response.json();
                         console.log('Successfully connected to server at:', address, 'with IP:', data.ip);
+                        
+                        // FORCE 127.0.0.1 to avoid firewall/antivirus issues
+                        if (address === 'localhost' || address === '127.0.0.1') {
+                            console.log('🔒 Forcing 127.0.0.1 instead of', data.ip, 'to bypass security restrictions');
+                            return '127.0.0.1';
+                        }
+                        
                         return data.ip;
                     }
                 } catch (ipError) {
                     console.log(`IP endpoint failed for ${address}, using address directly:`, ipError);
                     // If get-ip fails but health check passed, use the address directly
+                    // Force 127.0.0.1 for security bypass
+                    if (address === 'localhost' || address === '127.0.0.1') {
+                        console.log('🔒 Forcing 127.0.0.1 for security bypass');
+                        return '127.0.0.1';
+                    }
                     return address;
                 }
             }
@@ -52,7 +65,7 @@ const getServerIP = async () => {
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 2000);
             
-            const response = await fetch(`http://${lastKnownIP}:3002/health`, {
+            const response = await fetch(`http://${lastKnownIP}:17845/health`, {
                 signal: controller.signal
             });
             clearTimeout(timeout);
@@ -66,8 +79,8 @@ const getServerIP = async () => {
         }
     }
     
-    console.log('Could not determine server IP, falling back to localhost');
-    return 'localhost';
+    console.log('Could not determine server IP, falling back to 127.0.0.1 for security compatibility');
+    return '127.0.0.1';
 };
 
 export async function setupVideoImportHandler(csInterface) {
@@ -83,15 +96,15 @@ export async function setupVideoImportHandler(csInterface) {
             socket.close();
         }
 
-        socket = io(`http://${serverIP}:3002`, {
-            transports: ['polling', 'websocket'],
+        socket = io(`http://${serverIP}:17845`, {
+            transports: ['polling'], // Force polling only to avoid WebSocket instability
             reconnection: true,
-            reconnectionAttempts: 5,
-            reconnectionDelay: 1000,
-            reconnectionDelayMax: 5000,
-            timeout: 20000,
+            reconnectionAttempts: 10, // More attempts
+            reconnectionDelay: 2000, // Longer delays
+            reconnectionDelayMax: 10000,
+            timeout: 30000, // Longer timeout
             forceNew: true,
-            upgrade: true,
+            upgrade: false, // Disable upgrade to WebSocket
             rememberUpgrade: false,
             autoConnect: true,
             query: { client_type: 'premiere' }
@@ -103,12 +116,25 @@ export async function setupVideoImportHandler(csInterface) {
         let lastImportedPath = null;
 
         socket.on('connect', () => {
-            console.log('Connected to Python server');
+            console.log('✅ CEP Extension connected to Python server');
+            console.log('- Socket ID:', socket.id);
+            console.log('- Transport:', socket.io.engine.transport.name);
+            console.log('- Connected at:', new Date().toISOString());
             reconnectAttempts = 0;
             if (reconnectInterval) {
                 clearInterval(reconnectInterval);
                 reconnectInterval = null;
             }
+            
+            // Test connectivity every 30 seconds
+            const healthCheck = setInterval(() => {
+                if (socket.connected) {
+                    console.log('🔍 Connection health check - Socket still connected');
+                } else {
+                    console.error('❌ Connection health check - Socket disconnected!');
+                    clearInterval(healthCheck);
+                }
+            }, 30000);
         });
 
         socket.on('connect_error', (error) => {
@@ -130,15 +156,19 @@ export async function setupVideoImportHandler(csInterface) {
             }
         });
 
-        socket.on('disconnect', () => {
-            console.log('Disconnected from Python server');
+        socket.on('disconnect', (reason) => {
+            console.error('❌ CEP Extension disconnected from Python server');
+            console.error('- Reason:', reason || 'unknown');
+            console.error('- Time:', new Date().toISOString());
+            console.error('- Socket ID was:', socket.id);
+            
             pendingImports.clear();
             importedPaths.clear();
             
             // Attempt to reconnect if not already trying
             if (!reconnectInterval) {
                 reconnectAttempts++;
-                console.log(`Attempting to reconnect... (${reconnectAttempts})`);
+                console.log(`🔄 Attempting to reconnect... (${reconnectAttempts})`);
                 setTimeout(connectSocket, 5000);
             }
         });
@@ -161,6 +191,39 @@ export async function setupVideoImportHandler(csInterface) {
 
                 const result = await evalTS('importVideoToSource', videoPath);
                 console.log('Import result:', result, 'Type:', typeof result);
+                
+                // If result is undefined or failed, run diagnostics
+                if (result === undefined || (result && result.success === false)) {
+                    console.log('Running diagnostics due to import failure...');
+                    try {
+                        const extRoot = csInterface.getSystemPath('extension');
+                        
+                        // Load diagnostic scripts
+                        await evalFile(`${extRoot}/js/settings/diagnostics.jsx`);
+                        await evalFile(`${extRoot}/js/settings/import-test.jsx`);
+                        
+                        // Test the specific file that failed
+                        console.log('Running detailed import test for:', videoPath);
+                        const testResult = await evalES(`$._ext.testImportFile("${videoPath.replace(/\\/g, '\\\\')}")`, true);
+                        console.log('Detailed import test result:');
+                        console.log('- Type:', typeof testResult);
+                        console.log('- Raw:', testResult);
+                        try {
+                            const parsed = typeof testResult === 'string' ? JSON.parse(testResult) : testResult;
+                            console.log('- Parsed:', parsed);
+                            if (parsed && typeof parsed === 'object') {
+                                Object.keys(parsed).forEach(key => {
+                                    console.log(`  ${key}:`, parsed[key]);
+                                });
+                            }
+                        } catch(e) {
+                            console.log('- Parse error:', e.message);
+                        }
+                        
+                    } catch(diagError) {
+                        console.error('Diagnostic script failed:', diagError);
+                    }
+                }
 
                 let response;
                 let success = false;
@@ -239,9 +302,14 @@ export async function setupVideoImportHandler(csInterface) {
         });
 
         socket.on('import_video', async (data) => {
+            console.log('📥 Received import_video event from Python server');
+            console.log('- Data received:', JSON.stringify(data, null, 2));
+            console.log('- Socket connected:', socket.connected);
+            console.log('- Time:', new Date().toISOString());
             console.log('Received import request for:', data.path);
+            
             if (!data.path) {
-                console.error('No path provided for import');
+                console.error('❌ No path provided for import');
                 return;
             }
 

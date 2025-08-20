@@ -12,7 +12,7 @@ let isProcessing = false;
 // Function to check if server is already running
 async function isServerRunning() {
     try {
-        const response = await fetch('http://localhost:3002/health', {
+        const response = await fetch('http://localhost:17845/health', {
             method: 'GET',
             timeout: 1000
         });

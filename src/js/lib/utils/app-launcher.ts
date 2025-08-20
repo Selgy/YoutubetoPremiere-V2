@@ -124,7 +124,7 @@ export class AppLauncher {
   async waitForServer(maxAttempts = 30): Promise<boolean> {
     for (let i = 0; i < maxAttempts; i++) {
       try {
-        const response = await fetch('http://localhost:3002/health');
+        const response = await fetch('http://localhost:17845/health');
         if (response.ok) {
           console.log('Server is ready!');
           return true;

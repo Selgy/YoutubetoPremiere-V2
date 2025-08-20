@@ -88,10 +88,16 @@ export const importVideoToSource = (videoPath: string) => {
       };
     }
 
-    // Normalize the path and check if file exists
-    var normalizedPath = normalizePath(videoPath);
+    // Use the functions from $._ext if available, otherwise fallback to local functions
+    //@ts-ignore - ExtendScript globals
+    var pathNormalizer = (typeof $._ext !== 'undefined' && $._ext.normalizePath) ? $._ext.normalizePath : normalizePath;
+    //@ts-ignore - ExtendScript globals  
+    var existsChecker = (typeof $._ext !== 'undefined' && $._ext.fileExists) ? $._ext.fileExists : fileExists;
     
-    if (!fileExists(normalizedPath)) {
+    // Normalize the path and check if file exists
+    var normalizedPath = pathNormalizer(videoPath);
+    
+    if (!existsChecker(normalizedPath)) {
       return {
         success: false,
         error: "Video file not found at path: " + normalizedPath,
@@ -104,8 +110,12 @@ export const importVideoToSource = (videoPath: string) => {
     var project = app.project;
     var rootItem = project.rootItem;
 
+    // Use the getAllNodeIds function from $._ext if available, otherwise fallback to local function
+    //@ts-ignore - ExtendScript globals
+    var nodeIdsGetter = (typeof $._ext !== 'undefined' && $._ext.getAllNodeIds) ? $._ext.getAllNodeIds : getAllNodeIds;
+    
     // Get the node IDs before import
-    var beforeNodeIds = getAllNodeIds(rootItem);
+    var beforeNodeIds = nodeIdsGetter(rootItem);
 
     // Import the file
     var importedFiles = project.importFiles([normalizedPath], 
@@ -128,7 +138,7 @@ export const importVideoToSource = (videoPath: string) => {
     $.sleep(2000);
     
     // Get the node IDs after import
-    var afterNodeIds = getAllNodeIds(rootItem);
+    var afterNodeIds = nodeIdsGetter(rootItem);
     
     // Find the new item(s)
     var newItems = [];

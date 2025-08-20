@@ -233,11 +233,17 @@
     };
 
     // Expose the function in the correct namespace for evalTS
-    if (typeof $["com.youtubetoPremiereV2.cep"] === 'undefined') {
-        $["com.youtubetoPremiereV2.cep"] = {};
+    if (typeof $["com.selgy.youtubetopremiere"] === 'undefined') {
+        $["com.selgy.youtubetopremiere"] = {};
     }
     
     // Expose the function for evalTS to find
+    $["com.selgy.youtubetopremiere"].importVideoToSource = $._ext.importVideoToSource;
+    
+    // Also expose under the new namespace for compatibility
+    if (typeof $["com.youtubetoPremiereV2.cep"] === 'undefined') {
+        $["com.youtubetoPremiereV2.cep"] = {};
+    }
     $["com.youtubetoPremiereV2.cep"].importVideoToSource = $._ext.importVideoToSource;
 
     safeDebug("importVideo.jsx initialization complete - function exposed");

@@ -23,7 +23,7 @@ async function checkServerAvailability() {
     lastServerCheck = now;
     
     try {
-        const response = await fetch('http://localhost:3002/health', { 
+        const response = await fetch('http://localhost:17845/health', { 
             method: 'GET',
             timeout: 3000 
         });
@@ -1124,7 +1124,7 @@ function initializeSocket() {
             socket = null;
         }
         
-        socket = io('http://localhost:3002', {
+        socket = io('http://localhost:17845', {
             transports: ['websocket', 'polling'],
             upgrade: true,
             rememberUpgrade: false,
@@ -1193,7 +1193,7 @@ function initializeSocket() {
 
         socket.on('connect', () => {
             // Log successful connection
-            console.log('🔌 [SOCKET] Successfully connected to Python server on port 3002');
+            console.log('🔌 [SOCKET] Successfully connected to Python server on port 17845');
             reconnectAttempts = 0;
             
             // Check extension validity on connect
@@ -1983,13 +1983,13 @@ function sendURL(importType, additionalData = {}) {
         
         function proceedWithServerCheck() {
         // First check if server is running
-        fetch('http://localhost:3002/health')
+        fetch('http://localhost:17845/health')
         .then(response => {
             if (!response.ok) {
                 throw new Error('Server not running');
             }
             // If server is running, then check license
-            return fetch('http://localhost:3002/check-license');
+            return fetch('http://localhost:17845/check-license');
         })
         .then(response => response.json())
         .then(data => {
@@ -2057,7 +2057,7 @@ function sendURL(importType, additionalData = {}) {
                 // Use the current page URL directly to preserve all parameters and context
                 currentVideoUrl = window.location.href;
                 
-                const serverUrl = 'http://localhost:3002/handle-video-url';
+                const serverUrl = 'http://localhost:17845/handle-video-url';
                 
                 // Always récupérer les cookies YouTube, même si l'authentification semble incomplète
                 getCookiesForServer().then(cookiesData => {

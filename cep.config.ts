@@ -3,7 +3,7 @@ import { version } from "./package.json";
 
 const config: CEP_Config = {
   version,
-  id: "com.youtubetoPremiereV2.cep",
+  id: "com.selgy.youtubetopremiere",
   displayName: "YoutubetoPremiere V2",
   symlink: "local",
   port: 4000,

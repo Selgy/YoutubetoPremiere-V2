@@ -21,7 +21,7 @@ const getLocalIP = async () => {
       const healthController = new AbortController();
       const healthTimeout = setTimeout(() => healthController.abort(), 2000);
       
-      const healthResponse = await fetch(`http://${address}:3002/health`, {
+      const healthResponse = await fetch(`http://${address}:17845/health`, {
         signal: healthController.signal
       });
       clearTimeout(healthTimeout);
@@ -34,7 +34,7 @@ const getLocalIP = async () => {
           const ipController = new AbortController();
           const ipTimeout = setTimeout(() => ipController.abort(), 2000);
           
-          const ipResponse = await fetch(`http://${address}:3002/get-ip`, {
+          const ipResponse = await fetch(`http://${address}:17845/get-ip`, {
             signal: ipController.signal
           });
           clearTimeout(ipTimeout);
@@ -63,7 +63,7 @@ const getLocalIP = async () => {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 2000);
       
-      const response = await fetch(`http://${lastKnownIP}:3002/health`, {
+      const response = await fetch(`http://${lastKnownIP}:17845/health`, {
         signal: controller.signal
       });
       clearTimeout(timeout);
@@ -184,7 +184,7 @@ const Main = () => {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 5000);
         
-        const response = await fetch(`http://${serverIP}:3002/check-license`, {
+        const response = await fetch(`http://${serverIP}:17845/check-license`, {
           signal: controller.signal
         });
         clearTimeout(timeout);
@@ -216,7 +216,7 @@ const Main = () => {
     if (!serverIP || serverIP === '') return;
 
     console.log('Attempting to connect to WebSocket server at:', serverIP);
-    const socket = io(`http://${serverIP}:3002`, {
+    const socket = io(`http://${serverIP}:17845`, {
       transports: ['polling', 'websocket'],
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
@@ -315,7 +315,7 @@ const Main = () => {
     
     setIsCheckingUpdates(true);
     try {
-      const response = await fetch(`http://${serverIP}:3002/check-updates`);
+      const response = await fetch(`http://${serverIP}:17845/check-updates`);
       const data = await response.json();
       
       if (data.success) {
@@ -350,7 +350,7 @@ const Main = () => {
     setErrorMessage('');
     
     try {
-      const response = await fetch(`http://${serverIP}:3002/validate-license`, {
+      const response = await fetch(`http://${serverIP}:17845/validate-license`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -378,7 +378,7 @@ const Main = () => {
 
   const loadSettings = async () => {
     try {
-      const response = await fetch(`http://${serverIP}:3002/settings`);
+      const response = await fetch(`http://${serverIP}:17845/settings`);
       if (response.ok) {
         const serverSettings = await response.json();
         setSettings(serverSettings);
@@ -413,7 +413,7 @@ const Main = () => {
         licenseKey: settings.licenseKey
       };
 
-      const saveResponse = await fetch(`http://${serverIP}:3002/settings`, {
+      const saveResponse = await fetch(`http://${serverIP}:17845/settings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -473,7 +473,7 @@ const Main = () => {
     setSettings(newSettings);
     
     try {
-      const response = await fetch(`http://${serverIP}:3002/settings`, {
+      const response = await fetch(`http://${serverIP}:17845/settings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

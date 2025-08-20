@@ -164,7 +164,7 @@ async function checkServerStatus() {
     const statusText = statusElement.querySelector('span:last-child');
     
     try {
-        const response = await fetch('http://localhost:3002/health', { 
+        const response = await fetch('http://localhost:17845/health', { 
             method: 'GET',
             timeout: 3000 
         });
