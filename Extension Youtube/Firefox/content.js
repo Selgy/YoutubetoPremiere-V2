@@ -5,7 +5,7 @@
 const extensionAPI = typeof browser !== 'undefined' ? browser : chrome;
 
 // Debug: Version check
-console.log('YTP: Content script loaded - Version 3.0.13 with Enhanced Cookie Extraction & Debug (Firefox)');
+console.log('YTP: Content script loaded - Version 3.0.14 with Enhanced Cookie Extraction & Debug (Firefox)');
 
 // Server availability state
 let serverAvailable = false;
@@ -3284,6 +3284,7 @@ async function enhancedAuthCheck() {
         return false;
     }
 } 
+
 
 
 

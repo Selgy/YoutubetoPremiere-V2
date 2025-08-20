@@ -104,7 +104,7 @@ const Main = () => {
   const [updateInfo, setUpdateInfo] = useState<any>(null);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const currentVersion = '3.0.13';
+  const currentVersion = '3.0.14';
   const [currentPage, setCurrentPage] = useState('main');
   const [serverIP, setServerIP] = useState('localhost');
   const [isCEPEnvironment, setIsCEPEnvironment] = useState(false);
@@ -851,6 +851,7 @@ const Main = () => {
 };
 
 export default Main;
+
 
 
 
