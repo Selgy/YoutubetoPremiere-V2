@@ -305,6 +305,30 @@ jobs:
           echo "Installing NSIS..."
           choco install nsis -y --force
           echo "NSIS installation completed"
+          
+          # Add NSIS to PATH
+          echo "Adding NSIS to PATH..."
+          $nsisPath = "C:\Program Files (x86)\NSIS"
+          echo "NSIS_PATH=$nsisPath" >> $env:GITHUB_ENV
+          echo "$nsisPath" >> $env:GITHUB_PATH
+          
+          # Verify NSIS installation
+          echo "Verifying NSIS installation..."
+          & "$nsisPath\makensis.exe" /VERSION
+        shell: powershell
+
+      - name: Setup NSIS PATH (for cached installation)
+        if: steps.cache-nsis.outputs.cache-hit == 'true'
+        run: |
+          echo "Setting up NSIS PATH for cached installation..."
+          $nsisPath = "C:\Program Files (x86)\NSIS"
+          echo "NSIS_PATH=$nsisPath" >> $env:GITHUB_ENV
+          echo "$nsisPath" >> $env:GITHUB_PATH
+          
+          # Verify NSIS installation
+          echo "Verifying cached NSIS installation..."
+          & "$nsisPath\makensis.exe" /VERSION
+        shell: powershell
 
       - name: Install NSIS nsProcess plugin
         run: |
@@ -592,7 +616,11 @@ jobs:
           # Get version from package.json for NSIS
           $version = (Get-Content package.json | ConvertFrom-Json).version
           echo "App version: $version"
-          echo "NSIS version: $(makensis /VERSION)"
+          if (Get-Command makensis -ErrorAction SilentlyContinue) {
+            echo "NSIS version: $(makensis /VERSION)"
+          } else {
+            echo "NSIS version: $(& 'C:\Program Files (x86)\NSIS\makensis.exe' /VERSION)"
+          }
           echo "Current directory: $(Get-Location)"
           
           # Verify required files exist
@@ -643,7 +671,12 @@ jobs:
           
           echo "Starting NSIS compilation..."
           # Pass version to NSIS as a define parameter
-          makensis /DVERSION=$version installer.nsi
+          if (Get-Command makensis -ErrorAction SilentlyContinue) {
+            makensis /DVERSION=$version installer.nsi
+          } else {
+            # Use full path if makensis not in PATH
+            & "C:\Program Files (x86)\NSIS\makensis.exe" /DVERSION=$version installer.nsi
+          }
           
           echo "NSIS compilation completed"
           echo "================ NSIS INSTALLER BUILD END ================"
