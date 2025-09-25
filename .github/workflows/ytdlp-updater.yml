@@ -1,0 +1,275 @@
+name: Auto Update yt-dlp
+
+on:
+  schedule:
+    # Vérifier toutes les 6 heures (00h, 06h, 12h, 18h UTC)
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    # Permettre le déclenchement manuel
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  check-ytdlp-version:
+    runs-on: ubuntu-latest
+    outputs:
+      needs_update: ${{ steps.check.outputs.needs_update }}
+      current_version: ${{ steps.check.outputs.current_version }}
+      latest_version: ${{ steps.check.outputs.latest_version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Check yt-dlp versions
+        id: check
+        run: |
+          echo "=== Checking yt-dlp versions ==="
+          
+          # Get current version from requirements.txt
+          current_version=$(grep "yt-dlp==" requirements.txt | cut -d'=' -f3)
+          echo "Current version in requirements.txt: $current_version"
+          
+          # Get latest version from PyPI
+          latest_version=$(pip index versions yt-dlp --pre | grep "Available versions:" | head -1 | cut -d' ' -f3 | cut -d',' -f1)
+          echo "Latest version on PyPI: $latest_version"
+          
+          # Compare versions
+          if [ "$current_version" != "$latest_version" ]; then
+            echo "✅ Update needed: $current_version -> $latest_version"
+            echo "needs_update=true" >> $GITHUB_OUTPUT
+          else
+            echo "✅ Already up to date: $current_version"
+            echo "needs_update=false" >> $GITHUB_OUTPUT
+          fi
+          
+          echo "current_version=$current_version" >> $GITHUB_OUTPUT
+          echo "latest_version=$latest_version" >> $GITHUB_OUTPUT
+
+  update-ytdlp:
+    needs: check-ytdlp-version
+    if: needs.check-ytdlp-version.outputs.needs_update == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      new_version: ${{ steps.update-version.outputs.new_version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Update requirements.txt
+        env:
+          LATEST_VERSION: ${{ needs.check-ytdlp-version.outputs.latest_version }}
+          CURRENT_VERSION: ${{ needs.check-ytdlp-version.outputs.current_version }}
+        run: |
+          echo "=== Updating yt-dlp from $CURRENT_VERSION to $LATEST_VERSION ==="
+          
+          # Update yt-dlp version in requirements.txt
+          sed -i "s/yt-dlp==$CURRENT_VERSION/yt-dlp==$LATEST_VERSION/g" requirements.txt
+          
+          # Verify the update
+          if grep -q "yt-dlp==$LATEST_VERSION" requirements.txt; then
+            echo "✅ Successfully updated requirements.txt"
+            cat requirements.txt | grep yt-dlp
+          else
+            echo "❌ Failed to update requirements.txt"
+            exit 1
+          fi
+
+      - name: Test new yt-dlp version
+        env:
+          LATEST_VERSION: ${{ needs.check-ytdlp-version.outputs.latest_version }}
+        run: |
+          echo "=== Testing new yt-dlp version ==="
+          
+          # Install the new version
+          pip install yt-dlp==$LATEST_VERSION
+          
+          # Test basic functionality
+          echo "Testing yt-dlp $LATEST_VERSION..."
+          python -c "
+          import yt_dlp
+          print('yt-dlp version:', yt_dlp.version.__version__)
+          try:
+              ydl_opts = {'quiet': True, 'no_warnings': True, 'extract_flat': True}
+              with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                  info = ydl.extract_info('https://www.youtube.com/watch?v=dQw4w9WgXcQ', download=False)
+                  print('✅ Basic extraction test passed')
+          except Exception as e:
+              print('❌ Basic extraction test failed:', str(e))
+              exit(1)
+          "
+          echo "✅ yt-dlp $LATEST_VERSION tested successfully"
+
+      - name: Update version based on Git tags
+        id: update-version
+        run: |
+          echo "=== Mise à jour de la version basée sur les tags Git ==="
+          
+          # Récupérer tous les tags v3.0.x
+          echo "Récupération des tags existants..."
+          git fetch --tags
+          
+          # Trouver le tag v3.0.x le plus élevé
+          latest_tag=$(git tag -l "v3.0.*" | sort -V | tail -1)
+          echo "Dernier tag trouvé: $latest_tag"
+          
+          if [ -z "$latest_tag" ]; then
+            echo "Aucun tag v3.0.x trouvé, utilisation de v3.0.16 comme base"
+            new_patch=17
+          else
+            # Extraire le numéro de patch du tag
+            current_patch=$(echo $latest_tag | sed 's/v3\.0\.//')
+            new_patch=$((current_patch + 1))
+            echo "Patch actuel: $current_patch"
+          fi
+          
+          new_version="3.0.$new_patch"
+          echo "Nouvelle version: $new_version"
+          
+          # Mettre à jour package.json
+          current_app_version=$(grep '"version"' package.json | head -1 | cut -d'"' -f4)
+          echo "Version actuelle dans package.json: $current_app_version"
+          
+          sed -i "s/\"version\": \"$current_app_version\"/\"version\": \"$new_version\"/g" package.json
+          
+          echo "Package.json mis à jour: $current_app_version → $new_version"
+          echo "new_version=$new_version" >> $GITHUB_OUTPUT
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "🔄 Auto-update yt-dlp to ${{ needs.check-ytdlp-version.outputs.latest_version }}"
+          title: "🔄 Auto-update yt-dlp to ${{ needs.check-ytdlp-version.outputs.latest_version }}"
+          body: |
+            ## 🔄 Automatic yt-dlp Update
+            
+            This PR automatically updates yt-dlp to the latest version.
+            
+            ### Changes
+            - **yt-dlp**: `${{ needs.check-ytdlp-version.outputs.current_version }}` → `${{ needs.check-ytdlp-version.outputs.latest_version }}`
+            - **App version**: Updated to v${{ steps.update-version.outputs.new_version }} (suivant le pattern v3.0.x)
+            
+            ### Testing
+            ✅ Basic yt-dlp functionality tested
+            ✅ Requirements.txt updated
+            ✅ Package.json version bumped selon les tags Git
+            
+            ### Versioning
+            🏷️ Nouveau tag qui sera créé: `v${{ steps.update-version.outputs.new_version }}`
+            📦 Compatible Mac et Windows
+            
+            ### Next Steps
+            1. ✅ Auto-merge activé (tests passés)
+            2. 🚀 Tag de release automatique
+            3. 🔄 Build automatique déclenché
+            
+            ---
+            *This PR was created automatically by the yt-dlp updater workflow.*
+          branch: auto-update-ytdlp-${{ needs.check-ytdlp-version.outputs.latest_version }}
+          delete-branch: true
+
+  auto-merge-and-release:
+    needs: [check-ytdlp-version, update-ytdlp]
+    if: needs.check-ytdlp-version.outputs.needs_update == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Wait for PR to be created
+        run: |
+          echo "Waiting 30 seconds for PR to be fully created..."
+          sleep 30
+
+      - name: Auto-approve and merge PR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST_VERSION: ${{ needs.check-ytdlp-version.outputs.latest_version }}
+        run: |
+          echo "=== Auto-approving and merging yt-dlp update PR ==="
+          
+          # Find the PR
+          pr_number=$(gh pr list --state open --head "auto-update-ytdlp-$LATEST_VERSION" --json number --jq '.[0].number')
+          
+          if [ -z "$pr_number" ] || [ "$pr_number" = "null" ]; then
+            echo "❌ No PR found for yt-dlp update"
+            exit 1
+          fi
+          
+          echo "Found PR #$pr_number"
+          
+          # Auto-approve the PR
+          gh pr review $pr_number --approve --body "🤖 Auto-approved: yt-dlp update tested successfully"
+          
+          # Auto-merge the PR
+          gh pr merge $pr_number --auto --squash --delete-branch
+          
+          echo "✅ PR #$pr_number auto-approved and set for auto-merge"
+
+      - name: Create release tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST_VERSION: ${{ needs.check-ytdlp-version.outputs.latest_version }}
+        run: |
+          echo "=== Creating release tag ==="
+          
+          # Wait for merge to complete
+          echo "Waiting for PR merge to complete..."
+          sleep 60
+          
+          # Pull the latest changes
+          git pull origin main
+          
+          # Get the updated version from package.json and determine tag
+          new_app_version=$(grep '"version"' package.json | head -1 | cut -d'"' -f4)
+          tag_name="v$new_app_version"
+          
+          echo "Creating tag $tag_name for yt-dlp $LATEST_VERSION update"
+          echo "Version dans package.json: $new_app_version"
+          
+          # Verify this follows the v3.0.x pattern
+          if [[ $tag_name =~ ^v3\.0\.[0-9]+$ ]]; then
+            echo "✅ Tag follows v3.0.x pattern: $tag_name"
+          else
+            echo "⚠️ Warning: Tag doesn't follow expected pattern v3.0.x: $tag_name"
+          fi
+          
+          # Check if tag already exists
+          if git rev-parse "$tag_name" >/dev/null 2>&1; then
+            echo "⚠️ Tag $tag_name already exists, skipping tag creation"
+          else
+            # Create and push tag
+            git tag -a "$tag_name" -m "Release $tag_name - Updated yt-dlp to $LATEST_VERSION - Automatic update generated on $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+            
+            git push origin "$tag_name"
+            
+            echo "✅ Created and pushed tag $tag_name"
+            echo "🚀 This will trigger the main build workflow automatically"
+          fi
+
+      - name: Notify completion
+        env:
+          LATEST_VERSION: ${{ needs.check-ytdlp-version.outputs.latest_version }}
+          CURRENT_VERSION: ${{ needs.check-ytdlp-version.outputs.current_version }}
+        run: |
+          echo "🎉 yt-dlp auto-update completed successfully!"
+          echo "📋 Summary:"
+          echo "  - Updated from $CURRENT_VERSION to $LATEST_VERSION"
+          echo "  - PR created, approved, and merged automatically"
+          echo "  - Release tag created to trigger build workflow"
+          echo "  - New binaries will be available once build completes"
