@@ -8,6 +8,33 @@ import sys
 import platform
 import time
 import requests
+import hashlib
+
+# FFmpeg verification cache
+_ffmpeg_verified = False
+_ffmpeg_path_cached = None
+
+def clean_environment_path():
+    """Clean up the PATH environment variable to avoid conflicts"""
+    current_path = os.environ.get("PATH", "")
+    path_dirs = current_path.split(os.pathsep)
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    cleaned_dirs = []
+    for dir_path in path_dirs:
+        if dir_path and dir_path not in seen:
+            seen.add(dir_path)
+            cleaned_dirs.append(dir_path)
+    
+    # Set the cleaned PATH
+    cleaned_path = os.pathsep.join(cleaned_dirs)
+    os.environ["PATH"] = cleaned_path
+    
+    logging.info(f"Cleaned PATH: removed {len(path_dirs) - len(cleaned_dirs)} duplicate entries")
+    logging.debug(f"PATH length: {len(current_path)} -> {len(cleaned_path)} characters")
+    
+    return cleaned_path
 from utils import (
     is_premiere_running,
     import_video_to_premiere,
@@ -184,11 +211,30 @@ def verify_authentication_cookies(cookies_list):
     else:
         return False, "No authentication cookies found"
 
+# Cookies file cache to avoid repeated file creation
+_cookies_cache_file = None
+_cookies_cache_hash = None
+
 def create_cookies_file(cookies_list):
     """Create a temporary cookies file from cookies list"""
+    global _cookies_cache_file, _cookies_cache_hash
+    
     if not cookies_list:
         logging.warning("No cookies provided to create_cookies_file")
         return None
+    
+    # Calculate hash of cookies to check if we can reuse existing file
+    cookies_str = str(sorted((c.get('name', ''), c.get('value', '')) for c in cookies_list))
+    current_hash = hashlib.md5(cookies_str.encode()).hexdigest()
+    
+    # Check cache first - reuse file if cookies haven't changed
+    if (_cookies_cache_file and _cookies_cache_hash == current_hash and 
+        os.path.exists(_cookies_cache_file)):
+        logging.debug(f"Reusing cached cookies file: {_cookies_cache_file}")
+        return _cookies_cache_file
+    
+    # Cache miss - create new file
+    logging.debug("Cookies cache miss - creating new cookies file")
         
     # Verify authentication before creating file
     is_authenticated, auth_status = verify_authentication_cookies(cookies_list)
@@ -246,6 +292,10 @@ def create_cookies_file(cookies_list):
         
         # Validate the file was created properly
         if validate_cookies_file(cookies_file):
+            # Update cache
+            _cookies_cache_file = cookies_file
+            _cookies_cache_hash = current_hash
+            logging.debug(f"Updated cookies cache: {cookies_file}")
             return cookies_file
         else:
             return None
@@ -632,6 +682,16 @@ def get_ffmpeg_path():
 
 def check_ffmpeg(settings, socketio):
     """Check if ffmpeg is available and working"""
+    global _ffmpeg_verified, _ffmpeg_path_cached
+    
+    # Check cache first - avoid repeated verification
+    if _ffmpeg_verified and _ffmpeg_path_cached:
+        logging.debug("FFmpeg verification served from cache")
+        return {'success': True, 'path': _ffmpeg_path_cached}
+    
+    # Cache miss - verify FFmpeg
+    logging.debug("FFmpeg cache miss - verifying FFmpeg")
+    
     ffmpeg_path = get_ffmpeg_path()
     if not ffmpeg_path:
         error_msg = "FFmpeg not found. Please ensure ffmpeg is properly installed."
@@ -657,6 +717,11 @@ def check_ffmpeg(settings, socketio):
         
         if result.returncode == 0 and 'ffmpeg version' in result.stdout:
             logging.info(f"FFmpeg verified and working: {ffmpeg_path}")
+            
+            # Update cache
+            _ffmpeg_verified = True
+            _ffmpeg_path_cached = ffmpeg_path
+            
             # Store the verified path in settings for later use
             if settings is not None:
                 settings['ffmpeg_path'] = ffmpeg_path
@@ -856,6 +921,9 @@ def sanitize_resolution(resolution):
 def download_and_process_clip(video_url, resolution, download_path, clip_start, clip_end, download_mp3, ffmpeg_path, socketio, settings, current_download, cookies=None, user_agent=None):
     clip_duration = clip_end - clip_start
     logging.info(f"Received clip parameters: clip_start={clip_start}, clip_end={clip_end}, clip_duration={clip_duration}")
+
+    # Clean up PATH environment variable to avoid conflicts
+    clean_environment_path()
 
     # Clean up resources before starting new download to prevent accumulation
     logging.info("Cleaning up resources before clip download...")
@@ -1158,6 +1226,9 @@ def get_unique_filename(base_path, filename, extension):
     return f"{filename}_{counter}.{extension}"
 
 def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_path, socketio, settings, current_download, cookies=None, user_agent=None):
+    # Clean up PATH environment variable to avoid conflicts
+    clean_environment_path()
+    
     # Clean up resources before starting new download to prevent accumulation
     logging.info("Cleaning up resources before video download...")
     cleanup_ffmpeg_processes()

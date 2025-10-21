@@ -16,7 +16,22 @@ import threading
 
 import time
 
+# Settings cache to avoid repeated file reads
+_settings_cache = None
+_settings_cache_time = 0
+
 def load_settings():
+    global _settings_cache, _settings_cache_time
+    
+    # Check cache first - avoid repeated file reads
+    now = time.time()
+    if _settings_cache and (now - _settings_cache_time) < 5:  # 5 second cache
+        logging.debug("Settings served from cache")
+        return _settings_cache.copy()
+    
+    # Cache miss - load from disk
+    logging.debug("Settings cache miss - loading from disk")
+    
     default_settings = {
         'resolution': '1080',
         'downloadPath': '',
@@ -52,6 +67,10 @@ def load_settings():
             json.dump(settings, f, indent=4)
 
     settings['SETTINGS_FILE'] = settings_path
+    
+    # Update cache
+    _settings_cache = settings.copy()
+    _settings_cache_time = now
     
     # Set up FFmpeg using the init module function
     try:

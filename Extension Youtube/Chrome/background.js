@@ -1,7 +1,11 @@
 // background.js
 
 // Debug: Version check
-console.log('YTP: Background script loaded - Version 3.0.15 with Enhanced Cookie Extraction');
+console.log('YTP: Background script loaded - Version 3.0.15 with Enhanced Cookie Extraction & Performance Optimizations');
+
+// Cookie cache to avoid repeated extractions
+let cookiesCache = { data: null, timestamp: 0 };
+const COOKIES_CACHE_DURATION = 30000; // 30 seconds
 
 chrome.action.onClicked.addListener((tab) => {
     // Perform action when the extension icon is clicked
@@ -15,9 +19,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'GET_YOUTUBE_COOKIES') {
         console.log('YTP: Processing GET_YOUTUBE_COOKIES request');
         
-        // Get YouTube cookies
+        // Check cache first to avoid repeated extractions
+        const now = Date.now();
+        if (cookiesCache.data && (now - cookiesCache.timestamp) < COOKIES_CACHE_DURATION) {
+            console.log('YTP: Serving cookies from cache:', cookiesCache.data.length, 'cookies');
+            sendResponse({ cookies: cookiesCache.data });
+            return true;
+        }
+        
+        // Cache miss - get fresh cookies
+        console.log('YTP: Cookie cache miss - extracting fresh cookies');
         getYouTubeCookies().then(cookies => {
             console.log('YTP: Successfully retrieved cookies:', cookies.length);
+            
+            // Update cache
+            cookiesCache.data = cookies;
+            cookiesCache.timestamp = now;
+            
             sendResponse({ cookies: cookies });
         }).catch(error => {
             console.error('YTP: Error getting cookies:', error);
@@ -49,52 +67,30 @@ async function getYouTubeCookies() {
     try {
         console.log('YTP: Starting comprehensive cookie extraction...');
         
-        // Get cookies from all YouTube-related domains with specific patterns
+        // Get cookies from essential YouTube-related domains only
         const domains = [
             '.youtube.com',
             'www.youtube.com', 
-            'youtube.com',
-            'm.youtube.com',
             '.google.com',
-            'accounts.google.com',
-            '.googleapis.com',
-            'myaccount.google.com',
-            'play.google.com'
+            'accounts.google.com'
         ];
         
-        let allCookies = [];
-        
-        // Extract cookies from each domain
-        for (const domain of domains) {
+        // OPTIMIZATION: Parallel cookie extraction instead of sequential
+        console.log('YTP: Extracting cookies in parallel from', domains.length, 'domains');
+        const cookiePromises = domains.map(async (domain) => {
             try {
                 const domainCookies = await chrome.cookies.getAll({ domain });
-                
-                // Also try with URL-based extraction for better results
-                try {
-                    const urlCookies = await chrome.cookies.getAll({ 
-                        url: `https://${domain.replace('.', '')}` 
-                    });
-                    domainCookies.push(...urlCookies);
-                } catch (e) {
-                    console.debug(`YTP: URL-based extraction failed for ${domain}:`, e);
-                }
-                
-                allCookies.push(...domainCookies);
                 console.log(`YTP: Retrieved ${domainCookies.length} cookies from ${domain}`);
-                
-                // Log specific auth cookies for this domain
-                const domainAuthCookies = domainCookies.filter(cookie => 
-                    ['SAPISID', 'APISID', 'HSID', 'SSID', 'LOGIN_INFO', '__Secure-3PAPISID', '__Secure-3PSID', 'SID', '__Secure-1PAPISID', '__Secure-1PSID'].includes(cookie.name)
-                );
-                if (domainAuthCookies.length > 0) {
-                    console.log(`YTP: Found ${domainAuthCookies.length} auth cookies on ${domain}:`, 
-                        domainAuthCookies.map(c => c.name).join(', '));
-                }
-                
+                return domainCookies;
             } catch (error) {
                 console.warn(`YTP: Could not get cookies from ${domain}:`, error);
+                return [];
             }
-        }
+        });
+        
+        // Wait for all cookie extractions to complete in parallel
+        const cookieArrays = await Promise.all(cookiePromises);
+        let allCookies = cookieArrays.flat();
         
         // Try to get cookies from the current YouTube tab if available
         try {
@@ -120,20 +116,18 @@ async function getYouTubeCookies() {
         
         const uniqueCookies = Array.from(cookieMap.values());
         
-        // Filter and analyze authentication cookies
-        const authCookieNames = [
-            'SAPISID', 'APISID', 'HSID', 'SSID', 'SID', 'LOGIN_INFO',
-            '__Secure-1PAPISID', '__Secure-1PSID', '__Secure-1PSIDCC', '__Secure-1PSIDTS',
-            '__Secure-3PAPISID', '__Secure-3PSID', '__Secure-3PSIDCC', '__Secure-3PSIDTS',
-            'SIDCC', 'NID', '__Secure-ROLLOUT_TOKEN'
+        // OPTIMIZATION: Filter to essential authentication cookies only
+        const essentialCookieNames = [
+            'LOGIN_INFO', '__Secure-3PAPISID', '__Secure-3PSID', '__Secure-3PSIDCC', '__Secure-3PSIDTS',
+            'SAPISID', 'APISID', 'HSID', 'SSID', 'SID', 'SIDCC', 'NID'
         ];
         
-        const authCookies = uniqueCookies.filter(cookie => 
-            authCookieNames.includes(cookie.name)
+        const essentialCookies = uniqueCookies.filter(cookie => 
+            essentialCookieNames.includes(cookie.name)
         );
         
         // Sort auth cookies by importance
-        const authCookiesSorted = authCookies.sort((a, b) => {
+        const authCookiesSorted = essentialCookies.sort((a, b) => {
             const importance = {
                 'LOGIN_INFO': 10,
                 '__Secure-3PAPISID': 9,
@@ -148,7 +142,7 @@ async function getYouTubeCookies() {
         });
         
         console.log(`YTP: Total unique cookies: ${uniqueCookies.length}`);
-        console.log(`YTP: Authentication cookies found: ${authCookies.length}`);
+        console.log(`YTP: Essential authentication cookies found: ${authCookiesSorted.length}`);
         
         // Log authentication cookies with detailed info
         authCookiesSorted.forEach(cookie => {
@@ -157,9 +151,9 @@ async function getYouTubeCookies() {
         });
         
         // Check authentication status
-        const hasLoginInfo = authCookies.some(c => c.name === 'LOGIN_INFO');
-        const hasSecureAuth = authCookies.some(c => c.name === '__Secure-3PAPISID');
-        const hasSapisid = authCookies.some(c => c.name === 'SAPISID');
+        const hasLoginInfo = authCookiesSorted.some(c => c.name === 'LOGIN_INFO');
+        const hasSecureAuth = authCookiesSorted.some(c => c.name === '__Secure-3PAPISID');
+        const hasSapisid = authCookiesSorted.some(c => c.name === 'SAPISID');
         
         if (!hasLoginInfo && !hasSecureAuth && !hasSapisid) {
             console.warn('🚨 YTP: Critical authentication cookies missing! User likely not logged in.');
@@ -169,9 +163,9 @@ async function getYouTubeCookies() {
             console.log('⚠️ YTP: Partial authentication detected - may have issues with age-restricted content.');
         }
         
-        // Return cookies sorted by importance (auth cookies first)
-        const otherCookies = uniqueCookies.filter(cookie => !authCookieNames.includes(cookie.name));
-        return [...authCookiesSorted, ...otherCookies];
+        // Return only essential cookies (much smaller payload)
+        console.log(`YTP: Returning ${authCookiesSorted.length} essential cookies (reduced from ${uniqueCookies.length})`);
+        return authCookiesSorted;
         
     } catch (error) {
         console.error('YTP: Error retrieving YouTube cookies:', error);

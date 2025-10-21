@@ -1,6 +1,7 @@
 from flask import request, jsonify, send_file
 import logging
 import json
+import time
 from video_processing import handle_video_url, get_audio_language_options, set_emit_function
 from utils import play_notification_sound, save_license_key, get_license_key, load_settings, save_settings, save_download_path, open_sounds_folder
 import os
@@ -14,6 +15,10 @@ import subprocess
 
 # Global variable to track current download for cancellation
 current_download = {'process': None, 'ydl': None, 'cancel_callback': None}
+
+# License validation cache to avoid repeated API calls
+license_cache = {'key': None, 'is_valid': False, 'timestamp': 0}
+LICENSE_CACHE_DURATION = 3600  # 1 hour cache
 
 def get_current_download():
     """Get the current download structure for cancellation purposes"""
@@ -520,25 +525,52 @@ def register_routes(app, socketio, settings):
             if not license_key:
                 return jsonify({'isValid': False, 'message': 'No license key found'})
 
+            # Check cache first - avoid repeated API calls
+            now = time.time()
+            if (license_cache['key'] == license_key and 
+                license_cache['timestamp'] + LICENSE_CACHE_DURATION > now):
+                logging.info(f"License validation served from cache (valid: {license_cache['is_valid']})")
+                return jsonify({
+                    'isValid': license_cache['is_valid'],
+                    'message': 'License is valid (cached)' if license_cache['is_valid'] else 'Invalid license key (cached)'
+                })
+
+            # Cache miss or expired - validate with API
+            logging.info("License validation cache miss - calling APIs")
+            
             # Perform the same validation as above
             gumroad_response = requests.post('https://api.gumroad.com/v2/licenses/verify', {
                 'product_id': '9yYJT15dJO3wB4Z74N-EUg==',
                 'license_key': license_key
             })
 
+            is_valid = False
             if gumroad_response.ok and gumroad_response.json().get('success'):
+                is_valid = True
+            else:
+                # Try Shopify validation
+                api_token = 'eHyU10yFizUV5qUJaFS8koE1nIx2UCDFNSoPVdDRJDI7xtunUK6ZWe40vfwp'
+                shopify_response = requests.post(
+                    f'https://app-easy-product-downloads.fr/api/get-license-key',
+                    params={'license_key': license_key, 'api_token': api_token}
+                )
+
+                if shopify_response.ok and shopify_response.json().get('status') == 'success':
+                    is_valid = True
+
+            # Update cache
+            license_cache.update({
+                'key': license_key,
+                'is_valid': is_valid,
+                'timestamp': now
+            })
+            
+            logging.info(f"License validation completed and cached (valid: {is_valid})")
+            
+            if is_valid:
                 return jsonify({'isValid': True, 'message': 'License is valid'})
-
-            api_token = 'eHyU10yFizUV5qUJaFS8koE1nIx2UCDFNSoPVdDRJDI7xtunUK6ZWe40vfwp'
-            shopify_response = requests.post(
-                f'https://app-easy-product-downloads.fr/api/get-license-key',
-                params={'license_key': license_key, 'api_token': api_token}
-            )
-
-            if shopify_response.ok and shopify_response.json().get('status') == 'success':
-                return jsonify({'isValid': True, 'message': 'License is valid'})
-
-            return jsonify({'isValid': False, 'message': 'Invalid license key'})
+            else:
+                return jsonify({'isValid': False, 'message': 'Invalid license key'})
 
         except Exception as e:
             logging.error(f'Error checking license: {e}')
