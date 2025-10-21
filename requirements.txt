@@ -2,7 +2,7 @@ Flask==2.3.3
 Flask-SocketIO==5.3.6
 Flask-CORS==4.0.0
 requests==2.31.0
-yt-dlp==2025.09.23
+yt-dlp==2025.10.14
 python-socketio==5.8.0
 python-engineio==4.7.1
 psutil==5.9.8

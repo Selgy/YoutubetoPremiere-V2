@@ -58,10 +58,12 @@ def load_settings():
         from app_init import find_ffmpeg as init_find_ffmpeg
         settings['ffmpeg_path'] = init_find_ffmpeg()
         if settings['ffmpeg_path']:
-            # Add ffmpeg directory to PATH
+            # Add ffmpeg directory to PATH - only if not already present
             ffmpeg_dir = os.path.dirname(settings['ffmpeg_path'])
-            os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
-            logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
+            current_path = os.environ.get("PATH", "")
+            if ffmpeg_dir not in current_path.split(os.pathsep):
+                os.environ["PATH"] = ffmpeg_dir + os.pathsep + current_path
+                logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
             logging.info(f"Using ffmpeg from: {settings['ffmpeg_path']}")
         else:
             raise Exception("FFmpeg not found in any of the expected locations")

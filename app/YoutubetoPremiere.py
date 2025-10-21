@@ -256,10 +256,11 @@ ffmpeg_found = False
 ffmpeg_binary = 'ffmpeg.exe' if sys.platform == 'win32' else 'ffmpeg'
 for ffmpeg_dir in possible_ffmpeg_locations:
     if os.path.exists(os.path.join(ffmpeg_dir, ffmpeg_binary)):
-        # Safely handle PATH environment variable
+        # Safely handle PATH environment variable - only add if not already present
         current_path = os.environ.get("PATH", "")
-        os.environ["PATH"] = ffmpeg_dir + os.pathsep + current_path
-        logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
+        if ffmpeg_dir not in current_path.split(os.pathsep):
+            os.environ["PATH"] = ffmpeg_dir + os.pathsep + current_path
+            logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
         ffmpeg_found = True
         break
 
@@ -985,11 +986,13 @@ def setup_environment():
         # Set both the directory and the full path for maximum compatibility
         os.environ['FFMPEG_PATH'] = config['ffmpeg_path']
         
-        # Add the directory containing ffmpeg to PATH
+        # Add the directory containing ffmpeg to PATH - only if not already present
         ffmpeg_dir = os.path.dirname(config['ffmpeg_path'])
         if ffmpeg_dir:
-            os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
-            logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
+            current_path = os.environ.get("PATH", "")
+            if ffmpeg_dir not in current_path.split(os.pathsep):
+                os.environ["PATH"] = ffmpeg_dir + os.pathsep + current_path
+                logging.info(f"Added ffmpeg directory to PATH: {ffmpeg_dir}")
             
         # On Windows, create symbolic links to ffmpeg in system temp directory for better accessibility
         if sys.platform == 'win32':
@@ -1002,8 +1005,10 @@ def setup_environment():
                     shutil.copy2(config['ffmpeg_path'], temp_ffmpeg_path)
                     logging.info(f"Created ffmpeg copy in temp directory: {temp_ffmpeg_path}")
                     
-                    # Add temp directory to PATH as well
-                    os.environ["PATH"] = temp_dir + os.pathsep + os.environ["PATH"]
+                    # Add temp directory to PATH - only if not already present
+                    current_path = os.environ.get("PATH", "")
+                    if temp_dir not in current_path.split(os.pathsep):
+                        os.environ["PATH"] = temp_dir + os.pathsep + current_path
             except Exception as e:
                 logging.warning(f"Failed to create ffmpeg copy in temp directory: {str(e)}")
     

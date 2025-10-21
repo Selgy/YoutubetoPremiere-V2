@@ -25,6 +25,17 @@ import shutil
 # Removed incorrect import of download_range_func
 import urllib.parse as urlparse
 
+# Import psutil only on Windows for process management (optional dependency)
+try:
+    if sys.platform == 'win32':
+        import psutil
+        PSUTIL_AVAILABLE = True
+    else:
+        PSUTIL_AVAILABLE = False
+except ImportError:
+    PSUTIL_AVAILABLE = False
+    logging.warning("psutil not available - ffmpeg process cleanup disabled")
+
 # Global variable to store emit_to_client_type function
 _emit_to_client_type = None
 
@@ -61,6 +72,72 @@ def run_hidden_subprocess(cmd, **kwargs):
         kwargs['startupinfo'].wShowWindow = subprocess.SW_HIDE
     
     return subprocess.run(cmd, **kwargs)
+
+def cleanup_ffmpeg_processes():
+    """Clean up zombie or stuck ffmpeg processes to prevent resource exhaustion (Windows only)"""
+    # Only run on Windows where the issue occurs
+    if sys.platform != 'win32' or not PSUTIL_AVAILABLE:
+        return 0
+    
+    try:
+        killed_count = 0
+        ffmpeg_exe_name = 'ffmpeg.exe'
+        
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time']):
+            try:
+                # Check if it's an ffmpeg process
+                if proc.info['name'] and ffmpeg_exe_name.lower() in proc.info['name'].lower():
+                    # Kill processes running for more than 10 minutes (likely stuck)
+                    process_age = time.time() - proc.info['create_time']
+                    if process_age > 600:  # 10 minutes
+                        logging.warning(f"[Windows] Killing stuck ffmpeg process (PID {proc.info['pid']}, age: {process_age:.0f}s)")
+                        proc.kill()
+                        killed_count += 1
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+        
+        if killed_count > 0:
+            logging.info(f"[Windows] Cleaned up {killed_count} stuck ffmpeg process(es)")
+        
+        return killed_count
+    except Exception as e:
+        logging.warning(f"[Windows] Error cleaning up ffmpeg processes: {e}")
+        return 0
+
+def cleanup_temporary_cookies():
+    """Clean up old temporary cookies files to prevent accumulation (Windows only)"""
+    # Only run on Windows where the issue occurs
+    if sys.platform != 'win32':
+        return 0
+    
+    try:
+        cookies_dir = os.path.join(os.environ.get('TEMP', tempfile.gettempdir()), 'YoutubetoPremiere')
+        if not os.path.exists(cookies_dir):
+            return 0
+        
+        cleaned_count = 0
+        current_time = time.time()
+        
+        # Remove cookies files older than 1 hour
+        for filename in os.listdir(cookies_dir):
+            if filename.startswith('youtube_cookies_') and filename.endswith('.txt'):
+                filepath = os.path.join(cookies_dir, filename)
+                try:
+                    # Check file age
+                    file_age = current_time - os.path.getmtime(filepath)
+                    if file_age > 3600:  # 1 hour
+                        os.remove(filepath)
+                        cleaned_count += 1
+                except Exception as e:
+                    logging.debug(f"Could not remove old cookies file {filename}: {e}")
+        
+        if cleaned_count > 0:
+            logging.info(f"[Windows] Cleaned up {cleaned_count} old temporary cookies file(s)")
+        
+        return cleaned_count
+    except Exception as e:
+        logging.warning(f"[Windows] Error cleaning up temporary cookies: {e}")
+        return 0
 
 def get_ffmpeg_postprocessor_args():
     """Get FFmpeg arguments that help hide console windows"""
@@ -780,6 +857,11 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
     clip_duration = clip_end - clip_start
     logging.info(f"Received clip parameters: clip_start={clip_start}, clip_end={clip_end}, clip_duration={clip_duration}")
 
+    # Clean up resources before starting new download to prevent accumulation
+    logging.info("Cleaning up resources before clip download...")
+    cleanup_ffmpeg_processes()
+    cleanup_temporary_cookies()
+
     # Check if download path exists or try to get default path
     if not download_path:
         download_path = get_default_download_path(socketio)
@@ -819,33 +901,31 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         
         current_download['cancel_callback'] = cancel_callback
                 
+        # Prepare authentication first
+        cookies_file = None
+        browser_cookies = None
+        
+        if cookies:
+            cookies_file = create_cookies_file(cookies)
+            if not cookies_file:
+                cookies_file = get_youtube_cookies_file()
+        else:
+            cookies_file = get_youtube_cookies_file()
+            if not cookies_file:
+                browser_cookies = try_extract_cookies_from_browser()
+        
         # Get sanitized title for the output file with authentication
         sanitized_title = ''
         try:
-            # Use same authentication as download for title extraction
-            title_ydl_opts = {'quiet': True, 'skip_download': True}
+            # Use comprehensive headers and auth for title extraction
+            title_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
+            title_ydl_opts['quiet'] = True
+            title_ydl_opts['skip_download'] = True
             
-            # Apply authentication for title extraction
-            cookies_file = None
-            if cookies:
-                cookies_file = create_cookies_file(cookies)
-                if not cookies_file:
-                    cookies_file = get_youtube_cookies_file()
-            else:
-                cookies_file = get_youtube_cookies_file()
-                if not cookies_file:
-                    browser_cookies = try_extract_cookies_from_browser()
-                    if browser_cookies:
-                        title_ydl_opts['cookiesfrombrowser'] = browser_cookies
-                        logging.info(f"Using cookies from browser for title extraction: {browser_cookies[0]}")
-            
-            if cookies_file and os.path.exists(cookies_file):
-                title_ydl_opts['cookiefile'] = cookies_file
-                logging.info(f"Using cookies file for title extraction: {cookies_file}")
-            
-            if user_agent:
-                title_ydl_opts['http_headers'] = {'User-Agent': user_agent}
-                logging.info("Using User-Agent from extension for title extraction")
+            # Add browser cookies if that's what we're using
+            if browser_cookies:
+                title_ydl_opts['cookiesfrombrowser'] = browser_cookies
+                logging.info(f"Using cookies from browser for title extraction: {browser_cookies[0]}")
             
             with yt_dlp.YoutubeDL(title_ydl_opts) as ydl:
                 video_info = ydl.extract_info(video_url, download=False)
@@ -906,8 +986,8 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                 logging.info('[FINISHED] Clip download finished')
                 # No percentage emission for clips - animation will stop when complete
 
-        # Configure yt-dlp options with robust settings for clip download
-        ydl_opts = get_robust_ydl_options(ffmpeg_path)
+        # Configure yt-dlp options with robust settings for clip download (including auth and comprehensive headers)
+        ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
         ydl_opts.update({
             'format': format_str,
             'outtmpl': video_file_path,
@@ -917,27 +997,10 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             'progress_hooks': [progress_hook],
         })
         
-        # Apply authentication for clip download
-        cookies_file = None
-        if cookies:
-            cookies_file = create_cookies_file(cookies)
-            if not cookies_file:
-                cookies_file = get_youtube_cookies_file()
-        else:
-            cookies_file = get_youtube_cookies_file()
-            if not cookies_file:
-                browser_cookies = try_extract_cookies_from_browser()
-                if browser_cookies:
-                    ydl_opts['cookiesfrombrowser'] = browser_cookies
-                    logging.info(f"Using cookies from browser for clip download: {browser_cookies[0]}")
-        
-        if cookies_file and os.path.exists(cookies_file):
-            ydl_opts['cookiefile'] = cookies_file
-            logging.info(f"Using cookies file for clip download: {cookies_file}")
-        
-        if user_agent:
-            ydl_opts['http_headers'] = {'User-Agent': user_agent}
-            logging.info("Using User-Agent from extension for clip download")
+        # Add browser cookies if that's what we're using (fallback when no cookies file)
+        if browser_cookies:
+            ydl_opts['cookiesfrombrowser'] = browser_cookies
+            logging.info("Using browser cookies for clip download")
         
         # Download with yt-dlp
         # Note: We need to allow yt-dlp to capture progress information
@@ -1019,6 +1082,14 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             finally:
                 current_download['ydl'] = None
                 current_download['cancel_callback'] = None
+                
+                # Clean up the cookies file after download (Windows only)
+                if sys.platform == 'win32' and cookies_file and os.path.exists(cookies_file):
+                    try:
+                        os.remove(cookies_file)
+                        logging.info(f"[Windows] Cleaned up temporary cookies file: {cookies_file}")
+                    except Exception as e:
+                        logging.debug(f"Could not remove cookies file: {e}")
 
         # Add metadata to the video file if it exists
         if os.path.exists(video_file_path):
@@ -1087,6 +1158,11 @@ def get_unique_filename(base_path, filename, extension):
     return f"{filename}_{counter}.{extension}"
 
 def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_path, socketio, settings, current_download, cookies=None, user_agent=None):
+    # Clean up resources before starting new download to prevent accumulation
+    logging.info("Cleaning up resources before video download...")
+    cleanup_ffmpeg_processes()
+    cleanup_temporary_cookies()
+    
     check_result = check_ffmpeg(settings, socketio)
     if not check_result['success']:
         return None
@@ -1185,12 +1261,10 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             socketio.emit('download-failed', {'message': error_msg})
             return None
 
-        # Configure initial yt-dlp options with robust settings
-        initial_ydl_opts = get_robust_ydl_options(ffmpeg_path)
-        initial_ydl_opts['skip_download'] = True  # Only extract info
-        
-        # Apply authentication to initial options
+        # Prepare authentication first
         cookies_file = None
+        browser_cookies = None
+        
         if cookies:
             cookies_file = create_cookies_file(cookies)
             if not cookies_file:
@@ -1201,17 +1275,15 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             cookies_file = get_youtube_cookies_file()
             if not cookies_file:
                 browser_cookies = try_extract_cookies_from_browser()
-                if browser_cookies:
-                    initial_ydl_opts['cookiesfrombrowser'] = browser_cookies
-                    logging.info(f"Using cookies from browser for info extraction: {browser_cookies[0]}")
         
-        if cookies_file and os.path.exists(cookies_file):
-            initial_ydl_opts['cookiefile'] = cookies_file
-            logging.info(f"Using cookies file for info extraction: {cookies_file}")
+        # Configure initial yt-dlp options with robust settings including auth
+        initial_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
+        initial_ydl_opts['skip_download'] = True  # Only extract info
         
-        if user_agent:
-            initial_ydl_opts['http_headers'] = {'User-Agent': user_agent}
-            logging.info("Using User-Agent from extension for info extraction")
+        # Add browser cookies if available (fallback when no cookies file)
+        if browser_cookies:
+            initial_ydl_opts['cookiesfrombrowser'] = browser_cookies
+            logging.info(f"Using cookies from browser for info extraction: {browser_cookies[0]}")
         
         # Extract video info first with authentication
         try:
@@ -1224,8 +1296,8 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             if "invalid Netscape format cookies file" in str(info_error) or "CookieLoadError" in str(info_error) or "failed to load cookies" in str(info_error):
                 logging.warning("Cookie format error during info extraction. Retrying without cookies...")
                 try:
-                    # Retry info extraction without cookies
-                    fallback_ydl_opts = get_robust_ydl_options(ffmpeg_path)
+                    # Retry info extraction without cookies but with comprehensive headers
+                    fallback_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
                     fallback_ydl_opts['skip_download'] = True
                     
                     with yt_dlp.YoutubeDL(fallback_ydl_opts) as ydl_fallback:
@@ -1267,8 +1339,8 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         output_path = os.path.join(download_path, unique_filename)
         logging.info(f"Setting output path to: {output_path}")
 
-        # Configure download options with robust settings
-        ydl_opts = get_robust_ydl_options(ffmpeg_path)
+        # Configure download options with robust settings (including auth and comprehensive headers)
+        ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
         ydl_opts.update({
             'format': format_string,
             'merge_output_format': 'mp4',
@@ -1279,17 +1351,10 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             }
         })
         
-        # Apply same authentication as info extraction
-        if cookies_file and os.path.exists(cookies_file):
-            ydl_opts['cookiefile'] = cookies_file
-            logging.info(f"Using cookies file for download: {cookies_file}")
-        elif 'cookiesfrombrowser' in initial_ydl_opts:
-            ydl_opts['cookiesfrombrowser'] = initial_ydl_opts['cookiesfrombrowser']
+        # Add browser cookies if that's what we're using (fallback when no cookies file)
+        if browser_cookies:
+            ydl_opts['cookiesfrombrowser'] = browser_cookies
             logging.info("Using browser cookies for download")
-        
-        if user_agent:
-            ydl_opts['http_headers'] = {'User-Agent': user_agent}
-            logging.info("Using User-Agent from extension for download")
 
         # Download the video
         logging.info("Starting video download...")
@@ -1374,6 +1439,14 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         finally:
             current_download['ydl'] = None
             current_download['cancel_callback'] = None
+            
+            # Clean up the cookies file after download (Windows only)
+            if sys.platform == 'win32' and cookies_file and os.path.exists(cookies_file):
+                try:
+                    os.remove(cookies_file)
+                    logging.info(f"[Windows] Cleaned up temporary cookies file: {cookies_file}")
+                except Exception as e:
+                    logging.debug(f"Could not remove cookies file: {e}")
 
         # Get the final path of the downloaded file
         final_path = output_path
@@ -1526,8 +1599,8 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         if "invalid Netscape format cookies file" in str(e) or "CookieLoadError" in str(e) or "failed to load cookies" in str(e):
             logging.warning("Cookie format error detected. Attempting download without cookies...")
             try:
-                # Retry without cookies
-                fallback_ydl_opts = get_robust_ydl_options(ffmpeg_path)
+                # Retry without cookies but with comprehensive headers
+                fallback_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
                 fallback_ydl_opts.update({
                     'format': format_string,
                     'merge_output_format': 'mp4',
@@ -1695,8 +1768,21 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                 logging.info('[FINISHED] Audio download finished')
                 socketio.emit('percentage', {'percentage': '100%'})
 
-        # Configure yt-dlp options with robust settings for audio download
-        ydl_opts = get_robust_ydl_options(ffmpeg_path)
+        # Prepare authentication first
+        cookies_file = None
+        browser_cookies = None
+        
+        if cookies:
+            cookies_file = create_cookies_file(cookies)
+            if not cookies_file:
+                cookies_file = get_youtube_cookies_file()
+        else:
+            cookies_file = get_youtube_cookies_file()
+            if not cookies_file:
+                browser_cookies = try_extract_cookies_from_browser()
+        
+        # Configure yt-dlp options with robust settings for audio download (including auth and comprehensive headers)
+        ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
         ydl_opts.update({
             'format': audio_format,
             'postprocessors': [{
@@ -1715,27 +1801,10 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
             ],
         })
         
-        # Apply authentication for audio download
-        cookies_file = None
-        if cookies:
-            cookies_file = create_cookies_file(cookies)
-            if not cookies_file:
-                cookies_file = get_youtube_cookies_file()
-        else:
-            cookies_file = get_youtube_cookies_file()
-            if not cookies_file:
-                browser_cookies = try_extract_cookies_from_browser()
-                if browser_cookies:
-                    ydl_opts['cookiesfrombrowser'] = browser_cookies
-                    logging.info(f"Using cookies from browser for audio download: {browser_cookies[0]}")
-        
-        if cookies_file and os.path.exists(cookies_file):
-            ydl_opts['cookiefile'] = cookies_file
-            logging.info(f"Using cookies file for audio download: {cookies_file}")
-        
-        if user_agent:
-            ydl_opts['http_headers'] = {'User-Agent': user_agent}
-            logging.info("Using User-Agent from extension for audio download")
+        # Add browser cookies if that's what we're using (fallback when no cookies file)
+        if browser_cookies:
+            ydl_opts['cookiesfrombrowser'] = browser_cookies
+            logging.info("Using browser cookies for audio download")
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
@@ -1896,6 +1965,14 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                 if current_download:
                     current_download['ydl'] = None
                     current_download['cancel_callback'] = None
+                
+                # Clean up the cookies file after download (Windows only)
+                if sys.platform == 'win32' and cookies_file and os.path.exists(cookies_file):
+                    try:
+                        os.remove(cookies_file)
+                        logging.info(f"[Windows] Cleaned up temporary cookies file: {cookies_file}")
+                    except Exception as e:
+                        logging.debug(f"Could not remove cookies file: {e}")
 
     except Exception as e:
         logging.error(f"Error in download_audio: {str(e)}")
@@ -2092,13 +2169,11 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
         'youtube_include_hls_manifest': True,   # Include HLS manifest
         'youtube_skip_dash_manifest': False,    # Don't skip DASH manifest
         'youtube_skip_hls_manifest': False,     # Don't skip HLS manifest
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'web', 'tv_embedded'],  # Try multiple clients (removed mediaconnect as it's unsupported)
-                'player_skip': [],  # Don't skip any players
-                'skip': [],  # Don't skip any extractors
-            }
-        },
+        # Let yt-dlp use its default player client logic - works better with YouTube's anti-bot measures
+        
+        # Additional options to bypass bot detection
+        'source_address': '0.0.0.0',  # Bind to IPv4
+        'force_generic_extractor': False,  # Use YouTube extractor
         
         # FFmpeg configuration - handle both absolute paths and PATH resolution
         'ffmpeg_location': get_ffmpeg_location_for_ydl(ffmpeg_path),
@@ -2118,9 +2193,24 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
         base_options['cookiefile'] = cookies_file
         logging.info(f"Using cookies file: {cookies_file}")
     
+    # Add comprehensive browser headers to avoid 403 errors
+    http_headers = {}
+    
     if user_agent:
-        base_options['http_headers'] = {'User-Agent': user_agent}
-        logging.info("Using custom User-Agent")
+        http_headers['User-Agent'] = user_agent
+    else:
+        # Use a modern Chrome user agent as fallback
+        http_headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    
+    # Add essential browser headers - keep it minimal to avoid conflicts
+    http_headers.update({
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate',
+    })
+    
+    base_options['http_headers'] = http_headers
+    logging.info(f"Using comprehensive browser headers with User-Agent: {http_headers.get('User-Agent', 'default')[:50]}...")
     
     return base_options
 
