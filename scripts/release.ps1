@@ -123,6 +123,14 @@ if (Test-Path "app/routes.py") {
     Write-Host "  [OK] app/routes.py" -ForegroundColor Green
 }
 
+# app/YoutubetoPremiere.py
+if (Test-Path "app/YoutubetoPremiere.py") {
+    $content = Get-Content "app/YoutubetoPremiere.py" -Raw
+    $content = $content -replace "YouTube to Premiere Pro Extension v[0-9]+\.[0-9]+\.[0-9]+", "YouTube to Premiere Pro Extension v$Version"
+    Set-Content "app/YoutubetoPremiere.py" $content
+    Write-Host "  [OK] app/YoutubetoPremiere.py" -ForegroundColor Green
+}
+
 # vite.config.ts
 if (Test-Path "vite.config.ts") {
     $content = Get-Content "vite.config.ts" -Raw
