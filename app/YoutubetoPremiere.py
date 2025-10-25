@@ -835,10 +835,10 @@ def run_server():
         """Run server with production-safe configuration"""
         try:
             socketio.run(
-        app, 
-        host='0.0.0.0',  # Bind to all available interfaces
-        port=17845,
-        debug=False,
+                app, 
+                host='0.0.0.0',  # Bind to all available interfaces
+                port=17845,
+                debug=False,
                 use_reloader=False,
                 log_output=False  # Disable Werkzeug logs
             )
