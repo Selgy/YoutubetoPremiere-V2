@@ -108,7 +108,7 @@ def write_test_log():
         session_header = f"""
 {'='*60}
 SESSION STARTED: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-YouTube to Premiere Pro Extension v3.0.1
+YouTube to Premiere Pro Extension v3.0.16
 {'='*60}
 """
         with open(main_log_file, 'a', encoding='utf-8') as f:
