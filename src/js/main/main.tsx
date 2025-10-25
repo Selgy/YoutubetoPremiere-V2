@@ -5,6 +5,7 @@ import io from 'socket.io-client';
 import CSInterface from '../lib/cep/csinterface';
 import { SystemPath } from '../lib/cep/csinterface';
 import { AppLauncher } from '../lib/utils';
+import { openLinkInBrowser } from '../lib/utils/bolt';
 
 declare const window: Window & {
   cep: any;
@@ -341,7 +342,7 @@ const Main = () => {
     if (updateAvailable && updateInfo) {
       setShowUpdateModal(true);
     } else if (updateInfo?.download_url) {
-      window.open(updateInfo.download_url, '_blank');
+      openLinkInBrowser(updateInfo.download_url);
     }
   };
 
@@ -831,7 +832,7 @@ const Main = () => {
               <button
                 onClick={() => {
                   if (updateInfo?.download_url) {
-                    window.open(updateInfo.download_url, '_blank');
+                    openLinkInBrowser(updateInfo.download_url);
                   }
                   setShowUpdateModal(false);
                 }}
