@@ -13,6 +13,8 @@ import hashlib
 # FFmpeg verification cache
 _ffmpeg_verified = False
 _ffmpeg_path_cached = None
+_ffmpeg_cache_time = 0
+_ffmpeg_cache_ttl = 300  # Cache for 5 minutes
 
 def clean_environment_path():
     """Clean up the PATH environment variable to avoid conflicts"""
@@ -110,18 +112,36 @@ def cleanup_ffmpeg_processes():
         killed_count = 0
         ffmpeg_exe_name = 'ffmpeg.exe'
         
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time']):
-            try:
-                # Check if it's an ffmpeg process
-                if proc.info['name'] and ffmpeg_exe_name.lower() in proc.info['name'].lower():
+        # OPTIMIZATION: Use process name filter to avoid iterating all processes
+        # This is MUCH faster than iterating all processes
+        try:
+            # Get all processes with name matching ffmpeg (much faster)
+            processes = [p for p in psutil.process_iter(['pid', 'name', 'create_time']) 
+                        if p.info['name'] and ffmpeg_exe_name.lower() in p.info['name'].lower()]
+            
+            for proc_info in processes:
+                try:
+                    proc = psutil.Process(proc_info['pid'])
                     # Kill processes running for more than 10 minutes (likely stuck)
-                    process_age = time.time() - proc.info['create_time']
+                    process_age = time.time() - proc_info['create_time']
                     if process_age > 600:  # 10 minutes
-                        logging.warning(f"[Windows] Killing stuck ffmpeg process (PID {proc.info['pid']}, age: {process_age:.0f}s)")
+                        logging.warning(f"[Windows] Killing stuck ffmpeg process (PID {proc_info['pid']}, age: {process_age:.0f}s)")
                         proc.kill()
                         killed_count += 1
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                continue
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+        except Exception as filter_error:
+            # Fallback to old method if filtering fails
+            logging.debug(f"Process filtering failed, using fallback: {filter_error}")
+            for proc in psutil.process_iter(['pid', 'name', 'create_time']):
+                try:
+                    if proc.info['name'] and ffmpeg_exe_name.lower() in proc.info['name'].lower():
+                        process_age = time.time() - proc.info['create_time']
+                        if process_age > 600:
+                            proc.kill()
+                            killed_count += 1
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
         
         if killed_count > 0:
             logging.info(f"[Windows] Cleaned up {killed_count} stuck ffmpeg process(es)")
@@ -592,6 +612,14 @@ def get_ffmpeg_path():
                     logging.warning(f"FFmpeg found at {ffmpeg_path} but is not executable")
                     continue
                     
+            # OPTIMIZATION: Check cache first to avoid repeated subprocess calls
+            current_time = time.time()
+            global _ffmpeg_path_cached, _ffmpeg_cache_time
+            if (_ffmpeg_path_cached == ffmpeg_path and 
+                (current_time - _ffmpeg_cache_time) < _ffmpeg_cache_ttl):
+                logging.debug(f"Using cached FFmpeg verification for: {ffmpeg_path}")
+                return ffmpeg_path
+            
             # Try to run ffmpeg -version to verify it works
             try:
                 # Use shell=True on Windows to avoid handle issues
@@ -609,6 +637,9 @@ def get_ffmpeg_path():
                 
                 if result.returncode == 0 and 'ffmpeg version' in result.stdout:
                     logging.info(f"FFmpeg verified and working: {ffmpeg_path}")
+                    # Cache the result
+                    _ffmpeg_path_cached = ffmpeg_path
+                    _ffmpeg_cache_time = current_time
                     return ffmpeg_path
                 else:
                     logging.warning(f"FFmpeg found at {ffmpeg_path} but failed version check: {result.stderr}")
@@ -617,6 +648,9 @@ def get_ffmpeg_path():
                 # If on Windows, return the path anyway if the file exists and is large enough
                 if sys.platform == 'win32' and os.path.exists(ffmpeg_path) and os.path.getsize(ffmpeg_path) > 1000000:
                     logging.info(f"Despite verification error, using ffmpeg at: {ffmpeg_path}")
+                    # Cache the result
+                    _ffmpeg_path_cached = ffmpeg_path
+                    _ffmpeg_cache_time = current_time
                     return ffmpeg_path
                 continue
     
@@ -834,6 +868,11 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             
             if result and os.path.exists(result):
                 socketio.emit('import_video', {'path': result})
+                # Also try direct import as fallback
+                try:
+                    import_video_to_premiere(result)
+                except Exception as import_error:
+                    logging.warning(f"Direct import fallback failed: {import_error}")
                 return {"success": True, "path": result}
             else:
                 return {"error": "Failed to download audio"}
@@ -863,7 +902,13 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             )
             
             if result and result.get("success") and result.get("path") and os.path.exists(result["path"]):
+                # Emit SocketIO event for Premiere extension
                 socketio.emit('import_video', {'path': result["path"]})
+                # Also try direct import as fallback (in case extension doesn't respond)
+                try:
+                    import_video_to_premiere(result["path"])
+                except Exception as import_error:
+                    logging.warning(f"Direct import fallback failed: {import_error}")
                 return {"success": True, "path": result["path"]}
             else:
                 error_msg = result.get("error") if result and "error" in result else "Failed to download clip"
@@ -884,7 +929,13 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             )
             
             if result and os.path.exists(result):
+                # Emit SocketIO event for Premiere extension
                 socketio.emit('import_video', {'path': result})
+                # Also try direct import as fallback (in case extension doesn't respond)
+                try:
+                    import_video_to_premiere(result)
+                except Exception as import_error:
+                    logging.warning(f"Direct import fallback failed: {import_error}")
                 return {"success": True, "path": result}
             else:
                 return {"error": "Failed to download video"}
@@ -1184,12 +1235,22 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                 socketio.emit('complete', {'type': 'clip', 'message': 'Clip téléchargé avec succès'})
                 socketio.emit('download-complete', {'url': video_url, 'path': video_file_path})
                 socketio.emit('import_video', {'path': video_file_path})
+                # Also try direct import as fallback
+                try:
+                    import_video_to_premiere(video_file_path)
+                except Exception as import_error:
+                    logging.warning(f"Direct import fallback failed: {import_error}")
                 return {"success": True, "path": video_file_path}
             except subprocess.CalledProcessError as e:
                 logging.error(f"Error adding metadata: {e.stderr}")
                 # Continue anyway, as the clip itself is fine
                 socketio.emit('download-complete', {'url': video_url, 'path': video_file_path})
                 socketio.emit('import_video', {'path': video_file_path})
+                # Also try direct import as fallback
+                try:
+                    import_video_to_premiere(video_file_path)
+                except Exception as import_error:
+                    logging.warning(f"Direct import fallback failed: {import_error}")
                 return {"success": True, "path": video_file_path}
         else:
             error_message = "Clip download failed - output file not found"
@@ -1264,20 +1325,39 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 
             if d['status'] == 'downloading':
                 try:
-                    percentage = d.get('_percent_str', '0%')
+                    percentage_str = d.get('_percent_str', '0%')
                     # Remove ANSI color codes if present
-                    percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
-                    percentage = percentage.strip()
-                    logging.info(f'[PROGRESS] Video Progress: {percentage}')
-                    # Simple emission like the old version
-                    socketio.emit('percentage', {'percentage': percentage})
+                    percentage_str = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage_str)
+                    percentage_str = percentage_str.strip()
+                    
+                    # Extract numeric value from percentage string
+                    percentage_num = 0
+                    if percentage_str:
+                        # Remove % and spaces, then try to parse
+                        clean_str = percentage_str.replace('%', '').replace(' ', '')
+                        if clean_str.isdigit():
+                            percentage_num = int(clean_str)
+                    
+                    # Only emit if percentage increased or is 100%
+                    if percentage_num >= last_progress_value[0] or percentage_num == 100:
+                        # OPTIMIZATION: Only log key percentages to reduce I/O overhead
+                        if percentage_num % 10 == 0 or percentage_num == 100:
+                            logging.info(f'[PROGRESS] Video Progress: {percentage_num}%')
+                        # Emit progress to all connected clients (broadcast)
+                        socketio.emit('progress', {'progress': str(percentage_num), 'type': 'full'})
+                        socketio.emit('percentage', {'percentage': percentage_str if percentage_str else f'{percentage_num}%'})
+                        last_progress_value[0] = max(last_progress_value[0], percentage_num)
+                    # Removed debug log for skipped backward progress - reduces I/O overhead
                 except Exception as e:
                     if 'cancelled' in str(e).lower():
                         raise e  # Re-raise cancellation exceptions
                     logging.error(f"Error in progress hook: {e}")
             elif d['status'] == 'finished':
                 logging.info('[FINISHED] Video download finished')
+                # Emit progress to all connected clients (broadcast)
+                socketio.emit('progress', {'progress': '100', 'type': 'full'})
                 socketio.emit('percentage', {'percentage': '100%'})
+                last_progress_value[0] = 100
 
         # Get preferred audio language from settings
         preferred_language = settings.get('preferredAudioLanguage', 'original')
@@ -1439,7 +1519,8 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             'type': 'full',
             'status': 'downloading'
         }
-        socketio.emit('progress', progress_data)
+        # Emit progress to all connected clients (broadcast)
+        socketio.emit('progress', {'progress': '0', 'type': 'full'})
         socketio.emit('percentage', {'percentage': '0%'})
         logging.info(f"[SENT] initial progress events: progress={progress_data}")
         
@@ -1639,6 +1720,11 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 socketio.emit('import_video', {'path': actual_file})
                 # Emit both formats to ensure compatibility
                 socketio.emit('download-complete', {'url': video_url, 'path': actual_file})  # Hyphenated format for Chrome extension
+                # Also try direct import as fallback
+                try:
+                    import_video_to_premiere(actual_file)
+                except Exception as import_error:
+                    logging.warning(f"Direct import fallback failed: {import_error}")
                 
                 return actual_file
             except subprocess.CalledProcessError as e:
@@ -1648,6 +1734,11 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 logging.info(f"Returning file without metadata: {actual_file}")
                 socketio.emit('import_video', {'path': actual_file})
                 socketio.emit('download-complete', {'url': video_url, 'path': actual_file})
+                # Also try direct import as fallback
+                try:
+                    import_video_to_premiere(actual_file)
+                except Exception as import_error:
+                    logging.warning(f"Direct import fallback failed: {import_error}")
                 return actual_file
         else:
             logging.error(f"No suitable file found. Expected: {final_path}")
@@ -1703,6 +1794,11 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                                 logging.info(f"Found fallback downloaded file: {test_path}")
                                 socketio.emit('import_video', {'path': test_path})
                                 socketio.emit('download-complete', {'url': video_url, 'path': test_path})
+                                # Also try direct import as fallback
+                                try:
+                                    import_video_to_premiere(test_path)
+                                except Exception as import_error:
+                                    logging.warning(f"Direct import fallback failed: {import_error}")
                                 return test_path
                         
                         logging.warning("Fallback download completed but file not found at expected location")
@@ -1775,7 +1871,8 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
             'type': 'audio',
             'status': 'downloading'
         }
-        socketio.emit('progress', progress_data)
+        # Emit progress to all connected clients (broadcast)
+        socketio.emit('progress', {'progress': '0', 'type': 'audio'})
         socketio.emit('percentage', {'percentage': '0%'})
         
         # Check if download path exists or try to get default path
@@ -1824,20 +1921,39 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                 
             if d['status'] == 'downloading':
                 try:
-                    percentage = d.get('_percent_str', '0%')
+                    percentage_str = d.get('_percent_str', '0%')
                     # Remove ANSI color codes if present
-                    percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
-                    percentage = percentage.strip()
-                    logging.info(f'[PROGRESS] Audio Progress: {percentage}')
-                    # Simple emission like the old version
-                    socketio.emit('percentage', {'percentage': percentage})
+                    percentage_str = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage_str)
+                    percentage_str = percentage_str.strip()
+                    
+                    # Extract numeric value from percentage string
+                    percentage_num = 0
+                    if percentage_str:
+                        # Remove % and spaces, then try to parse
+                        clean_str = percentage_str.replace('%', '').replace(' ', '')
+                        if clean_str.isdigit():
+                            percentage_num = int(clean_str)
+                    
+                    # Only emit if percentage increased or is 100%
+                    if percentage_num >= last_progress_value_audio[0] or percentage_num == 100:
+                        # OPTIMIZATION: Only log key percentages to reduce I/O overhead
+                        if percentage_num % 10 == 0 or percentage_num == 100:
+                            logging.info(f'[PROGRESS] Audio Progress: {percentage_num}%')
+                        # Emit progress to all connected clients (broadcast)
+                        socketio.emit('progress', {'progress': str(percentage_num), 'type': 'audio'})
+                        socketio.emit('percentage', {'percentage': percentage_str if percentage_str else f'{percentage_num}%'})
+                        last_progress_value_audio[0] = max(last_progress_value_audio[0], percentage_num)
+                    # Removed debug log for skipped backward progress - reduces I/O overhead
                 except Exception as e:
                     if 'cancelled' in str(e).lower():
                         raise e  # Re-raise cancellation exceptions
                     logging.error(f"Error in audio progress hook: {e}")
             elif d['status'] == 'finished':
                 logging.info('[FINISHED] Audio download finished')
+                # Emit progress to all connected clients (broadcast)
+                socketio.emit('progress', {'progress': '100', 'type': 'audio'})
                 socketio.emit('percentage', {'percentage': '100%'})
+                last_progress_value_audio[0] = 100
 
         # Prepare authentication first
         cookies_file = None
@@ -2012,6 +2128,11 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                     socketio.emit('import_video', {'path': output_path})
                     # Emit both formats to ensure compatibility
                     socketio.emit('download-complete', {'url': video_url, 'path': output_path})  # Hyphenated format for Chrome extension
+                    # Also try direct import as fallback
+                    try:
+                        import_video_to_premiere(output_path)
+                    except Exception as import_error:
+                        logging.warning(f"Direct import fallback failed: {import_error}")
 
                 return output_path
 

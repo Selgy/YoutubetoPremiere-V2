@@ -10,6 +10,29 @@ let serverCheckInProgress = false;
 let lastServerCheck = 0;
 const SERVER_CHECK_INTERVAL = 30000; // Check every 30 seconds
 
+// Helper function to fetch from localhost via background script (avoids CORS)
+function fetchLocalhostViaBackground(url, options = {}) {
+    return new Promise((resolve) => {
+        if (!validateExtensionContext()) {
+            resolve({ success: false, ok: false, error: 'Extension context invalidated' });
+            return;
+        }
+        
+        chrome.runtime.sendMessage({
+            type: 'FETCH_LOCALHOST',
+            url: url,
+            options: options,
+            timeout: options.timeout || 5000
+        }, (response) => {
+            if (chrome.runtime.lastError) {
+                resolve({ success: false, ok: false, error: chrome.runtime.lastError.message });
+            } else {
+                resolve(response || { success: false, ok: false });
+            }
+        });
+    });
+}
+
 // Check server availability
 async function checkServerAvailability() {
     if (serverCheckInProgress) return serverAvailable;
@@ -23,11 +46,11 @@ async function checkServerAvailability() {
     lastServerCheck = now;
     
     try {
-        const response = await fetch('http://localhost:17845/health', { 
+        const response = await fetchLocalhostViaBackground('/health', { 
             method: 'GET',
             timeout: 3000 
         });
-        serverAvailable = response.ok;
+        serverAvailable = response.ok || false;
     } catch (error) {
         serverAvailable = false;
     }
@@ -1271,7 +1294,12 @@ function initializeSocket() {
                 // Only show percentage for non-clip imports
                 if (targetType !== 'clip') {
                 // Convert percentage and show as progress
-                const percentage = percentageText.replace('%', '');
+                // Remove % and convert to integer to avoid commas or decimals
+                let percentage = percentageText.replace('%', '').replace(',', '.').trim();
+                const percentageNum = parseFloat(percentage);
+                if (!isNaN(percentageNum)) {
+                    percentage = Math.round(percentageNum).toString();
+                }
                 
                 updateProgressSafely({
                     progress: percentage,
@@ -1644,7 +1672,13 @@ function updateProgress(data) {
                         progressSpan.textContent = ` ${data.message}`;
                 } else if (data.progress !== undefined && data.progress !== null && buttonType !== 'clip') {
                     // Only show percentage for non-clip imports
-                    const progressValue = data.progress.toString().replace('%', '');
+                    // Convert to integer to avoid decimal points or commas
+                    let progressValue = data.progress.toString().replace('%', '').replace(',', '.').trim();
+                    // Parse as float then convert to int to handle any decimal values
+                    const progressNum = parseFloat(progressValue);
+                    if (!isNaN(progressNum)) {
+                        progressValue = Math.round(progressNum).toString();
+                    }
                     progressSpan.textContent = ` ${progressValue}%`;
                 } else {
                     // Fallback based on button type
@@ -1982,17 +2016,17 @@ function sendURL(importType, additionalData = {}) {
         });
         
         function proceedWithServerCheck() {
-        // First check if server is running
-        fetch('http://localhost:17845/health')
+        // First check if server is running via background script
+        fetchLocalhostViaBackground('/health', { method: 'GET', timeout: 5000 })
         .then(response => {
-            if (!response.ok) {
+            if (!response.ok || !response.success) {
                 throw new Error('Server not running');
             }
-            // If server is running, then check license
-            return fetch('http://localhost:17845/check-license');
+            // If server is running, then check license via background script
+            return fetchLocalhostViaBackground('/check-license', { method: 'GET', timeout: 5000 });
         })
-        .then(response => response.json())
-        .then(data => {
+        .then(response => {
+            const data = response.data || {};
             if (!data.isValid) {
                 button.classList.add('failure');
                 enableAllButtons(); // Re-enable all buttons on license failure
@@ -2057,8 +2091,6 @@ function sendURL(importType, additionalData = {}) {
                 // Use the current page URL directly to preserve all parameters and context
                 currentVideoUrl = window.location.href;
                 
-                const serverUrl = 'http://localhost:17845/handle-video-url';
-                
                 // Always récupérer les cookies YouTube, même si l'authentification semble incomplète
                 getCookiesForServer().then(cookiesData => {
                     console.log('YTP: Cookies retrieved for server:', cookiesData.cookies.length, 'cookies');
@@ -2099,20 +2131,25 @@ function sendURL(importType, additionalData = {}) {
                         ...additionalData
                     };
 
-                    return fetch(serverUrl, {
+                    return fetchLocalhostViaBackground('/handle-video-url', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(requestData)
+                        body: JSON.stringify(requestData),
+                        timeout: 300000 // 5 minutes timeout for video processing
                     });
                 })
-                .then(response => response.json().then(data => ({status: response.status, data})))
+                .then(response => {
+                    const data = response.data || {};
+                    return { status: response.status || 200, data: data };
+                })
                 .then(({status, data}) => {
                     if (status === 403) {
                         resetButtonState(button);
                         showNotification('Licence invalide ou expirée. Veuillez vérifier votre clé de licence.', 'error');
                         throw new Error('License validation failed');
                     }
-                    if (status !== 200) {
+                    // Accept both 200 (OK) and 202 (Accepted) status codes
+                    if (status !== 200 && status !== 202) {
                         throw new Error(data.error || 'Échec du traitement de la vidéo');
                     }
                 })

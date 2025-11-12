@@ -60,6 +60,117 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             .then(data => console.log(data))
             .catch(error => console.error('Error:', error));
     }
+    
+    // Handle health check requests from content scripts (to avoid CORS issues)
+    if (message.type === 'CHECK_SERVER_HEALTH') {
+        console.log('YTP: Processing CHECK_SERVER_HEALTH request');
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        
+        fetch('http://localhost:17845/health', {
+            method: 'GET',
+            signal: controller.signal
+        })
+        .then(response => {
+            clearTimeout(timeoutId);
+            sendResponse({ 
+                success: response.ok, 
+                status: response.status,
+                available: response.ok 
+            });
+        })
+        .catch(error => {
+            clearTimeout(timeoutId);
+            console.log('YTP: Health check failed:', error.message);
+            sendResponse({ 
+                success: false, 
+                available: false,
+                error: error.message 
+            });
+        });
+        return true; // Keep message channel open for async response
+    }
+    
+    // Handle license check requests from content scripts (to avoid CORS issues)
+    if (message.type === 'CHECK_LICENSE') {
+        console.log('YTP: Processing CHECK_LICENSE request');
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        fetch('http://localhost:17845/check-license', {
+            method: 'GET',
+            signal: controller.signal
+        })
+        .then(response => {
+            clearTimeout(timeoutId);
+            if (!response.ok) {
+                throw new Error('Server not running');
+            }
+            return response.json();
+        })
+        .then(data => {
+            sendResponse({ 
+                success: true, 
+                isValid: data.isValid || false,
+                data: data 
+            });
+        })
+        .catch(error => {
+            clearTimeout(timeoutId);
+            console.log('YTP: License check failed:', error.message);
+            sendResponse({ 
+                success: false, 
+                isValid: false,
+                error: error.message 
+            });
+        });
+        return true; // Keep message channel open for async response
+    }
+    
+    // Handle generic localhost fetch requests from content scripts
+    if (message.type === 'FETCH_LOCALHOST') {
+        console.log('YTP: Processing FETCH_LOCALHOST request:', message.url);
+        const fetchOptions = message.options || { method: 'GET' };
+        const timeout = message.timeout || 5000;
+        
+        // Create AbortController for timeout (more compatible than AbortSignal.timeout)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
+        
+        fetch(`http://localhost:17845${message.url}`, {
+            ...fetchOptions,
+            signal: controller.signal
+        })
+        .then(async response => {
+            clearTimeout(timeoutId);
+            const contentType = response.headers.get('content-type');
+            let data;
+            
+            if (contentType && contentType.includes('application/json')) {
+                data = await response.json();
+            } else {
+                data = await response.text();
+            }
+            
+            sendResponse({ 
+                success: response.ok, 
+                status: response.status,
+                data: data,
+                ok: response.ok
+            });
+        })
+        .catch(error => {
+            clearTimeout(timeoutId);
+            console.log('YTP: Localhost fetch failed:', error.message);
+            sendResponse({ 
+                success: false, 
+                error: error.message,
+                ok: false,
+                status: error.name === 'AbortError' ? 408 : 500
+            });
+        });
+        return true; // Keep message channel open for async response
+    }
 });
 
 // Function to get YouTube cookies with advanced extraction

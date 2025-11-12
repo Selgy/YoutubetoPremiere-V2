@@ -952,26 +952,39 @@ def progress_hook(d, socketio):
                 progress_hook.last_progress_value = 0
             
             percentage_str = d.get('_percent_str', '0%')
+            # Remove ANSI color codes if present
             percentage_str = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage_str)
-            percentage_str = percentage_str.replace(' ', '').replace('%', '')
+            percentage_str = percentage_str.strip()
             
-            if percentage_str.isdigit():
-                percentage = int(percentage_str)
+            # Extract numeric value from percentage string
+            percentage_num = 0
+            if percentage_str:
+                # Remove % and spaces, then try to parse
+                clean_str = percentage_str.replace('%', '').replace(' ', '')
+                if clean_str.isdigit():
+                    percentage_num = int(clean_str)
+            
+            # Only process if we got a valid percentage
+            if percentage_num >= 0 and percentage_num <= 100:
                 current_time = time.time()
                 
                 # Throttle progress updates: send every 0.5s OR if progress increased by 5% OR for key values
                 time_elapsed = current_time - progress_hook.last_progress_time
-                progress_diff = percentage - progress_hook.last_progress_value
-                is_key_percentage = percentage in [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100]
+                progress_diff = percentage_num - progress_hook.last_progress_value
+                is_key_percentage = percentage_num in [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100]
                 
-                if (time_elapsed >= 0.5 or progress_diff >= 5 or is_key_percentage or percentage == 0):
-                    logging.info(f'Download progress: {percentage}%')
-                    # Emit to chrome clients with consistent event format
-                    emit_to_client_type('progress', {'progress': str(percentage), 'type': 'full'}, 'chrome')
-                    progress_hook.last_progress_time = current_time
-                    progress_hook.last_progress_value = percentage
-                else:
-                    logging.info(f'Skipping Progress: {percentage}% (throttled)')
+                # Only emit if percentage increased or is 100%
+                if percentage_num >= progress_hook.last_progress_value or percentage_num == 100:
+                    if (time_elapsed >= 0.5 or progress_diff >= 5 or is_key_percentage or percentage_num == 0):
+                        # Only log key percentages to reduce log spam
+                        if percentage_num % 10 == 0 or percentage_num == 100:
+                            logging.info(f'Download progress: {percentage_num}%')
+                        # Emit to chrome clients with consistent event format
+                        emit_to_client_type('progress', {'progress': str(percentage_num), 'type': 'full'}, 'chrome')
+                        progress_hook.last_progress_time = current_time
+                        progress_hook.last_progress_value = percentage_num
+                    # Removed throttled logging to reduce log spam
+                # Removed backward progress logging to reduce log spam
             
         except Exception as e:
             app_logger.error(f"Error in progress hook: {e}")

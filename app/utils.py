@@ -256,8 +256,24 @@ def import_video_to_premiere(video_path):
                 except:
                     pass
 
-        # Prepare the path for ExtendScript
-        video_path_escaped = video_path.replace('\\', '\\\\')
+        # Prepare the path for ExtendScript - handle Windows paths correctly
+        # On Windows, convert backslashes to forward slashes for ExtendScript
+        if sys.platform == 'win32':
+            # ExtendScript on Windows prefers forward slashes
+            video_path_escaped = video_path.replace('\\', '/')
+        else:
+            video_path_escaped = video_path
+        
+        # Also escape any quotes in the path
+        video_path_escaped = video_path_escaped.replace('"', '\\"')
+        
+        # Normalize result_path for ExtendScript (use forward slashes)
+        result_path_normalized = result_path.replace('\\', '/')
+        
+        logging.info(f'Preparing import script for: {video_path}')
+        logging.info(f'Script path: {script_path}')
+        logging.info(f'Result path: {result_path}')
+        logging.info(f'Escaped video path: {video_path_escaped}')
         
         # Create the ExtendScript optimized for maximum speed
         script = f"""
@@ -286,7 +302,7 @@ def import_video_to_premiere(video_path):
         }}
 
         // Write result
-        var file = new File("{result_path}".replace(/\\\\/g, '/'));
+        var file = new File("{result_path_normalized}");
         file.open('w');
         file.write(result);
         file.close();

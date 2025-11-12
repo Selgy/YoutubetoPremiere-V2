@@ -2,6 +2,7 @@ from flask import request, jsonify, send_file
 import logging
 import json
 import time
+import threading
 from video_processing import handle_video_url, get_audio_language_options, set_emit_function
 from utils import play_notification_sound, save_license_key, get_license_key, load_settings, save_settings, save_download_path, open_sounds_folder
 import os
@@ -251,46 +252,62 @@ def register_routes(app, socketio, settings):
             # Emit start event to all connected clients
             socketio.emit('download_started', {'url': video_url})
             
-            # Check for clip parameters from old format
-            current_time = data.get('currentTime')
+            # IMPORTANT: Return response immediately to avoid "write() before start_response" error
+            # Process download asynchronously in background thread
+            def process_legacy_download_async():
+                try:
+                    # Check for clip parameters from old format
+                    current_time = data.get('currentTime')
+                    
+                    if current_time is not None:
+                        # Handle clip request with old format
+                        download_type_async = 'clip'
+                        current_time = float(current_time)
+                        seconds_before = float(current_settings.get('secondsBefore', 15))
+                        seconds_after = float(current_settings.get('secondsAfter', 15))
+                        
+                        clip_start = max(0, current_time - seconds_before)
+                        clip_end = current_time + seconds_after
+                        
+                        result = handle_video_url(
+                            video_url=video_url, 
+                            download_type='clip',
+                            current_download=current_download, 
+                            socketio=socketio,
+                            clip_start=clip_start,
+                            clip_end=clip_end,
+                            settings=current_settings,
+                            cookies=cookies,
+                            user_agent=user_agent
+                        )
+                    else:
+                        # Use the same logic as handle_video_url_route for consistency
+                        result = handle_video_url(
+                            video_url=video_url, 
+                            download_type=download_type,
+                            current_download=current_download, 
+                            socketio=socketio,
+                            settings=current_settings,
+                            cookies=cookies,  # Now using actual cookies from Chrome extension
+                            user_agent=user_agent
+                        )
+                    
+                    # Log result but don't try to send HTTP response (already sent)
+                    if 'error' in result:
+                        logging.error(f"Legacy download failed: {result['error']}")
+                    else:
+                        logging.info(f"Legacy download completed successfully: {result.get('path', 'unknown')}")
+                        
+                except Exception as async_error:
+                    error_message = f"Error in async legacy download processing: {str(async_error)}"
+                    logging.error(error_message, exc_info=True)
             
-            if current_time is not None:
-                # Handle clip request with old format
-                download_type = 'clip'
-                current_time = float(current_time)
-                seconds_before = float(current_settings.get('secondsBefore', 15))
-                seconds_after = float(current_settings.get('secondsAfter', 15))
-                
-                clip_start = max(0, current_time - seconds_before)
-                clip_end = current_time + seconds_after
-                
-                result = handle_video_url(
-                    video_url=video_url, 
-                    download_type='clip',
-                    current_download=current_download, 
-                    socketio=socketio,
-                    clip_start=clip_start,
-                    clip_end=clip_end,
-                    settings=current_settings,
-                    cookies=cookies,
-                    user_agent=user_agent
-                )
-            else:
-                # Use the same logic as handle_video_url_route for consistency
-                result = handle_video_url(
-                    video_url=video_url, 
-                    download_type=download_type,
-                    current_download=current_download, 
-                    socketio=socketio,
-                    settings=current_settings,
-                    cookies=cookies,  # Now using actual cookies from Chrome extension
-                    user_agent=user_agent
-                )
+            # Start download in background thread
+            download_thread = threading.Thread(target=process_legacy_download_async, daemon=True)
+            download_thread.start()
             
-            if 'error' in result:
-                return jsonify({'error': result['error']}), 400
-                
-            return jsonify({'success': True}), 200
+            # Return immediately with 202 Accepted status
+            return jsonify({'success': True, 'message': 'Download started'}), 202
         except Exception as e:
             error_message = f"Error handling legacy send-url: {str(e)}"
             logging.error(error_message)
@@ -346,58 +363,75 @@ def register_routes(app, socketio, settings):
             # Emit start event to all connected clients
             socketio.emit('download_started', {'url': video_url})
             
-            # Check for clip parameters regardless of passed download_type
-            current_time = data.get('currentTime')
+            # IMPORTANT: Return response immediately to avoid "write() before start_response" error
+            # Process download asynchronously in background thread
+            def process_download_async():
+                try:
+                    # Check for clip parameters regardless of passed download_type
+                    current_time = data.get('currentTime')
+                    
+                    # If currentTime is provided, treat as clip download
+                    if current_time is not None:
+                        # Ensure download_type is set to 'clip'
+                        download_type_async = 'clip'
+                        logging.info(f"Handling as clip download for time: {current_time}")
+                        
+                        # Convert to float and use settings for before/after times
+                        current_time = float(current_time)
+                        seconds_before = float(current_settings.get('secondsBefore', 15))
+                        seconds_after = float(current_settings.get('secondsAfter', 15))
+                        
+                        # Calculate clip start and end times
+                        clip_start = max(0, current_time - seconds_before)
+                        clip_end = current_time + seconds_after
+                        
+                        logging.info(f"Clip parameters: start={clip_start}, end={clip_end}, duration={clip_end-clip_start}")
+                        
+                        # Process the video with clip parameters
+                        result = handle_video_url(
+                            video_url=video_url, 
+                            download_type='clip',  # Explicit clip type
+                            current_download=current_download, 
+                            socketio=socketio,
+                            clip_start=clip_start,
+                            clip_end=clip_end,
+                            settings=current_settings,
+                            cookies=cookies,
+                            user_agent=user_agent
+                        )
+                    else:
+                        # No clip parameters, process as regular video
+                        logging.info(f"Handling as regular {download_type} download")
+                        result = handle_video_url(
+                            video_url=video_url, 
+                            download_type=download_type, 
+                            current_download=current_download, 
+                            socketio=socketio,
+                            settings=current_settings,
+                            cookies=cookies,
+                            user_agent=user_agent
+                        )
+                    
+                    # Log result but don't try to send HTTP response (already sent)
+                    if 'error' in result:
+                        logging.error(f"Download failed: {result['error']}")
+                    else:
+                        logging.info(f"Download completed successfully: {result.get('path', 'unknown')}")
+                        
+                except Exception as async_error:
+                    error_message = f"Error in async download processing: {str(async_error)}"
+                    logging.error(error_message, exc_info=True)
             
-            # If currentTime is provided, treat as clip download
-            if current_time is not None:
-                # Ensure download_type is set to 'clip'
-                download_type = 'clip'
-                logging.info(f"Handling as clip download for time: {current_time}")
-                
-                # Convert to float and use settings for before/after times
-                current_time = float(current_time)
-                seconds_before = float(current_settings.get('secondsBefore', 15))
-                seconds_after = float(current_settings.get('secondsAfter', 15))
-                
-                # Calculate clip start and end times
-                clip_start = max(0, current_time - seconds_before)
-                clip_end = current_time + seconds_after
-                
-                logging.info(f"Clip parameters: start={clip_start}, end={clip_end}, duration={clip_end-clip_start}")
-                
-                # Process the video with clip parameters
-                result = handle_video_url(
-                    video_url=video_url, 
-                    download_type='clip',  # Explicit clip type
-                    current_download=current_download, 
-                    socketio=socketio,
-                    clip_start=clip_start,
-                    clip_end=clip_end,
-                    settings=current_settings,
-                    cookies=cookies,
-                    user_agent=user_agent
-                )
-            else:
-                # No clip parameters, process as regular video
-                logging.info(f"Handling as regular {download_type} download")
-                result = handle_video_url(
-                    video_url=video_url, 
-                    download_type=download_type, 
-                    current_download=current_download, 
-                    socketio=socketio,
-                    settings=current_settings,
-                    cookies=cookies,
-                    user_agent=user_agent
-                )
+            # Start download in background thread
+            download_thread = threading.Thread(target=process_download_async, daemon=True)
+            download_thread.start()
             
-            if 'error' in result:
-                return jsonify({'error': result['error']}), 400
-                
-            return jsonify({'success': True}), 200
+            # Return immediately with 202 Accepted status
+            return jsonify({'success': True, 'message': 'Download started'}), 202
+            
         except Exception as e:
             error_message = f"Error handling video URL: {str(e)}"
-            logging.error(error_message)
+            logging.error(error_message, exc_info=True)
             return jsonify({'error': error_message}), 500
 
     @app.route('/update-sound-settings', methods=['POST'])
