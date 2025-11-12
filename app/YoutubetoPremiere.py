@@ -18,6 +18,43 @@ import app_init
 import tempfile
 from datetime import datetime
 
+# Add Deno to PATH for yt-dlp External JavaScript Runtime support
+# This ensures Deno is available even if the terminal wasn't restarted after installation
+deno_path = os.path.join(os.path.expanduser('~'), '.deno', 'bin')
+if os.path.exists(deno_path) and deno_path not in os.environ.get('PATH', ''):
+    os.environ['PATH'] = f"{deno_path}{os.pathsep}{os.environ.get('PATH', '')}"
+    print(f"[DENO] Added Deno to PATH for this session: {deno_path}")
+
+# Download EJS challenge solver if not already present
+# This is required for yt-dlp to work properly with YouTube
+import subprocess
+import tempfile
+try:
+    # Download challenge solver using yt-dlp CLI (only way to get remote components)
+    # We need to do an actual extraction (not just --version) to trigger the download
+    # Use a known YouTube video ID just to trigger the solver download
+    print("[EJS] Downloading challenge solver from GitHub...")
+    result = subprocess.run(
+        [sys.executable, '-m', 'yt_dlp', 
+         '--remote-components', 'ejs:github',
+         '--skip-download',  # Don't actually download the video
+         '--no-warnings',
+         'https://www.youtube.com/watch?v=jNQXAC9IVRw'  # YouTube test video "Me at the zoo"
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=tempfile.gettempdir()  # Run in temp directory
+    )
+    if result.returncode == 0 or 'jsc:deno' in result.stdout or 'jsc:deno' in result.stderr:
+        print(f"[EJS] ✓ Challenge solver downloaded and ready")
+    else:
+        print(f"[EJS] ⚠ Challenge solver may not be available: {result.stderr[:100] if result.stderr else 'check manually'}")
+except subprocess.TimeoutExpired:
+    print(f"[EJS] ⚠ Challenge solver download timed out (may still work)")
+except Exception as e:
+    print(f"[EJS] ⚠ Error downloading challenge solver: {str(e)[:100]}")
+
 
 # Determine log directory
 if sys.platform == 'win32':

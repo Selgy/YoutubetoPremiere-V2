@@ -575,21 +575,36 @@ def clear_temp_files(temp_dir=None, max_age_hours=24):
         current_time = time.time()
         max_age_seconds = max_age_hours * 3600
         
+        # OPTIMIZATION: Use os.scandir() instead of os.listdir() for better performance
+        # os.scandir() returns DirEntry objects which cache file stat info
         count = 0
-        for filename in os.listdir(temp_dir):
-            file_path = os.path.join(temp_dir, filename)
-            
-            # Only remove files, not directories
-            if os.path.isfile(file_path):
-                # Check file age
-                file_age = current_time - os.path.getmtime(file_path)
-                if file_age > max_age_seconds:
-                    try:
-                        os.remove(file_path)
-                        count += 1
-                    except OSError:
-                        # Skip files that can't be removed
-                        pass
+        try:
+            with os.scandir(temp_dir) as entries:
+                for entry in entries:
+                    # Only process files, not directories (cached by DirEntry)
+                    if entry.is_file(follow_symlinks=False):
+                        # Check file age using cached stat info
+                        file_age = current_time - entry.stat(follow_symlinks=False).st_mtime
+                        if file_age > max_age_seconds:
+                            try:
+                                os.remove(entry.path)
+                                count += 1
+                            except OSError:
+                                # Skip files that can't be removed
+                                pass
+        except Exception as scan_error:
+            # Fallback to os.listdir if scandir fails
+            logger.warning(f"os.scandir failed, falling back to os.listdir: {scan_error}")
+            for filename in os.listdir(temp_dir):
+                file_path = os.path.join(temp_dir, filename)
+                if os.path.isfile(file_path):
+                    file_age = current_time - os.path.getmtime(file_path)
+                    if file_age > max_age_seconds:
+                        try:
+                            os.remove(file_path)
+                            count += 1
+                        except OSError:
+                            pass
         
         if count > 0:
             logger.info(f"Cleared {count} temporary files from {temp_dir}")

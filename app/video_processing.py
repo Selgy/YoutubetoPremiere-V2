@@ -868,11 +868,7 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             
             if result and os.path.exists(result):
                 socketio.emit('import_video', {'path': result})
-                # Also try direct import as fallback
-                try:
-                    import_video_to_premiere(result)
-                except Exception as import_error:
-                    logging.warning(f"Direct import fallback failed: {import_error}")
+                logging.info("Import signal sent to Premiere Pro extension via SocketIO")
                 return {"success": True, "path": result}
             else:
                 return {"error": "Failed to download audio"}
@@ -904,11 +900,7 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             if result and result.get("success") and result.get("path") and os.path.exists(result["path"]):
                 # Emit SocketIO event for Premiere extension
                 socketio.emit('import_video', {'path': result["path"]})
-                # Also try direct import as fallback (in case extension doesn't respond)
-                try:
-                    import_video_to_premiere(result["path"])
-                except Exception as import_error:
-                    logging.warning(f"Direct import fallback failed: {import_error}")
+                logging.info("Import signal sent to Premiere Pro extension via SocketIO")
                 return {"success": True, "path": result["path"]}
             else:
                 error_msg = result.get("error") if result and "error" in result else "Failed to download clip"
@@ -929,13 +921,8 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             )
             
             if result and os.path.exists(result):
-                # Emit SocketIO event for Premiere extension
-                socketio.emit('import_video', {'path': result})
-                # Also try direct import as fallback (in case extension doesn't respond)
-                try:
-                    import_video_to_premiere(result)
-                except Exception as import_error:
-                    logging.warning(f"Direct import fallback failed: {import_error}")
+                # Import signal already sent by download_video function
+                logging.info(f"Download completed successfully: {result}")
                 return {"success": True, "path": result}
             else:
                 return {"error": "Failed to download video"}
@@ -1235,22 +1222,14 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                 socketio.emit('complete', {'type': 'clip', 'message': 'Clip téléchargé avec succès'})
                 socketio.emit('download-complete', {'url': video_url, 'path': video_file_path})
                 socketio.emit('import_video', {'path': video_file_path})
-                # Also try direct import as fallback
-                try:
-                    import_video_to_premiere(video_file_path)
-                except Exception as import_error:
-                    logging.warning(f"Direct import fallback failed: {import_error}")
+                logging.info("Import signal sent to Premiere Pro extension via SocketIO")
                 return {"success": True, "path": video_file_path}
             except subprocess.CalledProcessError as e:
                 logging.error(f"Error adding metadata: {e.stderr}")
                 # Continue anyway, as the clip itself is fine
                 socketio.emit('download-complete', {'url': video_url, 'path': video_file_path})
                 socketio.emit('import_video', {'path': video_file_path})
-                # Also try direct import as fallback
-                try:
-                    import_video_to_premiere(video_file_path)
-                except Exception as import_error:
-                    logging.warning(f"Direct import fallback failed: {import_error}")
+                logging.info("Import signal sent to Premiere Pro extension via SocketIO")
                 return {"success": True, "path": video_file_path}
         else:
             error_message = "Clip download failed - output file not found"
@@ -1363,33 +1342,45 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         preferred_language = settings.get('preferredAudioLanguage', 'original')
         logging.info(f"Using preferred audio language: {preferred_language}")
         
-        # Create robust format string with fallback options
+        # Create simple and flexible format string
+        # With Deno enabled, yt-dlp can now access all formats, so we simplify the selection
         max_height = int(resolution.replace("p", ""))
         
-        # Start with AVC1 preferences but add robust fallbacks for SABR streaming
         format_options = []
         
+        # Priority: best video+audio at requested resolution
         if preferred_language != 'original':
-            # Language-specific AVC1 formats first
+            # Try language-specific first
             format_options.extend([
-                f'bestvideo[vcodec^=avc1][height<={max_height}]+bestaudio[language~="{preferred_language}"][ext=m4a]',
-                f'best[vcodec^=avc1][height<={max_height}][language~="{preferred_language}"]',
-                f'bestvideo[vcodec^=avc1][height<={max_height}]+bestaudio[language~="{preferred_language}"]',
+                f'bestvideo[height<={max_height}]+bestaudio[language~="{preferred_language}"]',
+                f'best[height<={max_height}][language~="{preferred_language}"]',
             ])
         
-        # AVC1 preferences with SABR-compatible options
+        # Main format strategy: prefer separate streams for better quality, then combined
+        # IMPORTANT: MUST use AVC1 (H.264) codec for Premiere Pro compatibility - AV01 is NOT supported!
+        # Filter by vcodec to ensure only H.264/AVC1 formats are selected
         format_options.extend([
-            f'bestvideo[vcodec^=avc1][height<={max_height}]+bestaudio[ext=m4a]',    # AVC1 + M4A (preferred)
-            f'best[vcodec^=avc1][height<={max_height}][ext=mp4]',                   # AVC1 combined MP4
-            f'best[vcodec^=avc1][height<={max_height}]',                            # Any AVC1 format
-            f'bestvideo[vcodec^=avc1][height<={max_height}]+bestaudio',             # AVC1 video + any audio
+            # Priority 1: Best H.264 video at resolution + best audio (separate streams for max quality)
+            f'bestvideo[height<={max_height}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]',
+            f'bestvideo[height<={max_height}][vcodec^=avc1]+bestaudio',
+            
+            # Priority 2: Any H.264 video at resolution + audio
+            f'bestvideo[height<={max_height}][vcodec*=avc]+bestaudio',
+            
+            # Priority 3: Combined H.264 format at resolution (like format 18 for 360p fallback)
+            f'best[height<={max_height}][vcodec^=avc1][ext=mp4]',
+            f'best[height<={max_height}][vcodec*=avc]',
+            
+            # Priority 4: Any H.264 at any resolution (better than failing)
+            'bestvideo[vcodec^=avc1]+bestaudio',
+            'best[vcodec^=avc1][ext=mp4]',
+            
+            # Last resort: any mp4 (but this may fail if it's AV01)
+            'best[ext=mp4]/best'
         ])
         
-        # Add fallback options that work better with SABR streaming
-        format_options.extend(get_fallback_format_options(max_height))
-        
         format_string = '/'.join(format_options)
-        logging.info(f"Using robust format string with {len(format_options)} options (AVC1 + SABR fallbacks): {format_string[:200]}...")
+        logging.info(f"Using simplified format string with {len(format_options)} options: {format_string}")
 
         # Check if download path exists or try to get default path
         if not download_path:
@@ -1428,8 +1419,9 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 browser_cookies = try_extract_cookies_from_browser()
         
         # Configure initial yt-dlp options with robust settings including auth
+        # For info extraction, DON'T specify format - we only want metadata, not to validate format availability
         initial_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
-        initial_ydl_opts['skip_download'] = True  # Only extract info
+        initial_ydl_opts['skip_download'] = True  # Only extract metadata, don't download yet
         
         # Add browser cookies if available (fallback when no cookies file)
         if browser_cookies:
@@ -1437,6 +1429,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             logging.info(f"Using cookies from browser for info extraction: {browser_cookies[0]}")
         
         # Extract video info first with authentication
+        # Use simple 'best' format to avoid complex format validation during info extraction
         try:
             with yt_dlp.YoutubeDL(initial_ydl_opts) as ydl:
                 info = ydl.extract_info(video_url, download=False)
@@ -1449,8 +1442,9 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 try:
                     # Retry info extraction without cookies but with comprehensive headers
                     fallback_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
-                    fallback_ydl_opts['skip_download'] = True
+                    fallback_ydl_opts['skip_download'] = True  # Only extract metadata, don't download yet
                     
+                    # Use simple 'best' format to avoid complex format validation during info extraction
                     with yt_dlp.YoutubeDL(fallback_ydl_opts) as ydl_fallback:
                         info = ydl_fallback.extract_info(video_url, download=False)
                         if not info:
@@ -1542,7 +1536,11 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     logging.info('[CANCEL] Video download successfully cancelled before start')
                     return None
                 
-                ydl.process_ie_result(info, download=True)
+                # Download with the format specified in ydl_opts
+                # DON'T use process_ie_result with old info - that would ignore the format
+                # Instead, download directly from URL which will apply the format from ydl_opts
+                logging.info(f"Starting download with format: {ydl_opts.get('format', 'default')}")
+                ydl.download([video_url])
                 
                 # Check for cancellation after download
                 if is_cancelled[0]:
@@ -1621,14 +1619,9 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                             f"{base_name}.f*.mp3", f"{base_name}.mp3.f*"]
             
             import glob
-            video_files = []
-            audio_files = []
-            
-            # Find video and audio files
-            for pattern in video_patterns:
-                video_files.extend(glob.glob(pattern))
-            for pattern in audio_patterns:
-                audio_files.extend(glob.glob(pattern))
+            # OPTIMIZATION: Use list comprehension instead of loop for glob patterns
+            video_files = [f for pattern in video_patterns for f in glob.glob(pattern)]
+            audio_files = [f for pattern in audio_patterns for f in glob.glob(pattern)]
             
             logging.info(f"Found video files: {video_files}")
             logging.info(f"Found audio files: {audio_files}")
@@ -1720,11 +1713,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 socketio.emit('import_video', {'path': actual_file})
                 # Emit both formats to ensure compatibility
                 socketio.emit('download-complete', {'url': video_url, 'path': actual_file})  # Hyphenated format for Chrome extension
-                # Also try direct import as fallback
-                try:
-                    import_video_to_premiere(actual_file)
-                except Exception as import_error:
-                    logging.warning(f"Direct import fallback failed: {import_error}")
+                logging.info("Import signal sent to Premiere Pro extension via SocketIO")
                 
                 return actual_file
             except subprocess.CalledProcessError as e:
@@ -1734,11 +1723,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 logging.info(f"Returning file without metadata: {actual_file}")
                 socketio.emit('import_video', {'path': actual_file})
                 socketio.emit('download-complete', {'url': video_url, 'path': actual_file})
-                # Also try direct import as fallback
-                try:
-                    import_video_to_premiere(actual_file)
-                except Exception as import_error:
-                    logging.warning(f"Direct import fallback failed: {import_error}")
+                logging.info("Import signal sent to Premiere Pro extension via SocketIO")
                 return actual_file
         else:
             logging.error(f"No suitable file found. Expected: {final_path}")
@@ -1794,11 +1779,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                                 logging.info(f"Found fallback downloaded file: {test_path}")
                                 socketio.emit('import_video', {'path': test_path})
                                 socketio.emit('download-complete', {'url': video_url, 'path': test_path})
-                                # Also try direct import as fallback
-                                try:
-                                    import_video_to_premiere(test_path)
-                                except Exception as import_error:
-                                    logging.warning(f"Direct import fallback failed: {import_error}")
+                                logging.info("Import signal sent to Premiere Pro extension via SocketIO")
                                 return test_path
                         
                         logging.warning("Fallback download completed but file not found at expected location")
@@ -2128,11 +2109,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                     socketio.emit('import_video', {'path': output_path})
                     # Emit both formats to ensure compatibility
                     socketio.emit('download-complete', {'url': video_url, 'path': output_path})  # Hyphenated format for Chrome extension
-                    # Also try direct import as fallback
-                    try:
-                        import_video_to_premiere(output_path)
-                    except Exception as import_error:
-                        logging.warning(f"Direct import fallback failed: {import_error}")
+                    logging.info("Import signal sent to Premiere Pro extension via SocketIO")
 
                 return output_path
 
@@ -2260,17 +2237,18 @@ def cleanup_partial_video_files(output_path):
             output_path,                # Final output file if it exists
         ]
         
+        # OPTIMIZATION: Use list comprehension to gather all files at once
+        matching_files = [f for pattern in patterns for f in glob.glob(pattern)]
         removed_files = []
-        for pattern in patterns:
-            matching_files = glob.glob(pattern)
-            for file_path in matching_files:
-                try:
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                        removed_files.append(os.path.basename(file_path))
-                        logging.info(f"Removed partial file: {file_path}")
-                except Exception as e:
-                    logging.error(f"Could not remove partial file {file_path}: {e}")
+        
+        for file_path in matching_files:
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    removed_files.append(os.path.basename(file_path))
+                    logging.info(f"Removed partial file: {file_path}")
+            except Exception as e:
+                logging.error(f"Could not remove partial file {file_path}: {e}")
         
         if removed_files:
             logging.info(f"Cleaned up {len(removed_files)} partial files: {', '.join(removed_files)}")
@@ -2403,6 +2381,28 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
     
     base_options['http_headers'] = http_headers
     logging.info(f"Using comprehensive browser headers with User-Agent: {http_headers.get('User-Agent', 'default')[:50]}...")
+    
+    # Configure external JavaScript runtime (Deno) for YouTube support
+    # Required for yt-dlp 2025.11.12+ to fully support YouTube downloads
+    # Deno is enabled by default in yt-dlp, so we just verify it's available
+    # IMPORTANT: Do NOT specify player_client in extractor_args - it severely limits format availability!
+    # yt-dlp's default logic works best with Deno/EJS
+    try:
+        # Check if Deno is available in PATH
+        import shutil
+        deno_path = shutil.which('deno')
+        if deno_path:
+            logging.info(f"✓ Deno runtime found at: {deno_path}")
+            logging.info("✓ External JavaScript runtime enabled (EJS challenge solver should be pre-downloaded)")
+            logging.info("✓ Using yt-dlp's default player client logic for maximum format availability")
+        else:
+            logging.warning("⚠ Deno runtime not found in PATH. YouTube format availability may be limited.")
+            logging.warning("  Install Deno with: .\\scripts\\install-deno.ps1")
+            logging.warning("  Then restart the application or run: .\\scripts\\add-deno-to-path.ps1")
+    except Exception as e:
+        logging.warning(f"Error checking for Deno runtime: {e}")
+    
+    logging.info("YT-DLP options configured for robust YouTube downloading with EJS support")
     
     return base_options
 
