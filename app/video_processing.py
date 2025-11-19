@@ -789,34 +789,39 @@ def check_ffmpeg(settings, socketio):
         return {'success': False, 'message': error_msg}
 
 def validate_license(license_key):
+    """
+    Validate license via secure API proxy
+    No API keys are stored in this code - they're on the backend
+    """
     if not license_key:
         return False
 
-    # Try Gumroad validation
     try:
-        gumroad_response = requests.post('https://api.gumroad.com/v2/licenses/verify', {
-            'product_id': '9yYJT15dJO3wB4Z74N-EUg==',
-            'license_key': license_key
-        })
-
-        if gumroad_response.ok and gumroad_response.json().get('success'):
-            return True
-
-        # Try Shopify validation
-        api_token = 'eHyU10yFizUV5qUJaFS8koE1nIx2UCDFNSoPVdDRJDI7xtunUK6ZWe40vfwp'
-        shopify_response = requests.post(
-            f'https://app-easy-product-downloads.fr/api/get-license-key',
-            params={'license_key': license_key, 'api_token': api_token}
+        from config import LICENSE_API_URL, API_TIMEOUT
+        
+        response = requests.post(
+            LICENSE_API_URL,
+            json={'licenseKey': license_key},
+            timeout=API_TIMEOUT,
+            headers={'Content-Type': 'application/json'}
         )
 
-        if shopify_response.ok and shopify_response.json().get('status') == 'success':
-            return True
+        if response.ok:
+            result = response.json()
+            is_valid = result.get('success', False)
+            if is_valid:
+                logging.info(f"License validated via {result.get('provider', 'unknown')}")
+            return is_valid
+        else:
+            logging.warning(f"License validation failed with status {response.status_code}")
+            return False
 
+    except requests.Timeout:
+        logging.error("License validation timeout")
+        return False
     except Exception as e:
         logging.error(f"Error validating license: {e}")
         return False
-
-    return False
 
 def handle_video_url(video_url, download_type, current_download, socketio, settings, clip_start=None, clip_end=None, cookies=None, user_agent=None):
     """

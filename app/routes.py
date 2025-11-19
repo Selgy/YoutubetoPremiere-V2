@@ -5,6 +5,7 @@ import time
 import threading
 from video_processing import handle_video_url, get_audio_language_options, set_emit_function
 from utils import play_notification_sound, save_license_key, get_license_key, load_settings, save_settings, save_download_path, open_sounds_folder
+from config import LICENSE_API_URL, API_TIMEOUT, LICENSE_CACHE_DURATION
 import os
 import sys
 import requests
@@ -19,7 +20,6 @@ current_download = {'process': None, 'ydl': None, 'cancel_callback': None}
 
 # License validation cache to avoid repeated API calls
 license_cache = {'key': None, 'is_valid': False, 'timestamp': 0}
-LICENSE_CACHE_DURATION = 3600  # 1 hour cache
 
 def get_current_download():
     """Get the current download structure for cancellation purposes"""
@@ -525,32 +525,35 @@ def register_routes(app, socketio, settings):
             if not license_key:
                 return jsonify({'success': False, 'message': 'No license key provided'}), 400
 
-            # Try Gumroad validation
-            gumroad_response = requests.post('https://api.gumroad.com/v2/licenses/verify', {
-                'product_id': '9yYJT15dJO3wB4Z74N-EUg==',
-                'license_key': license_key
-            })
-
-            if gumroad_response.ok and gumroad_response.json().get('success'):
-                save_license_key(license_key)
-                return jsonify({'success': True, 'message': 'License validated successfully'})
-
-            # Try Shopify validation
-            api_token = 'eHyU10yFizUV5qUJaFS8koE1nIx2UCDFNSoPVdDRJDI7xtunUK6ZWe40vfwp'
-            shopify_response = requests.post(
-                f'https://app-easy-product-downloads.fr/api/get-license-key',
-                params={'license_key': license_key, 'api_token': api_token}
+            # Use secure API proxy for validation (no API keys exposed)
+            logging.info("Validating license via secure API proxy...")
+            
+            response = requests.post(
+                LICENSE_API_URL,
+                json={'licenseKey': license_key},
+                timeout=API_TIMEOUT,
+                headers={'Content-Type': 'application/json'}
             )
 
-            if shopify_response.ok and shopify_response.json().get('status') == 'success':
-                save_license_key(license_key)
-                return jsonify({'success': True, 'message': 'License validated successfully'})
+            if response.ok:
+                result = response.json()
+                if result.get('success'):
+                    save_license_key(license_key)
+                    logging.info(f"License validated successfully via {result.get('provider', 'unknown')}")
+                    return jsonify({'success': True, 'message': 'License validated successfully'})
+                else:
+                    logging.warning("License validation failed")
+                    return jsonify({'success': False, 'message': result.get('message', 'Invalid license key')}), 400
+            else:
+                logging.error(f"License API returned error: {response.status_code}")
+                return jsonify({'success': False, 'message': 'Unable to validate license. Please try again.'}), 500
 
-            return jsonify({'success': False, 'message': 'Invalid license key'}), 400
-
+        except requests.Timeout:
+            logging.error('License validation timeout')
+            return jsonify({'success': False, 'message': 'Validation timeout. Please check your internet connection.'}), 500
         except Exception as e:
             logging.error(f'Error validating license: {e}')
-            return jsonify({'success': False, 'message': str(e)}), 500
+            return jsonify({'success': False, 'message': 'Error validating license. Please try again.'}), 500
 
     @app.route('/check-license', methods=['GET'])
     def check_license():
@@ -569,28 +572,21 @@ def register_routes(app, socketio, settings):
                     'message': 'License is valid (cached)' if license_cache['is_valid'] else 'Invalid license key (cached)'
                 })
 
-            # Cache miss or expired - validate with API
-            logging.info("License validation cache miss - calling APIs")
+            # Cache miss or expired - validate with secure API proxy
+            logging.info("License validation cache miss - calling secure API")
             
-            # Perform the same validation as above
-            gumroad_response = requests.post('https://api.gumroad.com/v2/licenses/verify', {
-                'product_id': '9yYJT15dJO3wB4Z74N-EUg==',
-                'license_key': license_key
-            })
+            response = requests.post(
+                LICENSE_API_URL,
+                json={'licenseKey': license_key},
+                timeout=API_TIMEOUT,
+                headers={'Content-Type': 'application/json'}
+            )
 
             is_valid = False
-            if gumroad_response.ok and gumroad_response.json().get('success'):
-                is_valid = True
-            else:
-                # Try Shopify validation
-                api_token = 'eHyU10yFizUV5qUJaFS8koE1nIx2UCDFNSoPVdDRJDI7xtunUK6ZWe40vfwp'
-                shopify_response = requests.post(
-                    f'https://app-easy-product-downloads.fr/api/get-license-key',
-                    params={'license_key': license_key, 'api_token': api_token}
-                )
-
-                if shopify_response.ok and shopify_response.json().get('status') == 'success':
-                    is_valid = True
+            if response.ok:
+                result = response.json()
+                is_valid = result.get('success', False)
+                logging.info(f"License validation via {result.get('provider', 'unknown')}: {is_valid}")
 
             # Update cache
             license_cache.update({
@@ -606,6 +602,9 @@ def register_routes(app, socketio, settings):
             else:
                 return jsonify({'isValid': False, 'message': 'Invalid license key'})
 
+        except requests.Timeout:
+            logging.error('License check timeout')
+            return jsonify({'isValid': False, 'message': 'Validation timeout'})
         except Exception as e:
             logging.error(f'Error checking license: {e}')
             return jsonify({'isValid': False, 'message': str(e)})

@@ -75,6 +75,14 @@ ffmpeg.exe
 *.p12
 *.cert
 
+# Environment variables - IMPORTANT: Never commit API keys!
+.env
+.env.local
+.env.*.local
+
+# License API folder (deployed on Cloudflare Workers)
+license-api/
+
 .cursor
 .vscode
 .cursor/
