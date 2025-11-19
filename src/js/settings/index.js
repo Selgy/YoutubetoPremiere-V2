@@ -641,16 +641,15 @@ function handleProcessPermissionError(error, execPath, exec, path, extensionRoot
 // Start the Python server when the extension loads
 console.log("Background script loaded. Checking if we should start Python server...");
 
-// Only start the server if we're not in the main panel (to avoid conflicts)
-// The main panel (main.tsx) will handle server startup via AppLauncher
-const isMainPanel = window.location.pathname.includes('/main/') || window.location.pathname.includes('main.html');
-if (!isMainPanel) {
-    console.log("Starting Python server from settings panel...");
-    startPythonServer();
-} else {
-    console.log("Main panel detected - server startup will be handled by AppLauncher");
+// Check if this is the settings panel specifically
+const isSettingsPanel = window.location.pathname.includes('/settings/') || window.location.pathname.includes('settings.html');
+console.log("Current location:", window.location.pathname);
+console.log("Is settings panel:", isSettingsPanel);
+
+if (isSettingsPanel) {
+    console.log("Settings panel detected - server startup will be handled by main panel AppLauncher");
     
-    // Still initialize the CEP components needed for settings panel
+    // Only initialize the CEP components needed for settings panel, don't start server
     initializeNodeModules().then(async (nodeModules) => {
         const cs = await initializeCSInterface();
         csInterface = cs;
@@ -659,6 +658,9 @@ if (!isMainPanel) {
         setupVideoImportHandler(csInterface);
         console.log("Settings panel components initialized without starting server");
     }).catch(error => {
-        console.error("Error initializing settings panel components:", error);
+        console.error("Settings panel initialization failed:", error);
     });
+} else {
+    console.log("Non-settings panel detected - starting Python server...");
+    startPythonServer();
 }
