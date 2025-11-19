@@ -1,15 +1,52 @@
-// YouTube to Premiere Extension - Settings Popup - Firefox Version
-console.log('YTP Popup: Script loaded (Firefox)');
-
-// Firefox compatibility layer
-const extensionAPI = typeof browser !== 'undefined' ? browser : chrome;
+// YouTube to Premiere Extension - Settings Popup
+console.log('YTP Popup: Script loaded');
 
 // Download URLs for application installation
 const DOWNLOAD_URLS = {
     windows: 'https://github.com/Selgy/YoutubetoPremiere-V2/releases/latest/download/YouTubetoPremiere-Windows.exe',
     mac: 'https://github.com/Selgy/YoutubetoPremiere-V2/releases/latest/download/YouTubetoPremiere-macOS.pkg',
-    github: 'https://github.com/Selgy/YoutubetoPremiere-V2/releases/latest'
+    github: 'https://github.com/Selgy/YoutubetoPremiere-V2/releases/latest',
+    chromeStore: 'https://chromewebstore.google.com/detail/youtube-to-premiere-pro-v/fnhpeiohcfobchjffmgfdeobphhmaibb'
 };
+
+// Current extension version
+const CURRENT_VERSION = chrome.runtime.getManifest().version;
+console.log(`YTP Popup: Extension version ${CURRENT_VERSION}`);
+
+// Get extension version from manifest
+function getExtensionVersion() {
+    return CURRENT_VERSION;
+}
+
+// Compare version strings (semver)
+function compareVersions(v1, v2) {
+    const parts1 = v1.split('.').map(Number);
+    const parts2 = v2.split('.').map(Number);
+    
+    for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
+        const part1 = parts1[i] || 0;
+        const part2 = parts2[i] || 0;
+        
+        if (part1 > part2) return 1;
+        if (part1 < part2) return -1;
+    }
+    return 0;
+}
+
+// Detect operating system
+function detectOperatingSystem() {
+    const userAgent = navigator.userAgent.toLowerCase();
+    
+    if (userAgent.includes('mac')) {
+        return 'mac';
+    } else if (userAgent.includes('win')) {
+        return 'windows';
+    } else if (userAgent.includes('linux')) {
+        return 'linux';
+    } else {
+        return 'unknown';
+    }
+}
 
 // Settings keys
 const SETTINGS_KEYS = {
@@ -29,6 +66,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initializePopup();
     loadSettings();
     checkServerStatus();
+    checkForExtensionUpdates(); // Check for updates independently of server status
     setupEventListeners();
 });
 
@@ -41,7 +79,7 @@ async function initializePopup() {
 
 function loadSettings() {
     // Load all settings from storage
-    extensionAPI.storage.local.get(Object.values(SETTINGS_KEYS), (result) => {
+    chrome.storage.local.get(Object.values(SETTINGS_KEYS), (result) => {
         console.log('YTP Popup: Loaded settings:', result);
         
         // Panel visibility (default: true)
@@ -71,7 +109,7 @@ function saveSettings() {
         [SETTINGS_KEYS.AUTO_HIDE]: document.getElementById('auto-hide').checked
     };
     
-    extensionAPI.storage.local.set(settings, () => {
+    chrome.storage.local.set(settings, () => {
         console.log('YTP Popup: Settings saved:', settings);
         
         // Notify content script of changes
@@ -108,7 +146,7 @@ function setupEventListeners() {
     // Reset position button
     document.getElementById('reset-position').addEventListener('click', () => {
         const defaultPosition = { x: 20, y: 20 };
-        extensionAPI.storage.local.set({ [SETTINGS_KEYS.CONTAINER_POSITION]: JSON.stringify(defaultPosition) }, () => {
+        chrome.storage.local.set({ [SETTINGS_KEYS.CONTAINER_POSITION]: JSON.stringify(defaultPosition) }, () => {
             console.log('YTP Popup: Position reset to default');
             notifyContentScript('RESET_POSITION', defaultPosition);
             showFeedback('Position réinitialisée');
@@ -127,12 +165,6 @@ function setupEventListeners() {
             resetAllSettings();
         }
     });
-    
-    // About link
-    document.getElementById('about-link').addEventListener('click', (e) => {
-        e.preventDefault();
-        extensionAPI.tabs.create({ url: 'https://github.com/your-repo/youtube-to-premiere' });
-    });
 }
 
 function updateSizeLabel() {
@@ -150,7 +182,7 @@ function resetAllSettings() {
         [SETTINGS_KEYS.BUTTONS_VISIBLE]: 'true'
     };
     
-    extensionAPI.storage.local.set(defaultSettings, () => {
+    chrome.storage.local.set(defaultSettings, () => {
         console.log('YTP Popup: All settings reset to defaults');
         loadSettings(); // Reload UI
         notifyContentScript('RESET_ALL_SETTINGS', defaultSettings);
@@ -170,14 +202,84 @@ async function checkServerStatus() {
         });
         
         if (response.ok) {
+            const data = await response.json();
             statusElement.className = 'status connected';
             statusIcon.textContent = 'check_circle';
-            statusText.textContent = 'Extension prête à utiliser';
+            statusText.textContent = 'Application connectée et prête';
         } else {
             throw new Error('Server not responding');
         }
     } catch (error) {
+        console.error('YTP Popup: Server check failed:', error);
         showInstallationInstructions(statusElement, statusIcon, statusText);
+    }
+}
+
+// Check for extension updates from GitHub releases
+async function checkForExtensionUpdates() {
+    const updateNotification = document.getElementById('update-notification');
+    const extensionVersion = CURRENT_VERSION;
+    
+    try {
+        console.log(`🔍 YTP Popup: Checking for updates from GitHub... Current version: ${extensionVersion}`);
+        
+        // Fetch latest release from GitHub API
+        const response = await fetch('https://api.github.com/repos/Selgy/YoutubetoPremiere-V2/releases/latest', {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/vnd.github.v3+json'
+            }
+        });
+        
+        console.log(`📡 YTP Popup: GitHub API response status: ${response.status}`);
+        
+        if (!response.ok) {
+            console.warn(`⚠️ YTP Popup: Could not check for updates from GitHub (status ${response.status})`);
+            return;
+        }
+        
+        const release = await response.json();
+        const latestVersion = release.tag_name.replace(/^v/, ''); // Remove 'v' prefix if present
+        
+        console.log(`📦 YTP Popup: Latest version on GitHub: ${latestVersion} (tag: ${release.tag_name})`);
+        console.log(`🔢 YTP Popup: Comparing versions: ${extensionVersion} vs ${latestVersion}`);
+        
+        const comparison = compareVersions(extensionVersion, latestVersion);
+        console.log(`⚖️ YTP Popup: Version comparison result: ${comparison} (< 0 means update available)`);
+        
+        // Compare versions
+        if (comparison < 0) {
+            console.log(`🔄 YTP Popup: ✅ UPDATE AVAILABLE! Extension ${extensionVersion} < GitHub ${latestVersion}`);
+            updateNotification.style.display = 'flex';
+            updateNotification.onclick = () => {
+                const os = detectOperatingSystem();
+                let downloadUrl;
+                let osName;
+                
+                if (os === 'windows') {
+                    downloadUrl = `https://github.com/Selgy/YoutubetoPremiere-V2/releases/download/v${latestVersion}/YouTubetoPremiere-Windows.exe`;
+                    osName = 'Windows';
+                } else if (os === 'mac') {
+                    downloadUrl = `https://github.com/Selgy/YoutubetoPremiere-V2/releases/download/v${latestVersion}/YouTubetoPremiere-macOS.pkg`;
+                    osName = 'macOS';
+                } else {
+                    // Fallback to releases page for other OS
+                    downloadUrl = DOWNLOAD_URLS.github;
+                    osName = 'votre système';
+                }
+                
+                if (confirm(`Une nouvelle version de l'extension est disponible!\n\nVersion actuelle: ${extensionVersion}\nNouvelle version: ${latestVersion}\n\nVoulez-vous télécharger la mise à jour pour ${osName} ?`)) {
+                    console.log(`📥 YTP Popup: Starting download from: ${downloadUrl}`);
+                    chrome.tabs.create({ url: downloadUrl });
+                }
+            };
+        } else {
+            console.log(`✅ YTP Popup: Extension is up to date (${extensionVersion})`);
+            updateNotification.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('❌ YTP Popup: Error checking for updates:', error);
+        // Silently fail - don't bother the user if update check fails
     }
 }
 
@@ -194,7 +296,7 @@ function showInstallationInstructions(statusElement, statusIcon, statusText) {
         statusElement.onclick = () => {
             const downloadUrl = DOWNLOAD_URLS[os];
             if (downloadUrl) {
-                extensionAPI.tabs.create({ url: downloadUrl });
+                chrome.tabs.create({ url: downloadUrl });
                 showFeedback('Téléchargement de l\'application commencé...');
             }
         };
@@ -202,7 +304,7 @@ function showInstallationInstructions(statusElement, statusIcon, statusText) {
         statusText.textContent = 'Application Premiere Pro non détectée - Voir GitHub';
         statusElement.style.cursor = 'pointer';
         statusElement.onclick = () => {
-            extensionAPI.tabs.create({ url: DOWNLOAD_URLS.github });
+            chrome.tabs.create({ url: DOWNLOAD_URLS.github });
             showFeedback('Page de téléchargement ouverte...');
         };
     }
@@ -224,15 +326,15 @@ function detectOperatingSystem() {
 
 function notifyContentScript(action, data = {}) {
     // Get active tab and send message to content script
-    extensionAPI.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs[0]) {
-            extensionAPI.tabs.sendMessage(tabs[0].id, {
+            chrome.tabs.sendMessage(tabs[0].id, {
                 type: 'YTP_POPUP_MESSAGE',
                 action: action,
                 data: data
             }, (response) => {
-                if (extensionAPI.runtime.lastError) {
-                    console.log('YTP Popup: Content script not responding:', extensionAPI.runtime.lastError.message);
+                if (chrome.runtime.lastError) {
+                    console.log('YTP Popup: Content script not responding:', chrome.runtime.lastError.message);
                 } else {
                     console.log('YTP Popup: Message sent to content script:', action, data);
                 }
@@ -280,7 +382,7 @@ function showFeedback(message) {
 }
 
 // Listen for messages from content script
-extensionAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'YTP_CONTENT_MESSAGE') {
         console.log('YTP Popup: Received message from content script:', message);
         

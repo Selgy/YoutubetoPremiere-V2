@@ -1366,6 +1366,12 @@ function initializeSocket() {
             
             let errorMessage = data.message || data.error || 'Erreur de téléchargement inconnue';
             
+            // Check for compatibility issues that might require an update
+            if (errorMessage.includes('version') || errorMessage.includes('incompatible') || 
+                errorMessage.includes('unsupported') || errorMessage.includes('upgrade')) {
+                errorMessage += '\n\n💡 Une mise à jour de l\'extension pourrait résoudre ce problème.\nOuvrez les paramètres de l\'extension pour vérifier.';
+            }
+            
             // Check if this is a user cancellation
             if (errorMessage.includes('annulé par l\'utilisateur') || errorMessage.includes('cancelled by user')) {
                 console.log('🚫 [SERVER] Server confirmed user cancellation');

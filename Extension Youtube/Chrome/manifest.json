@@ -12,7 +12,9 @@
                              "https://www.youtube.com/*",
                              "https://youtube.com/*",
                              "https://*.google.com/*",
-                             "https://*.googleapis.com/*"
+                             "https://*.googleapis.com/*",
+                             "http://localhost/*",
+                             "https://api.github.com/*"
                          ],
     "action":  {
                    "default_icon":  {

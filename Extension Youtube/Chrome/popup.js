@@ -5,12 +5,32 @@ console.log('YTP Popup: Script loaded');
 const DOWNLOAD_URLS = {
     windows: 'https://github.com/Selgy/YoutubetoPremiere-V2/releases/latest/download/YouTubetoPremiere-Windows.exe',
     mac: 'https://github.com/Selgy/YoutubetoPremiere-V2/releases/latest/download/YouTubetoPremiere-macOS.pkg',
-    github: 'https://github.com/Selgy/YoutubetoPremiere-V2/releases/latest'
+    github: 'https://github.com/Selgy/YoutubetoPremiere-V2/releases/latest',
+    chromeStore: 'https://chromewebstore.google.com/detail/youtube-to-premiere-pro-v/fnhpeiohcfobchjffmgfdeobphhmaibb'
 };
+
+// Current extension version
+const CURRENT_VERSION = chrome.runtime.getManifest().version;
+console.log(`YTP Popup: Extension version ${CURRENT_VERSION}`);
 
 // Get extension version from manifest
 function getExtensionVersion() {
-    return chrome.runtime.getManifest().version;
+    return CURRENT_VERSION;
+}
+
+// Compare version strings (semver)
+function compareVersions(v1, v2) {
+    const parts1 = v1.split('.').map(Number);
+    const parts2 = v2.split('.').map(Number);
+    
+    for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
+        const part1 = parts1[i] || 0;
+        const part2 = parts2[i] || 0;
+        
+        if (part1 > part2) return 1;
+        if (part1 < part2) return -1;
+    }
+    return 0;
 }
 
 // Detect operating system
@@ -46,6 +66,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initializePopup();
     loadSettings();
     checkServerStatus();
+    checkForExtensionUpdates(); // Check for updates independently of server status
     setupEventListeners();
 });
 
@@ -181,14 +202,84 @@ async function checkServerStatus() {
         });
         
         if (response.ok) {
+            const data = await response.json();
             statusElement.className = 'status connected';
             statusIcon.textContent = 'check_circle';
-            statusText.textContent = 'Extension prête à utiliser';
+            statusText.textContent = 'Application connectée et prête';
         } else {
             throw new Error('Server not responding');
         }
     } catch (error) {
+        console.error('YTP Popup: Server check failed:', error);
         showInstallationInstructions(statusElement, statusIcon, statusText);
+    }
+}
+
+// Check for extension updates from GitHub releases
+async function checkForExtensionUpdates() {
+    const updateNotification = document.getElementById('update-notification');
+    const extensionVersion = CURRENT_VERSION;
+    
+    try {
+        console.log(`🔍 YTP Popup: Checking for updates from GitHub... Current version: ${extensionVersion}`);
+        
+        // Fetch latest release from GitHub API
+        const response = await fetch('https://api.github.com/repos/Selgy/YoutubetoPremiere-V2/releases/latest', {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/vnd.github.v3+json'
+            }
+        });
+        
+        console.log(`📡 YTP Popup: GitHub API response status: ${response.status}`);
+        
+        if (!response.ok) {
+            console.warn(`⚠️ YTP Popup: Could not check for updates from GitHub (status ${response.status})`);
+            return;
+        }
+        
+        const release = await response.json();
+        const latestVersion = release.tag_name.replace(/^v/, ''); // Remove 'v' prefix if present
+        
+        console.log(`📦 YTP Popup: Latest version on GitHub: ${latestVersion} (tag: ${release.tag_name})`);
+        console.log(`🔢 YTP Popup: Comparing versions: ${extensionVersion} vs ${latestVersion}`);
+        
+        const comparison = compareVersions(extensionVersion, latestVersion);
+        console.log(`⚖️ YTP Popup: Version comparison result: ${comparison} (< 0 means update available)`);
+        
+        // Compare versions
+        if (comparison < 0) {
+            console.log(`🔄 YTP Popup: ✅ UPDATE AVAILABLE! Extension ${extensionVersion} < GitHub ${latestVersion}`);
+            updateNotification.style.display = 'flex';
+            updateNotification.onclick = () => {
+                const os = detectOperatingSystem();
+                let downloadUrl;
+                let osName;
+                
+                if (os === 'windows') {
+                    downloadUrl = `https://github.com/Selgy/YoutubetoPremiere-V2/releases/download/v${latestVersion}/YouTubetoPremiere-Windows.exe`;
+                    osName = 'Windows';
+                } else if (os === 'mac') {
+                    downloadUrl = `https://github.com/Selgy/YoutubetoPremiere-V2/releases/download/v${latestVersion}/YouTubetoPremiere-macOS.pkg`;
+                    osName = 'macOS';
+                } else {
+                    // Fallback to releases page for other OS
+                    downloadUrl = DOWNLOAD_URLS.github;
+                    osName = 'votre système';
+                }
+                
+                if (confirm(`Une nouvelle version de l'extension est disponible!\n\nVersion actuelle: ${extensionVersion}\nNouvelle version: ${latestVersion}\n\nVoulez-vous télécharger la mise à jour pour ${osName} ?`)) {
+                    console.log(`📥 YTP Popup: Starting download from: ${downloadUrl}`);
+                    chrome.tabs.create({ url: downloadUrl });
+                }
+            };
+        } else {
+            console.log(`✅ YTP Popup: Extension is up to date (${extensionVersion})`);
+            updateNotification.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('❌ YTP Popup: Error checking for updates:', error);
+        // Silently fail - don't bother the user if update check fails
     }
 }
 
@@ -199,7 +290,7 @@ function showInstallationInstructions(statusElement, statusIcon, statusText) {
     statusIcon.textContent = 'download';
     
     if (os === 'windows' || os === 'mac') {
-        statusText.textContent = 'Application Premiere Pro non détectée - Cliquer pour installer';
+        statusText.textContent = 'Application Premiere Pro non détectée';
         
         statusElement.style.cursor = 'pointer';
         statusElement.onclick = () => {

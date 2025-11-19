@@ -2,7 +2,7 @@
     "manifest_version":  2,
     "name":  "Youtube to Premiere Pro V3 (Firefox)",
     "version":  "3.0.16",
-    "description":  "Import YouTube videos and metadata directly into Adobe Premiere Pro for seamless video editing workflow.",
+    "description":  "Télécharge et importe des vidéos YouTube directement dans Adobe Premiere Pro. Communique avec l'application locale via localhost:17845.",
     "permissions":  [
                         "activeTab",
                         "storage",
@@ -12,7 +12,10 @@
                         "https://youtube.com/*",
                         "https://m.youtube.com/*",
                         "https://*.google.com/*",
-                        "https://*.googleapis.com/*"
+                        "https://*.googleapis.com/*",
+                        "http://localhost/*",
+                        "http://127.0.0.1/*",
+                        "https://api.github.com/*"
                     ],
     "browser_action":  {
                            "default_icon":  {
