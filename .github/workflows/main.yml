@@ -36,6 +36,15 @@ jobs:
       - name: Upgrade pip
         run: python -m pip install --upgrade pip setuptools wheel
 
+      - name: Install Deno for YouTube challenge solver
+        run: |
+          echo "Installing Deno for yt-dlp EJS challenge solver..."
+          curl -fsSL https://deno.land/install.sh | sh
+          echo "$HOME/.deno/bin" >> $GITHUB_PATH
+          export PATH="$HOME/.deno/bin:$PATH"
+          deno --version
+          echo "✅ Deno installed successfully"
+
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
@@ -462,6 +471,15 @@ jobs:
             echo "ERROR: FFmpeg not found!"
             exit 1
           }
+        shell: powershell
+
+      - name: Install Deno for YouTube challenge solver
+        run: |
+          echo "Installing Deno for yt-dlp EJS challenge solver..."
+          iwr https://deno.land/install.ps1 -useb | iex
+          $env:Path += ";$env:USERPROFILE\.deno\bin"
+          deno --version
+          echo "✅ Deno installed successfully"
         shell: powershell
 
       - name: Install Python dependencies

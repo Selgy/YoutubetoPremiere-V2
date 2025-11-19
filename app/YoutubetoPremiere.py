@@ -30,38 +30,11 @@ if os.path.exists(deno_path) and deno_path not in os.environ.get('PATH', ''):
 import subprocess
 import tempfile
 
-# IMPORTANT: Skip EJS challenge solver download when running as PyInstaller frozen app
-# This prevents infinite process spawning loops
-if not getattr(sys, 'frozen', False):
-    # Only run when NOT frozen (i.e., running as Python script)
-    try:
-        # Download challenge solver using yt-dlp CLI (only way to get remote components)
-        # We need to do an actual extraction (not just --version) to trigger the download
-        # Use a known YouTube video ID just to trigger the solver download
-        print("[EJS] Downloading challenge solver from GitHub...")
-        result = subprocess.run(
-            [sys.executable, '-m', 'yt_dlp', 
-             '--remote-components', 'ejs:github',
-             '--skip-download',  # Don't actually download the video
-             '--no-warnings',
-             'https://www.youtube.com/watch?v=jNQXAC9IVRw'  # YouTube test video "Me at the zoo"
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd=tempfile.gettempdir()  # Run in temp directory
-        )
-        if result.returncode == 0 or 'jsc:deno' in result.stdout or 'jsc:deno' in result.stderr:
-            print(f"[EJS] ✓ Challenge solver downloaded and ready")
-        else:
-            print(f"[EJS] ⚠ Challenge solver may not be available: {result.stderr[:100] if result.stderr else 'check manually'}")
-    except subprocess.TimeoutExpired:
-        print(f"[EJS] ⚠ Challenge solver download timed out (may still work)")
-    except Exception as e:
-        print(f"[EJS] ⚠ Error downloading challenge solver: {str(e)[:100]}")
-else:
-    # When frozen, skip the download (solver should be bundled or downloaded separately)
-    print("[EJS] Running as frozen app - skipping challenge solver download")
+# IMPORTANT: Skip EJS challenge solver download - it's handled by Deno at runtime
+# The --remote-components option has been removed from recent yt-dlp versions
+# Instead, yt-dlp will automatically use Deno if it's installed in PATH
+print("[EJS] YouTube challenge solver will use Deno if available in PATH")
+print("[EJS] Install Deno with: brew install deno (Mac) or: irm https://deno.land/install.ps1 | iex (Windows)")
 
 
 # Determine log directory
