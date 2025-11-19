@@ -639,5 +639,26 @@ function handleProcessPermissionError(error, execPath, exec, path, extensionRoot
 }
 
 // Start the Python server when the extension loads
-console.log("Background script loaded. Starting Python server...");
-startPythonServer();
+console.log("Background script loaded. Checking if we should start Python server...");
+
+// Only start the server if we're not in the main panel (to avoid conflicts)
+// The main panel (main.tsx) will handle server startup via AppLauncher
+const isMainPanel = window.location.pathname.includes('/main/') || window.location.pathname.includes('main.html');
+if (!isMainPanel) {
+    console.log("Starting Python server from settings panel...");
+    startPythonServer();
+} else {
+    console.log("Main panel detected - server startup will be handled by AppLauncher");
+    
+    // Still initialize the CEP components needed for settings panel
+    initializeNodeModules().then(async (nodeModules) => {
+        const cs = await initializeCSInterface();
+        csInterface = cs;
+        await initializeWithRetry(nodeModules);
+        await setupScriptWatcher();
+        setupVideoImportHandler(csInterface);
+        console.log("Settings panel components initialized without starting server");
+    }).catch(error => {
+        console.error("Error initializing settings panel components:", error);
+    });
+}

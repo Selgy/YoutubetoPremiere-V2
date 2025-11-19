@@ -300,7 +300,7 @@ try:
 
     socketio = SocketIO(app, 
         cors_allowed_origins="*",
-        async_mode='threading',
+        async_mode='threading',  # Force threading mode to avoid eventlet issues
         ping_timeout=60,  # Match client timeout
         ping_interval=25,  # Match client interval (in seconds, not ms)
         max_http_buffer_size=100 * 1024 * 1024,  # Increased to 100MB buffer
@@ -852,7 +852,8 @@ def run_server():
                 port=17845,
                 debug=False,
                 use_reloader=False,
-                log_output=False  # Disable Werkzeug logs
+                log_output=False,  # Disable Werkzeug logs
+                allow_unsafe_werkzeug=True  # Allow in production for CEP environment
             )
         except RuntimeError as e:
             if "Werkzeug" in str(e) and "production" in str(e):
@@ -867,6 +868,9 @@ def run_server():
                 )
             else:
                 raise e
+        except Exception as e:
+            logging.error(f"Server error: {str(e)}")
+            raise e
     
     server_thread = threading.Thread(target=run_server_safe)
     server_thread.start()
@@ -1006,13 +1010,30 @@ def setup_environment():
     # Check if the server is already running before starting
     logging.info("Checking if server is already running on port 17845...")
     if check_server_running(17845):
-        logging.info("Server already running on port 17845. Exiting.")
-        print("YoutubetoPremiere server is already running.")
-        # Don't exit immediately if running in development mode
-        if not getattr(sys, 'frozen', False):
-            print("Running in development mode, press Ctrl+C to exit.")
+        logging.info("Server already running on port 17845.")
+        
+        # In CEP environment, we might have multiple instances trying to start
+        # Check if this is a CEP environment by looking for extension root
+        extension_root = os.environ.get('EXTENSION_ROOT', '')
+        if extension_root:
+            logging.info("CEP environment detected with existing server. Attempting graceful takeover...")
+            # Wait a bit to see if the existing server is stable
+            time.sleep(3)
+            
+            # Check again - if still running, we can connect to it
+            if check_server_running(17845):
+                logging.info("Existing server is stable, will connect to it instead of starting new instance.")
+                print("YoutubetoPremiere server is already running and stable.")
+                return {'ffmpeg_path': None}  # Return minimal config
+            else:
+                logging.info("Existing server was unstable, proceeding with new startup.")
         else:
-            sys.exit(0)
+            print("YoutubetoPremiere server is already running.")
+            # Don't exit immediately if running in development mode
+            if not getattr(sys, 'frozen', False):
+                print("Running in development mode, press Ctrl+C to exit.")
+            else:
+                sys.exit(0)
     
     logging.info("Port 17845 is available, continuing with setup...")
     
@@ -1066,6 +1087,23 @@ def setup_environment():
 def main():
     """Main entry point"""
     try:
+        # Set up signal handlers in main thread for graceful shutdown
+        import signal
+        
+        def signal_handler(signum, frame):
+            logging.info(f"Received signal {signum}, shutting down gracefully...")
+            global should_shutdown
+            should_shutdown = True
+            # Don't exit immediately, let the main loop handle it
+            
+        # Handle common termination signals
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+        if hasattr(signal, 'SIGHUP'):
+            signal.signal(signal.SIGHUP, signal_handler)
+        
+        logging.info("Signal handlers registered for graceful shutdown")
+        
         # Set up environment first
         config = setup_environment()
         logging.info(f"Environment setup complete. FFmpeg path: {config.get('ffmpeg_path')}")

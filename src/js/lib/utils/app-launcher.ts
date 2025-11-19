@@ -26,6 +26,21 @@ export class AppLauncher {
       return true;
     }
 
+    // First check if server is already running (from another source)
+    try {
+      const response = await fetch('http://localhost:17845/health', {
+        method: 'GET',
+        signal: AbortSignal.timeout(2000)
+      });
+      if (response.ok) {
+        console.log('Server already running, marking as started');
+        this.isAppRunning = true;
+        return true;
+      }
+    } catch (error) {
+      console.log('Server not running, proceeding with startup');
+    }
+
     try {
       // Get extension directory
       const extensionPath = this.getExtensionPath();
@@ -44,16 +59,58 @@ export class AppLauncher {
         return false;
       }
 
-      // Start the application using CEP's process API
-      const result = window.cep.process.createProcess(appPath, '', '');
+      // For macOS, fix permissions before starting
+      if (isMac) {
+        try {
+          console.log('Fixing macOS permissions and quarantine attributes...');
+          const fixPermissionsResult = window.cep.process.createProcess('/bin/chmod', `+x "${appPath}"`, '');
+          if (fixPermissionsResult.err !== 0) {
+            console.warn('Failed to fix permissions:', fixPermissionsResult.err);
+          }
+          
+          // Remove quarantine attribute
+          const removeQuarantineResult = window.cep.process.createProcess('/usr/bin/xattr', `-dr com.apple.quarantine "${extensionPath}/exec"`, '');
+          if (removeQuarantineResult.err !== 0) {
+            console.warn('Failed to remove quarantine (this is normal):', removeQuarantineResult.err);
+          }
+        } catch (permError) {
+          console.warn('Permission fixing failed:', permError);
+        }
+      }
+
+      // Start the application using CEP's process API with better error handling
+      console.log('Creating process with CEP API...');
+      const result = window.cep.process.createProcess(appPath, '--verbose', '');
       
       if (result.err === 0) {
         this.appProcess = result.data;
         this.isAppRunning = true;
         console.log('App started successfully with PID:', this.appProcess);
+        
+        // Give the process a moment to initialize
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
         return true;
       } else {
-        console.error('Failed to start app:', result.err);
+        console.error('Failed to start app with CEP API, error code:', result.err);
+        
+        // On macOS, try alternative launch method if CEP fails
+        if (isMac) {
+          console.log('Trying alternative macOS launch method...');
+          try {
+            // Use open command as fallback
+            const openResult = window.cep.process.createProcess('/usr/bin/open', `-a "${appPath}"`, '');
+            if (openResult.err === 0) {
+              console.log('App started with open command');
+              this.isAppRunning = true;
+              await new Promise(resolve => setTimeout(resolve, 3000));
+              return true;
+            }
+          } catch (openError) {
+            console.error('Alternative launch method failed:', openError);
+          }
+        }
+        
         return false;
       }
     } catch (error) {
@@ -126,23 +183,43 @@ export class AppLauncher {
   /**
    * Wait for server to be ready
    */
-  async waitForServer(maxAttempts = 30): Promise<boolean> {
+  async waitForServer(maxAttempts = 45): Promise<boolean> {
+    console.log('Waiting for server to be ready...');
+    let lastError = null;
+    
     for (let i = 0; i < maxAttempts; i++) {
       try {
-        const response = await fetch('http://localhost:17845/health');
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        
+        const response = await fetch('http://localhost:17845/health', {
+          signal: controller.signal,
+          method: 'GET'
+        });
+        
+        clearTimeout(timeoutId);
+        
         if (response.ok) {
           console.log('Server is ready!');
           return true;
+        } else {
+          lastError = `Server responded with status: ${response.status}`;
         }
       } catch (error) {
+        lastError = error;
         // Server not ready yet
+      }
+      
+      // Log progress every 5 seconds or on first attempt
+      if (i % 5 === 0 || i === 0) {
+        console.log(`Waiting for server... (attempt ${i + 1}/${maxAttempts})`);
       }
       
       // Wait 1 second before next attempt
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
     
-    console.error('Server failed to start within timeout');
+    console.error('Server failed to start within timeout. Last error:', lastError);
     return false;
   }
 } 
