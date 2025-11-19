@@ -38,23 +38,23 @@ def setup_deno_path():
             current_path = os.environ.get("PATH", "")
             if deno_dir not in current_path:
                 os.environ["PATH"] = deno_dir + os.pathsep + current_path
-                logger.info(f"Added bundled Deno to PATH: {deno_path}")
+                logging.info(f"Added bundled Deno to PATH: {deno_path}")
             return deno_path
         else:
             # Check if deno is already in PATH
             try:
                 result = subprocess.run(['deno', '--version'], capture_output=True, text=True, timeout=5)
                 if result.returncode == 0:
-                    logger.info("Deno found in system PATH")
+                    logging.info("Deno found in system PATH")
                     return 'deno'
             except:
                 pass
             
-            logger.warning("⚠ Deno not found - YouTube downloads may be limited for protected videos")
-            logger.warning("  Install Deno: https://deno.land/")
+            logging.warning("⚠ Deno not found - YouTube downloads may be limited for protected videos")
+            logging.warning("  Install Deno: https://deno.land/")
             return None
     except Exception as e:
-        logger.error(f"Error setting up Deno: {e}")
+        logging.error(f"Error setting up Deno: {e}")
         return None
 
 def get_extension_path():
