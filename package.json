@@ -17,7 +17,7 @@
                     "build-mac":  "node tools/build.js all",
                     "build:python":  "node tools/build.js python",
                     "build:cep":  "vite build",
-                    "build:chrome":  "node -e \"const fs=require(\u0027fs-extra\u0027); fs.copySync(\u0027./ChromeExtension\u0027, \u0027./dist/chrome\u0027); console.log(\u0027Chrome extension copied successfully\u0027);\"",
+                    "build:chrome":  "node -e \"const fs=require(\u0027fs-extra\u0027); fs.copySync(\u0027./Extension Youtube/Chrome\u0027, \u0027./dist/chrome\u0027); console.log(\u0027Chrome extension copied successfully\u0027);\"",
                     "build:all":  "node tools/build.js all",
                     "build:verbose":  "node tools/build.js --verbose",
                     "dev":  "vite",
