@@ -254,24 +254,19 @@ async function checkForExtensionUpdates() {
             updateNotification.onclick = () => {
                 const os = detectOperatingSystem();
                 let downloadUrl;
-                let osName;
                 
                 if (os === 'windows') {
                     downloadUrl = `https://github.com/Selgy/YoutubetoPremiere-V2/releases/download/v${latestVersion}/YouTubetoPremiere-Windows.exe`;
-                    osName = 'Windows';
                 } else if (os === 'mac') {
                     downloadUrl = `https://github.com/Selgy/YoutubetoPremiere-V2/releases/download/v${latestVersion}/YouTubetoPremiere-macOS.pkg`;
-                    osName = 'macOS';
                 } else {
-                    // Fallback to releases page for other OS
-                    downloadUrl = DOWNLOAD_URLS.github;
-                    osName = 'votre système';
+                    // No download for unsupported OS
+                    console.warn(`⚠️ YTP Popup: Unsupported OS for direct download: ${os}`);
+                    return;
                 }
                 
-                if (confirm(`Une nouvelle version de l'extension est disponible!\n\nVersion actuelle: ${extensionVersion}\nNouvelle version: ${latestVersion}\n\nVoulez-vous télécharger la mise à jour pour ${osName} ?`)) {
-                    console.log(`📥 YTP Popup: Starting download from: ${downloadUrl}`);
-                    chrome.tabs.create({ url: downloadUrl });
-                }
+                console.log(`📥 YTP Popup: Starting download from: ${downloadUrl}`);
+                chrome.tabs.create({ url: downloadUrl });
             };
         } else {
             console.log(`✅ YTP Popup: Extension is up to date (${extensionVersion})`);
@@ -290,23 +285,19 @@ function showInstallationInstructions(statusElement, statusIcon, statusText) {
     statusIcon.textContent = 'download';
     
     if (os === 'windows' || os === 'mac') {
-        statusText.textContent = 'Application Premiere Pro non détectée';
+        statusText.textContent = 'Application non détectée - Cliquer pour télécharger';
         
         statusElement.style.cursor = 'pointer';
         statusElement.onclick = () => {
             const downloadUrl = DOWNLOAD_URLS[os];
             if (downloadUrl) {
+                console.log(`📥 YTP Popup: Downloading application: ${downloadUrl}`);
                 chrome.tabs.create({ url: downloadUrl });
-                showFeedback('Téléchargement de l\'application commencé...');
             }
         };
     } else {
-        statusText.textContent = 'Application Premiere Pro non détectée - Voir GitHub';
-        statusElement.style.cursor = 'pointer';
-        statusElement.onclick = () => {
-            chrome.tabs.create({ url: DOWNLOAD_URLS.github });
-            showFeedback('Page de téléchargement ouverte...');
-        };
+        statusText.textContent = 'Application non détectée';
+        statusElement.style.cursor = 'default';
     }
 }
 
