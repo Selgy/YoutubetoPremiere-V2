@@ -130,6 +130,15 @@ jobs:
           chmod +x ffmpeg
           echo "FFmpeg downloaded and made executable"
 
+      - name: Download Deno standalone for macOS
+        run: |
+          echo "Downloading Deno standalone for macOS ARM64..."
+          curl -fsSL https://github.com/denoland/deno/releases/latest/download/deno-aarch64-apple-darwin.zip -o deno.zip
+          unzip deno.zip
+          chmod +x deno
+          echo "Deno downloaded and made executable"
+          ./deno --version
+
       - name: Build Application with PyInstaller
         run: |
           pip install --upgrade pyinstaller
@@ -154,6 +163,7 @@ jobs:
           --hidden-import=tkinter \
           --add-data "app/sounds:sounds" \
           --add-binary "ffmpeg:." \
+          --add-binary "deno:." \
           app/YoutubetoPremiere.py
 
       - name: Build CEP Extension
@@ -473,13 +483,35 @@ jobs:
           }
         shell: powershell
 
-      - name: Install Deno for YouTube challenge solver
+      - name: Download Deno standalone for Windows
         run: |
-          echo "Installing Deno for yt-dlp EJS challenge solver..."
-          iwr https://deno.land/install.ps1 -useb | iex
-          $env:Path += ";$env:USERPROFILE\.deno\bin"
-          deno --version
-          echo "✅ Deno installed successfully"
+          echo "Downloading Deno standalone for Windows x64..."
+          
+          # Download Deno standalone executable
+          $denoUrl = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip"
+          
+          echo "Downloading from: $denoUrl"
+          Invoke-WebRequest -Uri $denoUrl -OutFile "deno.zip" -UseBasicParsing
+          
+          echo "Extracting Deno..."
+          Expand-Archive -Path "deno.zip" -DestinationPath "." -Force
+          
+          # Verify deno.exe exists
+          if (Test-Path "deno.exe") {
+            $denoSize = (Get-Item "deno.exe").Length
+            echo "✅ Deno downloaded successfully ($([math]::Round($denoSize / 1MB, 1)) MB)"
+            
+            # Test deno
+            .\deno.exe --version
+          } else {
+            echo "❌ ERROR: deno.exe not found after extraction"
+            exit 1
+          }
+          
+          # Cleanup
+          Remove-Item "deno.zip" -Force
+          
+          echo "✅ Deno ready for bundling"
         shell: powershell
 
       - name: Install Python dependencies
@@ -517,6 +549,7 @@ jobs:
             --hidden-import=yt_dlp --hidden-import=psutil `
             --add-data "app/sounds;sounds" `
             --add-binary "ffmpeg.exe;." `
+            --add-binary "deno.exe;." `
             app/YoutubetoPremiere.py
           
           $endTime = Get-Date

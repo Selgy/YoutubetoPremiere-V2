@@ -242,6 +242,9 @@ logging.info(f'Process ID: {os.getpid()}')
 # Get and log all application paths (but hide sensitive user paths)
 paths = get_app_paths()
 
+# Setup Deno for YouTube challenge solver
+app_init.setup_deno_path()
+
 # Add ffmpeg to PATH - look in multiple possible locations
 script_dir = paths['script_dir']
 possible_ffmpeg_locations = [

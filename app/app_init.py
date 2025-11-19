@@ -15,6 +15,48 @@ logging.basicConfig(level=logging.INFO,
 
 logger = logging.getLogger('YoutubetoPremiere')
 
+def setup_deno_path():
+    """Add bundled Deno to PATH if available."""
+    try:
+        # Get the directory where the executable is located
+        if getattr(sys, 'frozen', False):
+            # Running as compiled executable
+            app_dir = os.path.dirname(sys.executable)
+        else:
+            # Running as Python script
+            app_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # Check for deno executable
+        if platform.system() == 'Windows':
+            deno_path = os.path.join(app_dir, 'deno.exe')
+        else:
+            deno_path = os.path.join(app_dir, 'deno')
+        
+        if os.path.exists(deno_path):
+            # Add to PATH
+            deno_dir = os.path.dirname(deno_path)
+            current_path = os.environ.get("PATH", "")
+            if deno_dir not in current_path:
+                os.environ["PATH"] = deno_dir + os.pathsep + current_path
+                logger.info(f"Added bundled Deno to PATH: {deno_path}")
+            return deno_path
+        else:
+            # Check if deno is already in PATH
+            try:
+                result = subprocess.run(['deno', '--version'], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    logger.info("Deno found in system PATH")
+                    return 'deno'
+            except:
+                pass
+            
+            logger.warning("⚠ Deno not found - YouTube downloads may be limited for protected videos")
+            logger.warning("  Install Deno: https://deno.land/")
+            return None
+    except Exception as e:
+        logger.error(f"Error setting up Deno: {e}")
+        return None
+
 def get_extension_path():
     """Determine the path to the extension directory."""
     
