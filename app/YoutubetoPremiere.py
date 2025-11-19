@@ -300,7 +300,7 @@ try:
 
     socketio = SocketIO(app, 
         cors_allowed_origins="*",
-        async_mode='gevent',  # Use gevent for better compatibility with Python 3.13
+        async_mode='threading',  # Use threading mode (gevent not available in PyInstaller build)
         ping_timeout=60,  # Match client timeout
         ping_interval=25,  # Match client interval (in seconds, not ms)
         max_http_buffer_size=100 * 1024 * 1024,  # Increased to 100MB buffer

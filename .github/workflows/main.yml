@@ -145,7 +145,7 @@ jobs:
         run: |
           pip install --upgrade pyinstaller
           pyinstaller --onedir --clean --debug=all \
-          --hidden-import=engineio.async_drivers.gevent \
+          --hidden-import=engineio.async_drivers.threading \
           --hidden-import=engineio.async_drivers.gevent_uwsgi \
           --hidden-import=engineio.async_drivers.threading \
           --hidden-import=engineio.async_drivers \
@@ -548,7 +548,7 @@ jobs:
           $startTime = Get-Date
           pyinstaller --onedir --clean --console --noupx `
             --exclude-module=PIL --exclude-module=pymiere `
-            --hidden-import=engineio.async_drivers.gevent `
+            --hidden-import=engineio.async_drivers.threading `
             --hidden-import=engineio.async_drivers.threading `
             --hidden-import=flask --hidden-import=flask_cors --hidden-import=flask_socketio `
             --hidden-import=yt_dlp --hidden-import=psutil `
