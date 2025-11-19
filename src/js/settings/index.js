@@ -647,18 +647,33 @@ console.log("Current location:", window.location.pathname);
 console.log("Is settings panel:", isSettingsPanel);
 
 if (isSettingsPanel) {
-    console.log("Settings panel detected - server startup will be handled by main panel AppLauncher");
+    console.log("Settings panel detected - checking if main panel is available...");
     
-    // Only initialize the CEP components needed for settings panel, don't start server
-    initializeNodeModules().then(async (nodeModules) => {
-        const cs = await initializeCSInterface();
-        csInterface = cs;
-        await initializeWithRetry(nodeModules);
-        await setupScriptWatcher();
-        setupVideoImportHandler(csInterface);
-        console.log("Settings panel components initialized without starting server");
+    // Check if server is already running (started by main panel)
+    fetch('http://localhost:17845/health', { 
+        method: 'GET',
+        signal: AbortSignal.timeout(2000)
+    }).then(response => {
+        if (response.ok) {
+            console.log("Server already running - main panel is active, settings panel will not start server");
+            // Only initialize CEP components
+            initializeNodeModules().then(async (nodeModules) => {
+                const cs = await initializeCSInterface();
+                csInterface = cs;
+                await initializeWithRetry(nodeModules);
+                await setupScriptWatcher();
+                setupVideoImportHandler(csInterface);
+                console.log("Settings panel components initialized without starting server");
+            }).catch(error => {
+                console.error("Settings panel initialization failed:", error);
+            });
+        } else {
+            throw new Error('Server not running');
+        }
     }).catch(error => {
-        console.error("Settings panel initialization failed:", error);
+        console.log("Server not running - main panel not active, settings panel will start server");
+        // Main panel is not active, settings panel should start the server
+        startPythonServer();
     });
 } else {
     console.log("Non-settings panel detected - starting Python server...");
