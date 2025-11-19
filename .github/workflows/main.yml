@@ -136,8 +136,10 @@ jobs:
           curl -fsSL https://github.com/denoland/deno/releases/latest/download/deno-aarch64-apple-darwin.zip -o deno.zip
           unzip deno.zip
           chmod +x deno
-          echo "Deno downloaded and made executable"
-          ./deno --version
+          # Move to app directory for PyInstaller
+          mv deno app/deno
+          echo "Deno downloaded and moved to app/"
+          ./app/deno --version
 
       - name: Build Application with PyInstaller
         run: |
@@ -163,7 +165,7 @@ jobs:
           --hidden-import=tkinter \
           --add-data "app/sounds:sounds" \
           --add-binary "ffmpeg:." \
-          --add-binary "deno:." \
+          --add-binary "app/deno:." \
           app/YoutubetoPremiere.py
 
       - name: Build CEP Extension
@@ -501,8 +503,12 @@ jobs:
             $denoSize = (Get-Item "deno.exe").Length
             echo "✅ Deno downloaded successfully ($([math]::Round($denoSize / 1MB, 1)) MB)"
             
+            # Move to app directory for PyInstaller
+            Move-Item -Path "deno.exe" -Destination "app\deno.exe" -Force
+            echo "Deno moved to app\"
+            
             # Test deno
-            .\deno.exe --version
+            .\app\deno.exe --version
           } else {
             echo "❌ ERROR: deno.exe not found after extraction"
             exit 1
@@ -549,7 +555,7 @@ jobs:
             --hidden-import=yt_dlp --hidden-import=psutil `
             --add-data "app/sounds;sounds" `
             --add-binary "ffmpeg.exe;." `
-            --add-binary "deno.exe;." `
+            --add-binary "app/deno.exe;." `
             app/YoutubetoPremiere.py
           
           $endTime = Get-Date

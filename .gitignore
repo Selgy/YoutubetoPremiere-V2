@@ -71,6 +71,12 @@ temp/
 ffmpeg
 ffmpeg.exe
 
+# Deno binaries (downloaded during build)
+deno
+deno.exe
+app/deno
+app/deno.exe
+
 # Certificates
 *.p12
 *.cert
@@ -82,6 +88,10 @@ ffmpeg.exe
 
 # License API folder (deployed on Cloudflare Workers)
 license-api/
+
+# Downloaded binaries
+deno.zip
+ffmpeg.zip
 
 .cursor
 .vscode
