@@ -289,6 +289,7 @@ if not ffmpeg_found:
     logging.error("FFmpeg not found in any of the expected locations")
 
 # Check if the server is already running before starting
+logging.info("Checking if server is already running on port 17845...")
 if check_server_running(17845):
     logging.info("Server already running on port 17845. Exiting.")
     print("YoutubetoPremiere server is already running.")
@@ -298,6 +299,7 @@ if check_server_running(17845):
     else:
         sys.exit(0)
 
+logging.info("Port 17845 is available, initializing Flask...")
 try:
     app = Flask(__name__)
     CORS(app, resources={r"/*": {"origins": "*", "allow_headers": "*", "expose_headers": "*", "methods": ["GET", "POST", "OPTIONS"]}})

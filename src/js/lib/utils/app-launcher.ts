@@ -29,8 +29,13 @@ export class AppLauncher {
     try {
       // Get extension directory
       const extensionPath = this.getExtensionPath();
-      const appPath = `${extensionPath}/exec/YoutubeToPremiere.exe`;
       
+      // Detect platform and use correct executable name
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const executableName = isMac ? 'YoutubetoPremiere' : 'YoutubetoPremiere.exe';
+      const appPath = `${extensionPath}/exec/${executableName}`;
+      
+      console.log('Platform:', isMac ? 'macOS' : 'Windows');
       console.log('Starting app from:', appPath);
 
       // Check if file exists
