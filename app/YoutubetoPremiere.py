@@ -288,18 +288,7 @@ for ffmpeg_dir in possible_ffmpeg_locations:
 if not ffmpeg_found:
     logging.error("FFmpeg not found in any of the expected locations")
 
-# Check if the server is already running before starting
-logging.info("Checking if server is already running on port 17845...")
-if check_server_running(17845):
-    logging.info("Server already running on port 17845. Exiting.")
-    print("YoutubetoPremiere server is already running.")
-    # Don't exit immediately if running in development mode
-    if not getattr(sys, 'frozen', False):
-        print("Running in development mode, press Ctrl+C to exit.")
-    else:
-        sys.exit(0)
-
-logging.info("Port 17845 is available, initializing Flask...")
+logging.info("Initializing Flask...")
 try:
     app = Flask(__name__)
     CORS(app, resources={r"/*": {"origins": "*", "allow_headers": "*", "expose_headers": "*", "methods": ["GET", "POST", "OPTIONS"]}})
@@ -1014,6 +1003,19 @@ def progress_hook(d, socketio):
 
 def setup_environment():
     """Set up the application environment"""
+    # Check if the server is already running before starting
+    logging.info("Checking if server is already running on port 17845...")
+    if check_server_running(17845):
+        logging.info("Server already running on port 17845. Exiting.")
+        print("YoutubetoPremiere server is already running.")
+        # Don't exit immediately if running in development mode
+        if not getattr(sys, 'frozen', False):
+            print("Running in development mode, press Ctrl+C to exit.")
+        else:
+            sys.exit(0)
+    
+    logging.info("Port 17845 is available, continuing with setup...")
+    
     # Initialize all requirements
     config = app_init.init()
     
