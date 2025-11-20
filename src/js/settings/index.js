@@ -650,10 +650,15 @@ if (isSettingsPanel) {
     console.log("Settings panel detected - checking if main panel is available...");
     
     // Check if server is already running (started by main panel)
+    // Use AbortController for CEP compatibility (AbortSignal.timeout not available)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
+    
     fetch('http://localhost:17845/health', { 
         method: 'GET',
-        signal: AbortSignal.timeout(2000)
+        signal: controller.signal
     }).then(response => {
+        clearTimeout(timeoutId);
         if (response.ok) {
             console.log("Server already running - main panel is active, settings panel will not start server");
             // Only initialize CEP components
@@ -671,7 +676,12 @@ if (isSettingsPanel) {
             throw new Error('Server not running');
         }
     }).catch(error => {
-        console.log("Server not running - main panel not active, settings panel will start server");
+        clearTimeout(timeoutId);
+        if (error.name === 'AbortError') {
+            console.log("Health check timeout - server not running, settings panel will start server");
+        } else {
+            console.log("Server not running - main panel not active, settings panel will start server");
+        }
         // Main panel is not active, settings panel should start the server
         startPythonServer();
     });
