@@ -428,15 +428,19 @@ async function startPythonServer() {
                     stdio: ['ignore', 'pipe', 'pipe']  // Capture stdout/stderr but ignore stdin
                 });
             } else if (process.platform === 'darwin') {
-                // macOS-specific command - direct execution
-                const cmd = `"${PythonExecutablePath}" --verbose`;
+                // macOS-specific command - use spawn for long-running process
+                const { spawn } = window.cep_node.require('child_process');
                 
-                console.log('Executing macOS command:', cmd);
-                PythonServerProcess = exec(cmd, {
+                console.log('Spawning Python server on macOS:', PythonExecutablePath);
+                PythonServerProcess = spawn(PythonExecutablePath, ['--verbose'], {
                     cwd: path.dirname(PythonExecutablePath),
                     env: serverEnv,
-                    detached: true
+                    detached: true,
+                    stdio: ['ignore', 'pipe', 'pipe']
                 });
+                
+                // Unref the process so it can continue running independently
+                PythonServerProcess.unref();
             }
             
             // Handle process events
@@ -530,7 +534,7 @@ function stopPythonServer() {
             // On macOS, use the killall command
             try {
                 const { exec } = window.cep_node.require('child_process');
-                exec('killall YoutubetoPremiere', (error) => {
+                exec('killall -TERM YoutubetoPremiere', (error) => {
                     if (error) {
                         console.error('Error terminating process:', error);
                     } else {
@@ -542,12 +546,8 @@ function stopPythonServer() {
             }
         }
         
-        // Also try standard process termination
-        try {
-            PythonServerProcess.kill();
-        } catch (error) {
-            console.warn('Standard kill method failed:', error);
-        }
+        // Don't try to kill detached processes directly - they are managed independently
+        // The killall/taskkill commands above handle termination
         
         PythonServerProcess = null;
     }
