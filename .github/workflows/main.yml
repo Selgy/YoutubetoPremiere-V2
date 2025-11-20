@@ -146,10 +146,7 @@ jobs:
           pip install --upgrade pyinstaller
           pyinstaller --onedir --clean --debug=all \
           --hidden-import=engineio.async_drivers.threading \
-          --hidden-import=engineio.async_drivers.gevent_uwsgi \
-          --hidden-import=engineio.async_drivers.threading \
           --hidden-import=engineio.async_drivers \
-          --hidden-import=gevent \
           --hidden-import=websocket \
           --hidden-import=websockets \
           --hidden-import=wsproto \
@@ -182,6 +179,10 @@ jobs:
           mkdir -p ./dist/cep/exec
           cp -R ./dist/YoutubetoPremiere/* ./dist/cep/exec/
           echo "Python executable copied to CEP extension"
+          
+          # Set executable permissions on macOS
+          chmod +x ./dist/cep/exec/YoutubetoPremiere
+          echo "Executable permissions set for YoutubetoPremiere"
           
           # Verify sounds folder is included
           echo "Verifying sounds folder inclusion:"
@@ -548,7 +549,6 @@ jobs:
           $startTime = Get-Date
           pyinstaller --onedir --clean --console --noupx `
             --exclude-module=PIL --exclude-module=pymiere `
-            --hidden-import=engineio.async_drivers.threading `
             --hidden-import=engineio.async_drivers.threading `
             --hidden-import=flask --hidden-import=flask_cors --hidden-import=flask_socketio `
             --hidden-import=yt_dlp --hidden-import=psutil `
