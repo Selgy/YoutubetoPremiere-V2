@@ -1,0 +1,17 @@
+# Configuration Cloudflare Workers
+# Documentation: https://developers.cloudflare.com/workers/
+
+name = "youtubetopremiere-license-api"
+main = "cloudflare-worker.js"
+compatibility_date = "2024-01-01"
+
+# Variables d'environnement (à configurer dans le dashboard)
+# NE PAS mettre de vraies valeurs ici !
+# [vars]
+# GUMROAD_PRODUCT_ID = "votre_product_id"
+# HOME_OF_EDITORS_PRODUCT_ID = "81ab8fc3-115c-429d-9f27-88a97721ebb5"
+
+# Limites (plan gratuit)
+[limits]
+cpu_ms = 10  # 10ms max par requête
+
