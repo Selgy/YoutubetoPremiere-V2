@@ -195,9 +195,16 @@ const Main = () => {
         if (data.isValid) {
           setIsLicenseValid(true);
           await loadSettings();
+        } else {
+          // License invalide ou absente - forcer l'écran de licence
+          setIsLicenseValid(false);
+          setErrorMessage(data.message || 'Please enter a valid license key');
         }
       } catch (error) {
         console.error('Error checking license:', error);
+        // En cas d'erreur de connexion, forcer aussi l'écran de licence
+        setIsLicenseValid(false);
+        setErrorMessage('Unable to verify license. Please check your connection.');
       }
       setIsLoading(false);
     };
@@ -566,23 +573,51 @@ const Main = () => {
           <div className="text-center mb-6">
             <span className="material-symbols-outlined text-4xl text-blue-400 mb-4 block">key</span>
             <h2 className="text-xl sm:text-2xl font-bold text-white">Enter Your License Key</h2>
+            <p className="text-gray-400 text-sm mt-2">Please activate your copy to continue</p>
           </div>
           <input
             type="text"
             value={licenseKey}
-            onChange={(e) => setLicenseKey(e.target.value)}
+            onChange={(e) => {
+              setLicenseKey(e.target.value);
+              setErrorMessage(''); // Clear error when typing
+            }}
+            onKeyPress={(e) => {
+              if (e.key === 'Enter' && licenseKey.trim()) {
+                handleLicenseSubmit();
+              }
+            }}
             placeholder="Enter your key here"
             className="input-base mb-4"
+            disabled={isLoading}
           />
-          <button onClick={handleLicenseSubmit} className="btn w-full">
-            <span className="material-symbols-outlined mr-2">verified_user</span>
-            Submit
+          <button 
+            onClick={handleLicenseSubmit} 
+            className="btn w-full"
+            disabled={isLoading || !licenseKey.trim()}
+          >
+            {isLoading ? (
+              <>
+                <span className="material-symbols-outlined mr-2 animate-spin">progress_activity</span>
+                Validating...
+              </>
+            ) : (
+              <>
+                <span className="material-symbols-outlined mr-2">verified_user</span>
+                Submit
+              </>
+            )}
           </button>
           {errorMessage && (
             <div className="mt-4 p-3 rounded-lg bg-red-500 bg-opacity-20 border border-red-500 border-opacity-30">
               <p className="text-red-300 text-center text-sm sm:text-base">{errorMessage}</p>
             </div>
           )}
+          <div className="mt-6 pt-6 border-t border-white border-opacity-10">
+            <p className="text-gray-400 text-xs text-center">
+              Don't have a license? <a href="https://homeofeditors.vercel.app" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">Purchase here</a>
+            </p>
+          </div>
         </div>
       </div>
     );
