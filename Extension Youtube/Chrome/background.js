@@ -1,7 +1,7 @@
 // background.js
 
 // Debug: Version check
-console.log('YTP: Background script loaded - Version 3.0.19 with Enhanced Cookie Extraction & Performance Optimizations');
+console.log('YTP: Background script loaded - Version 3.0.20 with Enhanced Cookie Extraction & Performance Optimizations');
 
 // Cookie cache to avoid repeated extractions
 let cookiesCache = { data: null, timestamp: 0 };
@@ -283,6 +283,7 @@ async function getYouTubeCookies() {
         return [];
     }
 }
+
 
 
 
