@@ -1,7 +1,7 @@
 {
     "manifest_version":  2,
     "name":  "Youtube to Premiere Pro V3 (Firefox)",
-    "version":  "3.0.18",
+    "version":  "3.0.19",
     "description":  "Télécharge et importe des vidéos YouTube directement dans Adobe Premiere Pro. Communique avec l\u0027application locale via localhost:17845.",
     "permissions":  [
                         "activeTab",
