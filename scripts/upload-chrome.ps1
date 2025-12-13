@@ -103,6 +103,42 @@ $clientId = [Environment]::GetEnvironmentVariable("CHROME_CLIENT_ID")
 $clientSecret = [Environment]::GetEnvironmentVariable("CHROME_CLIENT_SECRET")
 $refreshToken = [Environment]::GetEnvironmentVariable("CHROME_REFRESH_TOKEN")
 
+# Vérifier l'état de l'extension et annuler toute review en cours
+Write-ColorOutput "[WORK] Verification du statut de l'extension..." $Cyan
+try {
+    # Utiliser l'API Chrome Web Store pour obtenir le statut
+    $statusCommand = "npx chrome-webstore-upload fetch --extension-id `"$extensionId`" --client-id `"$clientId`" --client-secret `"$clientSecret`" --refresh-token `"$refreshToken`""
+    $statusResult = Invoke-Expression $statusCommand 2>&1
+    
+    # Vérifier si l'extension est en review (statut PENDING ou IN_REVIEW)
+    if ($statusResult -match "PENDING|IN_REVIEW|ITEM_NOT_UPDATABLE") {
+        Write-ColorOutput "  [INFO] Une soumission est deja en cours de review" $Yellow
+        Write-ColorOutput "  [WORK] Annulation de la review en cours..." $Cyan
+        
+        try {
+            # Utiliser l'API pour annuler la soumission
+            $cancelCommand = "npx chrome-webstore-upload unpublish --extension-id `"$extensionId`" --client-id `"$clientId`" --client-secret `"$clientSecret`" --refresh-token `"$refreshToken`""
+            $cancelResult = Invoke-Expression $cancelCommand 2>&1
+            
+            if ($LASTEXITCODE -eq 0) {
+                Write-ColorOutput "  [OK] Review precedente annulee avec succes" $Green
+                Start-Sleep -Seconds 2  # Attendre que l'API se mette à jour
+            } else {
+                Write-ColorOutput "  [WARNING] Impossible d'annuler automatiquement la review" $Yellow
+                Write-ColorOutput "  [INFO] L'upload va quand meme etre tente..." $Yellow
+            }
+        } catch {
+            Write-ColorOutput "  [WARNING] Erreur lors de l'annulation: $($_.Exception.Message)" $Yellow
+            Write-ColorOutput "  [INFO] L'upload va quand meme etre tente..." $Yellow
+        }
+    } else {
+        Write-ColorOutput "  [OK] Aucune review en cours, upload possible" $Green
+    }
+} catch {
+    Write-ColorOutput "  [WARNING] Impossible de verifier le statut: $($_.Exception.Message)" $Yellow
+    Write-ColorOutput "  [INFO] L'upload va quand meme etre tente..." $Yellow
+}
+
 if ($Action -eq "upload") {
     Write-ColorOutput "[WORK] Upload vers Chrome Web Store (draft)..." $Cyan
     $command = "npx chrome-webstore-upload upload --source `"$zipPath`" --extension-id `"$extensionId`" --client-id `"$clientId`" --client-secret `"$clientSecret`" --refresh-token `"$refreshToken`""
