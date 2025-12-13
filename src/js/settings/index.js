@@ -12,12 +12,14 @@ let isProcessing = false;
 // Function to check if server is already running
 async function isServerRunning() {
     try {
-        const response = await fetch('http://localhost:17845/health', {
+        // Try 127.0.0.1 first (more reliable in CEP context)
+        const response = await fetch('http://127.0.0.1:17845/health', {
             method: 'GET',
-            timeout: 1000
+            timeout: 3000  // Increased timeout for dev environment
         });
         return response.ok;
     } catch (error) {
+        console.log("[DEBUG] Server health check failed:", error.message);
         return false;
     }
 }

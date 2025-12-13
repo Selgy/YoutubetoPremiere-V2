@@ -25,11 +25,6 @@ if os.path.exists(deno_path) and deno_path not in os.environ.get('PATH', ''):
     os.environ['PATH'] = f"{deno_path}{os.pathsep}{os.environ.get('PATH', '')}"
     print(f"[DENO] Added Deno to PATH for this session: {deno_path}")
 
-# Download EJS challenge solver if not already present
-# This is required for yt-dlp to work properly with YouTube
-import subprocess
-import tempfile
-
 # IMPORTANT: Skip EJS challenge solver download - it's handled by Deno at runtime
 # The --remote-components option has been removed from recent yt-dlp versions
 # Instead, yt-dlp will automatically use Deno if it's installed in PATH
@@ -193,7 +188,7 @@ def check_server_running(port=17845):
         import requests
         response = requests.get(f'http://localhost:{port}/health', timeout=1)
         return response.status_code == 200
-    except:
+    except Exception:
         # If request fails, port might be used by another application
         return False
 
@@ -390,16 +385,16 @@ def error_handler(e):
         
         # Handle connection errors more gracefully
         if 'broken pipe' in error_str or 'connection reset' in error_str or 'connection aborted' in error_str:
-            app_logger.warning(f'🔌 Client connection lost: {error_type}')
+            app_logger.warning(f'[CONNECTION] Client connection lost: {error_type}')
         elif 'bad file descriptor' in error_str or 'socket is closed' in error_str:
-            app_logger.warning(f'🔌 Socket closed: {error_type}')
+            app_logger.warning(f'[CONNECTION] Socket closed: {error_type}')
         else:
-            app_logger.error(f'🔥 SocketIO error: {str(e)}')
-            app_logger.error(f'🔥 Error type: {error_type}')
+            app_logger.error(f'[ERROR] SocketIO error: {str(e)}')
+            app_logger.error(f'[ERROR] Error type: {error_type}')
         
         if hasattr(request, "sid") and request.sid:
             sid = request.sid
-            app_logger.debug(f'🔥 Request SID: {sid[:8]}...')
+            app_logger.debug(f'[ERROR] Request SID: {sid[:8]}...')
             
             # Clean up the problematic connection
             cleanup_disconnected_client(sid)
@@ -416,16 +411,16 @@ def default_error_handler(e):
         
         # Handle connection errors more gracefully
         if 'broken pipe' in error_str or 'connection reset' in error_str or 'connection aborted' in error_str:
-            app_logger.warning(f'🔌 Default handler - Client connection lost: {error_type}')
+            app_logger.warning(f'[CONNECTION] Default handler - Client connection lost: {error_type}')
         elif 'bad file descriptor' in error_str or 'socket is closed' in error_str:
-            app_logger.warning(f'🔌 Default handler - Socket closed: {error_type}')
+            app_logger.warning(f'[CONNECTION] Default handler - Socket closed: {error_type}')
         else:
-            app_logger.error(f'🔥 SocketIO default error: {str(e)}')
-            app_logger.error(f'🔥 Default error type: {error_type}')
+            app_logger.error(f'[ERROR] SocketIO default error: {str(e)}')
+            app_logger.error(f'[ERROR] Default error type: {error_type}')
         
         if hasattr(request, "sid") and request.sid:
             sid = request.sid
-            app_logger.debug(f'🔥 Default Request SID: {sid[:8]}...')
+            app_logger.debug(f'[ERROR] Default Request SID: {sid[:8]}...')
             
             # Clean up the problematic connection
             cleanup_disconnected_client(sid)
@@ -918,7 +913,7 @@ def run_extendscript(script):
         if os.path.exists(result_path):
             try:
                 os.remove(result_path)
-            except:
+            except (OSError, PermissionError):
                 pass
 
         # Write the script
@@ -954,7 +949,7 @@ def run_extendscript(script):
             if os.path.exists(file_path):
                 try:
                     os.remove(file_path)
-                except:
+                except (OSError, PermissionError):
                     pass
 
 def progress_hook(d, socketio):

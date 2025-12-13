@@ -47,10 +47,10 @@ def setup_deno_path():
                 if result.returncode == 0:
                     logging.info("Deno found in system PATH")
                     return 'deno'
-            except:
+            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
                 pass
             
-            logging.warning("⚠ Deno not found - YouTube downloads may be limited for protected videos")
+            logging.warning("[WARNING] Deno not found - YouTube downloads may be limited for protected videos")
             logging.warning("  Install Deno: https://deno.land/")
             return None
     except Exception as e:

@@ -48,11 +48,41 @@ def load_settings():
 
     script_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
     
-    settings_path = os.path.join(os.environ.get('APPDATA', os.path.expanduser('~/.config')), 
-                                'YoutubetoPremiere', 'settings.json')
+    # Determine settings path based on platform
+    # Windows: Always use APPDATA (C:\Users\<user>\AppData\Roaming\YoutubetoPremiere)
+    # macOS: Use ~/Library/Application Support/YoutubetoPremiere
+    # Linux: Use ~/.config/YoutubetoPremiere
+    if sys.platform == 'win32':
+        # Force Windows to use APPDATA
+        base_path = os.environ.get('APPDATA')
+        if not base_path:
+            # Fallback if APPDATA is not set (very rare)
+            base_path = os.path.join(os.path.expanduser('~'), 'AppData', 'Roaming')
+        settings_dir = os.path.join(base_path, 'YoutubetoPremiere')
+    elif sys.platform == 'darwin':
+        # macOS standard location
+        settings_dir = os.path.join(os.path.expanduser('~/Library/Application Support'), 'YoutubetoPremiere')
+    else:
+        # Linux/Unix
+        settings_dir = os.path.join(os.path.expanduser('~/.config'), 'YoutubetoPremiere')
     
-    if not os.path.exists(os.path.dirname(settings_path)):
-        os.makedirs(os.path.dirname(settings_path))
+    settings_path = os.path.join(settings_dir, 'settings.json')
+    
+    # Create directory if it doesn't exist
+    if not os.path.exists(settings_dir):
+        os.makedirs(settings_dir)
+    
+    # Migration: Check for old settings file in wrong location (Windows only)
+    if sys.platform == 'win32':
+        old_settings_path = os.path.join(os.path.expanduser('~/.config'), 'YoutubetoPremiere', 'settings.json')
+        if os.path.exists(old_settings_path) and not os.path.exists(settings_path):
+            # Migrate old settings to new location
+            try:
+                import shutil
+                shutil.copy2(old_settings_path, settings_path)
+                logging.info(f"Migrated settings from {old_settings_path} to {settings_path}")
+            except Exception as e:
+                logging.warning(f"Could not migrate old settings: {e}")
 
     if os.path.exists(settings_path):
         with open(settings_path, 'r') as f:

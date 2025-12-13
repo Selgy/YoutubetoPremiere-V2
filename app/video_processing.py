@@ -1058,13 +1058,46 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         preferred_language = settings.get('preferredAudioLanguage', 'original')
         logging.info(f"Using preferred audio language for clip: {preferred_language}")
         
-        # Format string for the desired quality - FORCE AVC1 CODEC with language preference
+        # Format string for the desired quality - Prioritize AVC1 for Premiere Pro compatibility
+        # but with flexible fallbacks if truly not available
         sanitized_resolution = sanitize_resolution(resolution)
         if preferred_language != 'original':
-            format_str = f'bestvideo[height<={sanitized_resolution}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a][language~="{preferred_language}"]/bestvideo[height<={sanitized_resolution}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/best[vcodec^=avc1][ext=mp4]/best'
+            # Try with language preference, prioritizing AVC1/H.264
+            format_str = (
+                # First: AVC1 with language preference
+                f'bestvideo[height<={sanitized_resolution}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a][language~="{preferred_language}"]/'
+                f'bestvideo[height<={sanitized_resolution}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/'
+                f'bestvideo[height<={sanitized_resolution}][vcodec*=avc]+bestaudio[ext=m4a]/'
+                # Then: Any H.264 codec variant
+                f'bestvideo[height<={sanitized_resolution}][vcodec*=264]+bestaudio/'
+                # Then: Combined AVC1 formats
+                f'best[height<={sanitized_resolution}][vcodec^=avc1][ext=mp4]/'
+                f'best[height<={sanitized_resolution}][vcodec*=avc]/'
+                # Fallback: Any video+audio at resolution (still prefer mp4)
+                f'bestvideo[height<={sanitized_resolution}][ext=mp4]+bestaudio/'
+                f'best[height<={sanitized_resolution}][ext=mp4]/'
+                # Last resort: any format
+                f'best[height<={sanitized_resolution}]/best'
+            )
         else:
-            format_str = f'bestvideo[height<={sanitized_resolution}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/best[vcodec^=avc1][ext=mp4]/best'
-        logging.info(f"Using format string with AVC1 codec and language preference: {format_str}")
+            # Prioritize AVC1/H.264 for maximum Premiere Pro compatibility
+            format_str = (
+                # Priority 1: AVC1 at resolution (best for Premiere)
+                f'bestvideo[height<={sanitized_resolution}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/'
+                f'bestvideo[height<={sanitized_resolution}][vcodec^=avc1]+bestaudio/'
+                f'bestvideo[height<={sanitized_resolution}][vcodec*=avc]+bestaudio/'
+                # Priority 2: Any H.264 variant at resolution
+                f'bestvideo[height<={sanitized_resolution}][vcodec*=264]+bestaudio/'
+                # Priority 3: Combined AVC1 formats
+                f'best[height<={sanitized_resolution}][vcodec^=avc1][ext=mp4]/'
+                f'best[height<={sanitized_resolution}][vcodec*=avc]/'
+                # Priority 4: Any mp4 at resolution
+                f'bestvideo[height<={sanitized_resolution}][ext=mp4]+bestaudio[ext=m4a]/'
+                f'best[height<={sanitized_resolution}][ext=mp4]/'
+                # Last resort: best available
+                f'best[height<={sanitized_resolution}]/best'
+            )
+        logging.info(f"Using AVC1-prioritized format string with fallbacks: {format_str}")
         
         # Configure download ranges for clip extraction
         clip_duration = clip_end - clip_start
@@ -1080,6 +1113,24 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             if is_cancelled[0]:
                 logging.info('[CANCEL] Clip progress hook detected cancellation, raising exception to stop yt-dlp')
                 raise Exception('Download cancelled by user')
+            
+            # Log the selected format info for clips (only once)
+            if d['status'] == 'downloading' and 'info_dict' in d:
+                info = d.get('info_dict', {})
+                vcodec = info.get('vcodec', 'unknown')
+                acodec = info.get('acodec', 'unknown')
+                ext = info.get('ext', 'unknown')
+                format_id = info.get('format_id', 'unknown')
+                height = info.get('height', 'unknown')
+                
+                # Only log once per download
+                if not hasattr(progress_hook, 'format_logged'):
+                    progress_hook.format_logged = True
+                    is_avc1 = 'avc1' in vcodec.lower() or 'avc' in vcodec.lower() or '264' in vcodec.lower()
+                    codec_status = "[CLIP AVC1-OK]" if is_avc1 else "[CLIP NON-AVC1-WARNING]"
+                    logging.info(f"{codec_status} Selected format: {format_id}, vcodec={vcodec}, acodec={acodec}, ext={ext}, height={height}p")
+                    if not is_avc1:
+                        logging.warning(f"WARNING: Non-AVC1 codec selected for clip - may require transcoding in Premiere Pro!")
                 
             if d['status'] == 'downloading':
                 try:
@@ -1087,7 +1138,21 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                     # Remove ANSI color codes if present
                     percentage = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', percentage)
                     percentage = percentage.strip()
-                    logging.info(f'[PROGRESS] Clip Progress: {percentage}')
+                    
+                    # Extract numeric value to throttle logging
+                    percentage_num = 0
+                    clean_str = percentage.replace('%', '').replace(' ', '')
+                    if clean_str.replace('.', '').isdigit():
+                        try:
+                            percentage_num = int(float(clean_str))
+                        except:
+                            pass
+                    
+                    # Only log every 10% or if value increased significantly
+                    if percentage_num % 10 == 0 or percentage_num > last_progress_value_clip[0] + 5:
+                        logging.info(f'[PROGRESS] Clip Progress: {percentage}')
+                        last_progress_value_clip[0] = percentage_num
+                    
                     # No percentage emission for clips - just keep loading animation
                 except Exception as e:
                     if 'cancelled' in str(e).lower():
@@ -1302,10 +1367,36 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         
         # Simple progress hook like the old working version
         def progress_hook(d):
+            # LOG: Hook is being called (debug)
+            status = d.get('status', 'unknown')
+            if status == 'downloading':
+                # Log first time to confirm hook is working
+                if not hasattr(progress_hook, 'hook_confirmed'):
+                    progress_hook.hook_confirmed = True
+                    logging.info('[DEBUG] Full video progress hook is being called successfully')
+            
             # Check for cancellation first - throw exception to stop yt-dlp
             if is_cancelled[0]:
                 logging.info('[CANCEL] Progress hook detected cancellation, raising exception to stop yt-dlp')
                 raise Exception('Download cancelled by user')
+            
+            # Log the selected format info (only once)
+            if d['status'] == 'downloading' and 'info_dict' in d:
+                info = d.get('info_dict', {})
+                vcodec = info.get('vcodec', 'unknown')
+                acodec = info.get('acodec', 'unknown')
+                ext = info.get('ext', 'unknown')
+                format_id = info.get('format_id', 'unknown')
+                height = info.get('height', 'unknown')
+                
+                # Only log once per download
+                if not hasattr(progress_hook, 'format_logged'):
+                    progress_hook.format_logged = True
+                    is_avc1 = 'avc1' in vcodec.lower() or 'avc' in vcodec.lower() or '264' in vcodec.lower()
+                    codec_status = "[FULL AVC1-OK]" if is_avc1 else "[FULL NON-AVC1-WARNING]"
+                    logging.info(f"{codec_status} Selected format: {format_id}, vcodec={vcodec}, acodec={acodec}, ext={ext}, height={height}p")
+                    if not is_avc1:
+                        logging.warning(f"WARNING: Non-AVC1 codec selected - video may require transcoding in Premiere Pro!")
                 
             if d['status'] == 'downloading':
                 try:
@@ -1318,24 +1409,29 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     percentage_num = 0
                     if percentage_str:
                         # Remove % and spaces, then try to parse
-                        clean_str = percentage_str.replace('%', '').replace(' ', '')
-                        if clean_str.isdigit():
-                            percentage_num = int(clean_str)
+                        clean_str = percentage_str.replace('%', '').replace(' ', '').replace(',', '.')
+                        try:
+                            percentage_num = int(float(clean_str))
+                        except ValueError:
+                            # If parsing fails, log it for debugging
+                            logging.debug(f'[DEBUG] Could not parse percentage: {percentage_str}')
+                            percentage_num = 0
                     
-                    # Only emit if percentage increased or is 100%
-                    if percentage_num >= last_progress_value[0] or percentage_num == 100:
+                    # IMPROVED THROTTLING: Only emit if percentage INCREASED or is 100%
+                    # This prevents flooding with 0% updates during initialization
+                    if percentage_num > last_progress_value[0] or percentage_num == 100:
                         # OPTIMIZATION: Only log key percentages to reduce I/O overhead
                         if percentage_num % 10 == 0 or percentage_num == 100:
                             logging.info(f'[PROGRESS] Video Progress: {percentage_num}%')
                         # Emit progress to all connected clients (broadcast)
                         socketio.emit('progress', {'progress': str(percentage_num), 'type': 'full'})
                         socketio.emit('percentage', {'percentage': percentage_str if percentage_str else f'{percentage_num}%'})
-                        last_progress_value[0] = max(last_progress_value[0], percentage_num)
-                    # Removed debug log for skipped backward progress - reduces I/O overhead
+                        last_progress_value[0] = percentage_num
+                    # Silently skip updates that don't increase progress (especially 0%)
                 except Exception as e:
                     if 'cancelled' in str(e).lower():
                         raise e  # Re-raise cancellation exceptions
-                    logging.error(f"Error in progress hook: {e}")
+                    logging.error(f"Error in full video progress hook: {e}")
             elif d['status'] == 'finished':
                 logging.info('[FINISHED] Video download finished')
                 # Emit progress to all connected clients (broadcast)
@@ -1361,31 +1457,42 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 f'best[height<={max_height}][language~="{preferred_language}"]',
             ])
         
-        # Main format strategy: prefer separate streams for better quality, then combined
-        # IMPORTANT: MUST use AVC1 (H.264) codec for Premiere Pro compatibility - AV01 is NOT supported!
-        # Filter by vcodec to ensure only H.264/AVC1 formats are selected
+        # Main format strategy: STRONGLY prefer AVC1/H.264 for Premiere Pro compatibility
+        # Only fallback to other codecs if absolutely no AVC1 formats exist
         format_options.extend([
-            # Priority 1: Best H.264 video at resolution + best audio (separate streams for max quality)
+            # Priority 1: Best AVC1/H.264 video at resolution + best audio (separate streams for max quality)
             f'bestvideo[height<={max_height}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]',
             f'bestvideo[height<={max_height}][vcodec^=avc1]+bestaudio',
             
-            # Priority 2: Any H.264 video at resolution + audio
+            # Priority 2: Any H.264 variant (avc) at resolution + audio
             f'bestvideo[height<={max_height}][vcodec*=avc]+bestaudio',
+            f'bestvideo[height<={max_height}][vcodec*=264]+bestaudio',
             
-            # Priority 3: Combined H.264 format at resolution (like format 18 for 360p fallback)
+            # Priority 3: Combined AVC1 format at resolution
             f'best[height<={max_height}][vcodec^=avc1][ext=mp4]',
             f'best[height<={max_height}][vcodec*=avc]',
+            f'best[height<={max_height}][vcodec*=264]',
             
-            # Priority 4: Any H.264 at any resolution (better than failing)
+            # Priority 4: AVC1 at any resolution (better to have AVC1 at higher res than non-AVC1 at target res)
+            'bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]',
             'bestvideo[vcodec^=avc1]+bestaudio',
+            'bestvideo[vcodec*=avc]+bestaudio',
             'best[vcodec^=avc1][ext=mp4]',
+            'best[vcodec*=avc]',
             
-            # Last resort: any mp4 (but this may fail if it's AV01)
-            'best[ext=mp4]/best'
+            # Priority 5: Only if NO AVC1 exists, try other codecs at resolution
+            f'bestvideo[height<={max_height}][ext=mp4]+bestaudio[ext=m4a]',
+            f'bestvideo[height<={max_height}]+bestaudio',
+            f'best[height<={max_height}][ext=mp4]',
+            f'best[height<={max_height}]',
+            
+            # Last resort: absolutely any format (will require transcoding in Premiere)
+            'best'
         ])
         
         format_string = '/'.join(format_options)
-        logging.info(f"Using simplified format string with {len(format_options)} options: {format_string}")
+        logging.info(f"Using AVC1-prioritized format string with {len(format_options)} fallback options")
+        logging.info(f"Format priority: AVC1 at resolution > AVC1 any resolution > Other codecs at resolution > Any format")
 
         # Check if download path exists or try to get default path
         if not download_path:
@@ -1921,25 +2028,25 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                             percentage_num = int(clean_str)
                     
                     # Only emit if percentage increased or is 100%
-                    if percentage_num >= last_progress_value_audio[0] or percentage_num == 100:
+                    if percentage_num > last_progress_value_audio[0] or percentage_num == 100:
                         # OPTIMIZATION: Only log key percentages to reduce I/O overhead
                         if percentage_num % 10 == 0 or percentage_num == 100:
                             logging.info(f'[PROGRESS] Audio Progress: {percentage_num}%')
                         # Emit progress to all connected clients (broadcast)
                         socketio.emit('progress', {'progress': str(percentage_num), 'type': 'audio'})
                         socketio.emit('percentage', {'percentage': percentage_str if percentage_str else f'{percentage_num}%'})
-                        last_progress_value_audio[0] = max(last_progress_value_audio[0], percentage_num)
+                        last_progress_value_audio[0] = percentage_num
                     # Removed debug log for skipped backward progress - reduces I/O overhead
                 except Exception as e:
                     if 'cancelled' in str(e).lower():
                         raise e  # Re-raise cancellation exceptions
                     logging.error(f"Error in audio progress hook: {e}")
             elif d['status'] == 'finished':
-                logging.info('[FINISHED] Audio download finished')
+                logging.info('[FINISHED] Audio download finished - Starting audio extraction...')
                 # Emit progress to all connected clients (broadcast)
-                socketio.emit('progress', {'progress': '100', 'type': 'audio'})
-                socketio.emit('percentage', {'percentage': '100%'})
-                last_progress_value_audio[0] = 100
+                socketio.emit('progress', {'progress': '95', 'type': 'audio', 'status': 'processing'})
+                socketio.emit('percentage', {'percentage': '95% - Extracting audio...'})
+                last_progress_value_audio[0] = 95
 
         # Prepare authentication first
         cookies_file = None
@@ -1960,7 +2067,8 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
             'format': audio_format,
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'wav',
+                'preferredcodec': 'm4a',  # Use M4A (AAC) instead of WAV - much smaller and Premiere-compatible
+                'preferredquality': '192',  # High quality audio
             }],
             'progress_hooks': [progress_hook],
             'writesubtitles': False,  # Don't download subtitles for audio
@@ -1970,7 +2078,9 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
             'writethumbnail': False,  # Don't download thumbnail
             'postprocessor_args': get_ffmpeg_postprocessor_args() + [
                 '-metadata', f'comment={video_url}',
-                '-threads', '4'  # Limit threads to avoid resource issues
+                '-c:a', 'aac',  # Use AAC codec
+                '-b:a', '192k',  # 192kbps bitrate (high quality)
+                '-threads', '2'  # Reduced threads to avoid disk saturation
             ],
         })
         
@@ -2020,7 +2130,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                 # Create unique filename
                 title = info.get('title', 'audio')
                 sanitized_title = sanitize_youtube_title(title)
-                output_path = os.path.join(download_path, f"{sanitized_title}.wav")
+                output_path = os.path.join(download_path, f"{sanitized_title}.m4a")  # Changed to m4a
 
                 # Ensure directory exists
                 os.makedirs(download_path, exist_ok=True)
@@ -2051,6 +2161,14 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                     # Download using the already extracted info
                     ydl_download.process_ie_result(info, download=True)
                     
+                    # IMPORTANT: Wait for post-processing to complete
+                    # yt-dlp's process_ie_result is synchronous and should wait,
+                    # but we add a small delay to ensure FFmpeg has written everything
+                    import time
+                    time.sleep(0.5)
+                    
+                    logging.info('[AUDIO] Post-processing completed, searching for final file...')
+                    
                     # Check for cancellation after download
                     if is_cancelled[0]:
                         logging.info("Audio download cancelled after download")
@@ -2065,27 +2183,62 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                         logging.info('[CANCEL] Audio download successfully cancelled after download - cleanup completed')
                         return None
 
-                # Find the downloaded file
+                # Find the downloaded file (m4a format) - post-processing should be complete now
                 downloaded_file = None
-                for file in os.listdir(download_path):
-                    if file.startswith('temp_') and file.endswith('.wav'):
-                        downloaded_file = os.path.join(download_path, file)
-                        break
+                
+                # List all files to debug
+                all_files = os.listdir(download_path)
+                logging.info(f'[AUDIO] Files in download directory: {all_files}')
+                
+                # Look for the processed audio file (prioritize m4a)
+                for file in all_files:
+                    if file.startswith('temp_') and sanitized_title in file:
+                        file_path = os.path.join(download_path, file)
+                        file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+                        
+                        if file.endswith('.m4a') and file_size > 1000:  # At least 1KB
+                            downloaded_file = file_path
+                            logging.info(f'[AUDIO] Found M4A file: {file} ({file_size} bytes)')
+                            break
+                        elif file.endswith('.wav') and file_size > 1000:
+                            downloaded_file = file_path
+                            logging.info(f'[AUDIO] Found WAV file: {file} ({file_size} bytes)')
+                            break
 
                 if not downloaded_file:
-                    raise Exception("Could not find downloaded audio file")
+                    # Last resort: find ANY temp file with the title that has reasonable size
+                    for file in all_files:
+                        if 'temp_' in file and sanitized_title in file:
+                            file_path = os.path.join(download_path, file)
+                            file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+                            if file_size > 1000:  # At least 1KB
+                                downloaded_file = file_path
+                                logging.warning(f'[AUDIO] Found fallback file: {file} ({file_size} bytes)')
+                                break
+                
+                if not downloaded_file:
+                    error_msg = f"Could not find downloaded audio file. Files in directory: {all_files}"
+                    logging.error(error_msg)
+                    raise Exception(error_msg)
+                
+                # Verify file is complete and not being written
+                final_size = os.path.getsize(downloaded_file)
+                logging.info(f'[AUDIO] Using downloaded file: {os.path.basename(downloaded_file)} ({final_size} bytes)')
 
-                # Add metadata using ffmpeg
-                temp_output = output_path + "_with_metadata.wav"
+                # Add metadata using ffmpeg (copy codec to avoid reencoding)
+                temp_output = output_path + "_with_metadata.m4a"
                 metadata_cmd = [
                     ffmpeg_path,
                     '-i', downloaded_file,
                     '-metadata', f'comment={video_url}',
+                    '-c', 'copy',  # Copy without reencoding - much faster!
                 ] + get_ffmpeg_postprocessor_args() + [
                     temp_output
                 ]
 
+                logging.info('[AUDIO] Adding metadata - fast copy mode (no reencoding)')
                 run_hidden_subprocess(metadata_cmd, check=True)
+                logging.info('[AUDIO] Metadata added successfully')
 
                 # Clean up and rename
                 try:
@@ -2108,6 +2261,11 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                 if current_download:
                     current_download['ydl'] = None
                     current_download['cancel_callback'] = None
+
+                # Emit completion progress (100%)
+                logging.info('[AUDIO COMPLETE] Audio extraction finished successfully')
+                socketio.emit('progress', {'progress': '100', 'type': 'audio', 'status': 'complete'})
+                socketio.emit('percentage', {'percentage': '100%'})
 
                 # Emit both completion events before returning
                 if socketio:
@@ -2397,11 +2555,11 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
         import shutil
         deno_path = shutil.which('deno')
         if deno_path:
-            logging.info(f"✓ Deno runtime found at: {deno_path}")
-            logging.info("✓ External JavaScript runtime enabled (EJS challenge solver should be pre-downloaded)")
-            logging.info("✓ Using yt-dlp's default player client logic for maximum format availability")
+            logging.info(f"[OK] Deno runtime found at: {deno_path}")
+            logging.info("[OK] External JavaScript runtime enabled (EJS challenge solver should be pre-downloaded)")
+            logging.info("[OK] Using yt-dlp's default player client logic for maximum format availability")
         else:
-            logging.warning("⚠ Deno runtime not found in PATH. YouTube format availability may be limited.")
+            logging.warning("[WARNING] Deno runtime not found in PATH. YouTube format availability may be limited.")
             logging.warning("  Install Deno with: .\\scripts\\install-deno.ps1")
             logging.warning("  Then restart the application or run: .\\scripts\\add-deno-to-path.ps1")
     except Exception as e:
