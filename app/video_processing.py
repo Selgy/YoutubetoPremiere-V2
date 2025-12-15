@@ -1531,9 +1531,10 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 browser_cookies = try_extract_cookies_from_browser()
         
         # Configure initial yt-dlp options with robust settings including auth
-        # For info extraction, DON'T specify format - we only want metadata, not to validate format availability
+        # For info extraction, use simple 'best' format to avoid complex format validation
         initial_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
         initial_ydl_opts['skip_download'] = True  # Only extract metadata, don't download yet
+        initial_ydl_opts['format'] = 'best'  # Use simple format for info extraction only
         
         # Add browser cookies if available (fallback when no cookies file)
         if browser_cookies:
@@ -1555,6 +1556,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     # Retry info extraction without cookies but with comprehensive headers
                     fallback_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
                     fallback_ydl_opts['skip_download'] = True  # Only extract metadata, don't download yet
+                    fallback_ydl_opts['format'] = 'best'  # Use simple format for info extraction only
                     
                     # Use simple 'best' format to avoid complex format validation during info extraction
                     with yt_dlp.YoutubeDL(fallback_ydl_opts) as ydl_fallback:
