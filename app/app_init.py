@@ -26,13 +26,25 @@ def setup_deno_path():
             # Running as Python script
             app_dir = os.path.dirname(os.path.abspath(__file__))
         
-        # Check for deno executable
+        # Check for deno executable in multiple locations
         if platform.system() == 'Windows':
-            deno_path = os.path.join(app_dir, 'deno.exe')
+            deno_filename = 'deno.exe'
         else:
-            deno_path = os.path.join(app_dir, 'deno')
+            deno_filename = 'deno'
         
-        if os.path.exists(deno_path):
+        # Try multiple possible locations
+        possible_deno_locations = [
+            os.path.join(app_dir, deno_filename),           # Direct in app directory
+            os.path.join(app_dir, '_internal', deno_filename),  # PyInstaller _internal directory
+        ]
+        
+        deno_path = None
+        for location in possible_deno_locations:
+            if os.path.exists(location):
+                deno_path = location
+                break
+        
+        if deno_path:
             # Add to PATH
             deno_dir = os.path.dirname(deno_path)
             current_path = os.environ.get("PATH", "")
