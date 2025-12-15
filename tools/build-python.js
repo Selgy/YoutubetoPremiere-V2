@@ -267,6 +267,17 @@ for (const ffmpegPath of ffmpegPaths) {
     }
 }
 
+// Copy Deno if it exists (needed for yt-dlp EJS challenge solver)
+const denoPaths = ['app/deno.exe', 'deno.exe', 'deno'];
+for (const denoPath of denoPaths) {
+    if (fs.existsSync(denoPath)) {
+        console.log(`Copying Deno from ${denoPath} to dist/cep/exec/`);
+        const fileName = path.basename(denoPath);
+        fs.copyFileSync(denoPath, path.join('dist/cep/exec', fileName));
+        break;
+    }
+}
+
 // Copy sound files next to executable for external access
 if (hasSoundFiles()) {
     console.log('Copying sound files next to executable for external access...');
