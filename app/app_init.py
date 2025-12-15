@@ -21,7 +21,10 @@ def setup_deno_path():
         # Get the directory where the executable is located
         if getattr(sys, 'frozen', False):
             # Running as compiled executable
-            app_dir = os.path.dirname(sys.executable)
+            # sys.executable points to YoutubetoPremiere.exe in the root of the bundle
+            # PyInstaller's _internal folder is at the same level as the exe
+            bundle_root = os.path.dirname(sys.executable)
+            app_dir = os.path.join(bundle_root, '_internal')
         else:
             # Running as Python script
             app_dir = os.path.dirname(os.path.abspath(__file__))
@@ -33,10 +36,15 @@ def setup_deno_path():
             deno_filename = 'deno'
         
         # Try multiple possible locations
-        possible_deno_locations = [
-            os.path.join(app_dir, deno_filename),           # Direct in app directory
-            os.path.join(app_dir, '_internal', deno_filename),  # PyInstaller _internal directory
-        ]
+        if getattr(sys, 'frozen', False):
+            possible_deno_locations = [
+                os.path.join(app_dir, deno_filename),  # _internal/deno.exe
+                os.path.join(bundle_root, deno_filename),  # root/deno.exe (same level as exe)
+            ]
+        else:
+            possible_deno_locations = [
+                os.path.join(app_dir, deno_filename),  # app/deno.exe
+            ]
         
         deno_path = None
         for location in possible_deno_locations:

@@ -160,9 +160,27 @@ jobs:
           --hidden-import=psutil \
           --hidden-import=tkinter \
           --add-data "app/sounds:sounds" \
-          --add-binary "ffmpeg:_internal" \
-          --add-binary "app/deno:_internal" \
           app/YoutubetoPremiere.py
+          
+          # Copy ffmpeg and deno to _internal directory
+          echo "Copying ffmpeg and deno to _internal directory..."
+          if [ -f "ffmpeg" ]; then
+            cp ffmpeg ./dist/YoutubetoPremiere/_internal/ffmpeg
+            chmod +x ./dist/YoutubetoPremiere/_internal/ffmpeg
+            echo "✅ ffmpeg copied to _internal"
+          else
+            echo "❌ ERROR: ffmpeg not found"
+            exit 1
+          fi
+          
+          if [ -f "app/deno" ]; then
+            cp app/deno ./dist/YoutubetoPremiere/_internal/deno
+            chmod +x ./dist/YoutubetoPremiere/_internal/deno
+            echo "✅ deno copied to _internal"
+          else
+            echo "❌ ERROR: app/deno not found"
+            exit 1
+          fi
 
       - name: Build CEP Extension
         run: |
@@ -553,8 +571,6 @@ jobs:
             --hidden-import=flask --hidden-import=flask_cors --hidden-import=flask_socketio `
             --hidden-import=yt_dlp --hidden-import=psutil `
             --add-data "app/sounds;sounds" `
-            --add-binary "ffmpeg.exe;_internal" `
-            --add-binary "app/deno.exe;_internal" `
             app/YoutubetoPremiere.py
           
           $endTime = Get-Date
@@ -575,6 +591,24 @@ jobs:
               Get-ChildItem "dist\YoutubetoPremiere\sounds" | ForEach-Object { echo "  $($_.Name)" }
             } else {
               echo "❌ WARNING: Sounds directory not found in build"
+            }
+            
+            # Copy ffmpeg.exe and deno.exe to _internal directory
+            echo "Copying ffmpeg.exe and deno.exe to _internal directory..."
+            if (Test-Path "ffmpeg.exe") {
+              Copy-Item "ffmpeg.exe" "dist\YoutubetoPremiere\_internal\ffmpeg.exe" -Force
+              echo "✅ ffmpeg.exe copied to _internal"
+            } else {
+              echo "❌ ERROR: ffmpeg.exe not found"
+              exit 1
+            }
+            
+            if (Test-Path "app\deno.exe") {
+              Copy-Item "app\deno.exe" "dist\YoutubetoPremiere\_internal\deno.exe" -Force
+              echo "✅ deno.exe copied to _internal"
+            } else {
+              echo "❌ ERROR: app\deno.exe not found"
+              exit 1
             }
           } else {
             echo "ERROR: Build verification failed - dist\YoutubetoPremiere not found"
