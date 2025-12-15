@@ -160,8 +160,8 @@ jobs:
           --hidden-import=psutil \
           --hidden-import=tkinter \
           --add-data "app/sounds:sounds" \
-          --add-binary "ffmpeg:." \
-          --add-binary "app/deno:." \
+          --add-binary "ffmpeg:_internal" \
+          --add-binary "app/deno:_internal" \
           app/YoutubetoPremiere.py
 
       - name: Build CEP Extension
@@ -553,8 +553,8 @@ jobs:
             --hidden-import=flask --hidden-import=flask_cors --hidden-import=flask_socketio `
             --hidden-import=yt_dlp --hidden-import=psutil `
             --add-data "app/sounds;sounds" `
-            --add-binary "ffmpeg.exe;." `
-            --add-binary "app/deno.exe;." `
+            --add-binary "ffmpeg.exe;_internal" `
+            --add-binary "app/deno.exe;_internal" `
             app/YoutubetoPremiere.py
           
           $endTime = Get-Date
