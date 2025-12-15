@@ -354,7 +354,17 @@ def register_routes(app, socketio, settings):
             
             # Load current settings
             current_settings = load_settings()
-            logging.info(f"Current settings for download: {current_settings}")
+            
+            # Create sanitized version for logging (hide license key)
+            settings_for_logging = current_settings.copy()
+            if 'licenseKey' in settings_for_logging and settings_for_logging['licenseKey']:
+                license_key = settings_for_logging['licenseKey']
+                if len(license_key) > 8:
+                    settings_for_logging['licenseKey'] = f"{license_key[:4]}...{license_key[-4:]}"
+                else:
+                    settings_for_logging['licenseKey'] = "****"
+            
+            logging.info(f"Current settings for download: {settings_for_logging}")
             
             # Reset current download structure before starting new download
             reset_current_download()

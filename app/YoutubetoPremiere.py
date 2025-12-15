@@ -234,6 +234,13 @@ logging.info(f'Python version: {sys.version}')
 logging.info(f'Platform: {platform.platform()}')
 logging.info(f'Process ID: {os.getpid()}')
 
+# Log yt-dlp version
+try:
+    import yt_dlp
+    logging.info(f'yt-dlp version: {yt_dlp.version.__version__}')
+except Exception as e:
+    logging.warning(f'Could not determine yt-dlp version: {e}')
+
 # Get and log all application paths (but hide sensitive user paths)
 paths = get_app_paths()
 
