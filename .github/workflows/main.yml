@@ -159,7 +159,25 @@ jobs:
           --hidden-import=pymiere \
           --hidden-import=psutil \
           --hidden-import=tkinter \
+          --hidden-import=video_processing \
+          --hidden-import=utils \
+          --hidden-import=routes \
+          --collect-all=yt_dlp \
+          --collect-all=flask \
+          --collect-all=flask_socketio \
+          --collect-all=flask_cors \
+          --collect-all=werkzeug \
+          --collect-all=psutil \
+          --collect-all=requests \
+          --collect-all=tqdm \
+          --collect-all=pygame \
+          --collect-all=curl_cffi \
+          --collect-all=python_dotenv \
+          --collect-all=eventlet \
+          --collect-all=gevent_websocket \
+          --collect-all=simple_websocket \
           --add-data "app/sounds:sounds" \
+          --add-data "app/*.py:." \
           app/YoutubetoPremiere.py
           
           # Copy ffmpeg and deno to _internal directory
@@ -581,7 +599,23 @@ jobs:
             --hidden-import=engineio.async_drivers.threading `
             --hidden-import=flask --hidden-import=flask_cors --hidden-import=flask_socketio `
             --hidden-import=yt_dlp --hidden-import=psutil `
+            --hidden-import=video_processing --hidden-import=utils --hidden-import=routes `
+            --collect-all=yt_dlp `
+            --collect-all=flask `
+            --collect-all=flask_socketio `
+            --collect-all=flask_cors `
+            --collect-all=werkzeug `
+            --collect-all=psutil `
+            --collect-all=requests `
+            --collect-all=tqdm `
+            --collect-all=pygame `
+            --collect-all=curl_cffi `
+            --collect-all=python_dotenv `
+            --collect-all=eventlet `
+            --collect-all=gevent_websocket `
+            --collect-all=simple_websocket `
             --add-data "app/sounds;sounds" `
+            --add-data "app/*.py;." `
             app/YoutubetoPremiere.py
           
           $endTime = Get-Date
