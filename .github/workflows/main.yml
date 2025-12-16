@@ -310,13 +310,14 @@ jobs:
         with:
           python-version: '3.13.5'
 
-      - name: Cache Python dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~\AppData\Local\pip\Cache
-          key: ${{ runner.os }}-pip-v2-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-v2-
+      # Temporarily disabled cache to force fresh build
+      # - name: Cache Python dependencies
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: ~\AppData\Local\pip\Cache
+      #     key: ${{ runner.os }}-pip-v2-${{ hashFiles('requirements.txt') }}
+      #     restore-keys: |
+      #       ${{ runner.os }}-pip-v2-
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
