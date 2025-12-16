@@ -561,6 +561,16 @@ jobs:
           echo "Python version: $(python --version)"
           echo "PyInstaller version: $(pyinstaller --version)"
           
+          # Force clean all PyInstaller caches and build artifacts
+          echo "Cleaning PyInstaller caches..."
+          if (Test-Path "build") { Remove-Item "build" -Recurse -Force }
+          if (Test-Path "dist") { Remove-Item "dist" -Recurse -Force }
+          if (Test-Path "*.spec") { Remove-Item "*.spec" -Force }
+          if (Test-Path "__pycache__") { Remove-Item "__pycache__" -Recurse -Force }
+          Get-ChildItem -Path "app" -Filter "__pycache__" -Recurse -Force | Remove-Item -Recurse -Force
+          Get-ChildItem -Path "app" -Filter "*.pyc" -Recurse -Force | Remove-Item -Force
+          echo "All caches cleaned"
+          
           echo "Starting PyInstaller build..."
           
           # Run PyInstaller directly - GitHub Actions has its own timeout mechanism
