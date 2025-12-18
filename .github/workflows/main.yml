@@ -557,6 +557,33 @@ jobs:
           echo "✅ Deno ready for bundling"
         shell: powershell
 
+      - name: Clean ALL Python and PyInstaller caches
+        run: |
+          echo "🧹 PURGE TOTALE: Nettoyage de TOUS les caches Python et PyInstaller..."
+          
+          # 1. Nettoyer les caches PyInstaller
+          echo "Cleaning PyInstaller build artifacts..."
+          Remove-Item -Path "build", "dist", "*.spec" -Recurse -Force -ErrorAction SilentlyContinue
+          
+          # 2. Nettoyer TOUS les __pycache__ et .pyc dans le projet
+          echo "Cleaning Python bytecode files..."
+          Get-ChildItem -Path "." -Recurse -Include "__pycache__", "*.pyc", "*.pyo" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          
+          # 3. Nettoyer le cache pip local
+          echo "Cleaning pip cache..."
+          python -m pip cache purge
+          
+          # 4. Nettoyer le cache de compilation Python
+          echo "Cleaning Python compilation cache..."
+          Remove-Item -Path "$env:LOCALAPPDATA\pip\Cache" -Recurse -Force -ErrorAction SilentlyContinue
+          
+          # 5. Forcer la recompilation de TOUS les modules Python
+          echo "Setting PYTHONDONTWRITEBYTECODE to prevent .pyc generation during install..."
+          echo "PYTHONDONTWRITEBYTECODE=1" >> $env:GITHUB_ENV
+          
+          echo "✅ Purge complète terminée - Build sera 100% frais"
+        shell: powershell
+
       - name: Install Python dependencies
         run: |
           echo "Installing Python dependencies..."
@@ -571,6 +598,26 @@ jobs:
           echo "Installing Node.js dependencies..."
           yarn install --frozen-lockfile
           echo "Node.js dependencies installed"
+
+      - name: Verify source code before build
+        run: |
+          echo "🔍 VERIFICATION: Checking video_processing.py line 1549..."
+          $line1549 = (Get-Content "app\video_processing.py")[1548]
+          echo "Line 1549: $line1549"
+          
+          if ($line1549 -match "format.*best") {
+            echo "❌ ERROR: Old code detected! Line 1549 still has 'format': 'best'"
+            echo "This should have been removed in commit 8b10e41c"
+            exit 1
+          } else {
+            echo "✅ OK: Line 1549 does NOT contain 'format': 'best'"
+          }
+          
+          # Verify the fix is present
+          $context = Get-Content "app\video_processing.py" | Select-Object -Skip 1544 -First 10
+          echo "Context around line 1549:"
+          $context | ForEach-Object { echo $_ }
+        shell: powershell
 
       - name: Build Application with PyInstaller
         run: |
