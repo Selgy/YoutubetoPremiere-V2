@@ -1032,6 +1032,9 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             title_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
             title_ydl_opts['quiet'] = True
             title_ydl_opts['skip_download'] = True
+            # CRITICAL: Remove any format specification for info extraction
+            if 'format' in title_ydl_opts:
+                del title_ydl_opts['format']
             
             # Add browser cookies if that's what we're using
             if browser_cookies:
@@ -1182,8 +1185,12 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         # Note: We need to allow yt-dlp to capture progress information
         # so we can't completely redirect stdout/stderr on Windows.
         # Instead, we'll use a safer approach that preserves progress hooks
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
+        clip_download_success = False
+        clip_last_error = None
+        
+        # Try download with our format string first
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 current_download['ydl'] = ydl
                 logging.info('[DOWNLOAD] Set ydl object in current_download structure for clip download')
                 
@@ -1210,62 +1217,112 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                 socketio.emit('percentage', {'percentage': '0%'})
                 
                 ydl.download([video_url])
+                clip_download_success = True
                 
                 # Check if the download was canceled
                 if is_cancelled[0]:
                     if os.path.exists(video_file_path):
                         os.remove(video_file_path)
                     return {"error": "Download cancelled by user"}
+        
+        except Exception as clip_format_error:
+            # Check if this is a format availability error
+            if "Requested format is not available" in str(clip_format_error) or "No video formats found" in str(clip_format_error):
+                logging.warning(f"Primary format selection failed for clip: {str(clip_format_error)}")
+                logging.info("Retrying clip download with simpler 'best' format fallback...")
+                clip_last_error = clip_format_error
+                
+                # Try again with simple 'best' format
+                try:
+                    # Update options with simpler format
+                    ydl_opts['format'] = 'best'
+                    logging.info("Attempting clip download with format: best")
+                    
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl_fallback:
+                        current_download['ydl'] = ydl_fallback
                         
-            except Exception as e:
-                error_message = f"Error downloading clip: {str(e)}"
+                        # Check for cancellation before retry
+                        if is_cancelled[0]:
+                            logging.info("Clip download cancelled before fallback")
+                            return {"error": "Download cancelled by user"}
+                        
+                        ydl_fallback.download([video_url])
+                        clip_download_success = True
+                        logging.info("Fallback clip download with 'best' format succeeded")
+                        
+                        # Check if the download was canceled
+                        if is_cancelled[0]:
+                            if os.path.exists(video_file_path):
+                                os.remove(video_file_path)
+                            return {"error": "Download cancelled by user"}
                 
-                # Check if this is a cancellation exception
-                if 'cancelled' in str(e).lower():
-                    logging.info("Clip download cancelled by user")
-                    # Clean up all partial files created by yt-dlp for clips
-                    cleanup_partial_video_files(video_file_path)
-                    logging.info('[CANCEL] Clip download successfully cancelled - cleanup completed')
-                    return {"error": "Download cancelled by user"}
-                
-                # Log detailed context for debugging
-                log_download_context(e, {
-                    'function': 'download_and_process_clip',
-                    'video_url': video_url,
-                    'resolution': resolution,
-                    'clip_start': clip_start,
-                    'clip_end': clip_end,
-                    'video_file_path': video_file_path,
-                    'ffmpeg_path': ffmpeg_path
-                })
-                
-                logging.error(error_message)
-                logging.error(f"Exception type: {type(e).__name__}")
-                
-                # Check for Windows-specific stdout/stderr issues
-                if "[Errno 22]" in str(e) or "Invalid argument" in str(e) or "BrokenPipeError" in str(type(e)):
-                    error_message = "Clip download failed due to Windows output stream issue. This has been fixed in the latest version. Please try again."
-                    logging.error("Windows stdout/stderr pipe error detected during clip download - fix has been applied")
-                # Check if error is related to ffmpeg
-                elif 'ffmpeg' in str(e).lower() or 'executable' in str(e).lower():
-                    logging.error(f"FFmpeg-related error detected. Current ffmpeg path: {ffmpeg_path}")
-                    # Suggest potential solutions
-                    solutions = "Try restarting the application or using a different clip download approach."
-                    error_message += f" This appears to be related to ffmpeg. {solutions}"
-                
-                socketio.emit('download-failed', {'message': error_message})
-                return {"error": error_message}
-            finally:
-                current_download['ydl'] = None
-                current_download['cancel_callback'] = None
-                
-                # Clean up the cookies file after download (Windows only)
-                if sys.platform == 'win32' and cookies_file and os.path.exists(cookies_file):
-                    try:
-                        os.remove(cookies_file)
-                        logging.info(f"[Windows] Cleaned up temporary cookies file: {cookies_file}")
-                    except Exception as e:
-                        logging.debug(f"Could not remove cookies file: {e}")
+                except Exception as clip_fallback_error:
+                    logging.error(f"Fallback 'best' format also failed for clip: {str(clip_fallback_error)}")
+                    clip_last_error = clip_fallback_error
+                    # Continue to standard error handling below
+            else:
+                # Not a format error, set as last error for standard handling
+                clip_last_error = clip_format_error
+        
+        # Handle errors from download attempts
+        if not clip_download_success and clip_last_error:
+            e = clip_last_error
+            error_message = f"Error downloading clip: {str(e)}"
+        # Handle errors from download attempts
+        if not clip_download_success and clip_last_error:
+            e = clip_last_error
+            error_message = f"Error downloading clip: {str(e)}"
+            
+            # Check if this is a cancellation exception
+            if 'cancelled' in str(e).lower():
+                logging.info("Clip download cancelled by user")
+                # Clean up all partial files created by yt-dlp for clips
+                cleanup_partial_video_files(video_file_path)
+                logging.info('[CANCEL] Clip download successfully cancelled - cleanup completed')
+                return {"error": "Download cancelled by user"}
+            
+            # Log detailed context for debugging
+            log_download_context(e, {
+                'function': 'download_and_process_clip',
+                'video_url': video_url,
+                'resolution': resolution,
+                'clip_start': clip_start,
+                'clip_end': clip_end,
+                'video_file_path': video_file_path,
+                'ffmpeg_path': ffmpeg_path
+            })
+            
+            logging.error(error_message)
+            logging.error(f"Exception type: {type(e).__name__}")
+            
+            # Check for Windows-specific stdout/stderr issues
+            if "[Errno 22]" in str(e) or "Invalid argument" in str(e) or "BrokenPipeError" in str(type(e)):
+                error_message = "Clip download failed due to Windows output stream issue. This has been fixed in the latest version. Please try again."
+                logging.error("Windows stdout/stderr pipe error detected during clip download - fix has been applied")
+            # Check if error is related to ffmpeg
+            elif 'ffmpeg' in str(e).lower() or 'executable' in str(e).lower():
+                logging.error(f"FFmpeg-related error detected. Current ffmpeg path: {ffmpeg_path}")
+                # Suggest potential solutions
+                solutions = "Try restarting the application or using a different clip download approach."
+                error_message += f" This appears to be related to ffmpeg. {solutions}"
+            
+            socketio.emit('download-failed', {'message': error_message})
+            return {"error": error_message}
+        
+        # Cleanup after successful or failed download
+        try:
+            current_download['ydl'] = None
+            current_download['cancel_callback'] = None
+            
+            # Clean up the cookies file after download (Windows only)
+            if sys.platform == 'win32' and cookies_file and os.path.exists(cookies_file):
+                try:
+                    os.remove(cookies_file)
+                    logging.info(f"[Windows] Cleaned up temporary cookies file: {cookies_file}")
+                except Exception as e:
+                    logging.debug(f"Could not remove cookies file: {e}")
+        except Exception as cleanup_error:
+            logging.debug(f"Error during cleanup: {cleanup_error}")
 
         # Add metadata to the video file if it exists
         if os.path.exists(video_file_path):
@@ -1534,8 +1591,10 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         # For info extraction, use simple 'best' format to avoid complex format validation
         initial_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
         initial_ydl_opts['skip_download'] = True  # Only extract metadata, don't download yet
-        # Don't specify format for info extraction - let yt-dlp use default
+        # CRITICAL: Remove any format specification for info extraction
         # This avoids format validation errors in yt-dlp 2025.12.08+
+        if 'format' in initial_ydl_opts:
+            del initial_ydl_opts['format']
         
         # Add browser cookies if available (fallback when no cookies file)
         if browser_cookies:
@@ -1543,12 +1602,14 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             logging.info(f"Using cookies from browser for info extraction: {browser_cookies[0]}")
         
         # Extract video info first with authentication
-        # Use simple 'best' format to avoid complex format validation during info extraction
+        # No format specified - yt-dlp will just extract metadata without format validation
+        logging.info("Extracting video information without format validation...")
         try:
             with yt_dlp.YoutubeDL(initial_ydl_opts) as ydl:
                 info = ydl.extract_info(video_url, download=False)
                 if not info:
                     raise Exception("Could not extract video information")
+                logging.info("Successfully extracted video information")
         except Exception as info_error:
             # Check for cookie-related errors and retry without cookies
             if "invalid Netscape format cookies file" in str(info_error) or "CookieLoadError" in str(info_error) or "failed to load cookies" in str(info_error):
@@ -1557,8 +1618,9 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     # Retry info extraction without cookies but with comprehensive headers
                     fallback_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
                     fallback_ydl_opts['skip_download'] = True  # Only extract metadata, don't download yet
-                    # Don't specify format for info extraction - let yt-dlp use default
-                    # This avoids format validation errors in yt-dlp 2025.12.08+
+                    # CRITICAL: Remove any format specification for info extraction
+                    if 'format' in fallback_ydl_opts:
+                        del fallback_ydl_opts['format']
                     with yt_dlp.YoutubeDL(fallback_ydl_opts) as ydl_fallback:
                         info = ydl_fallback.extract_info(video_url, download=False)
                         if not info:
@@ -1639,6 +1701,10 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         # Note: We need to allow yt-dlp to capture progress information
         # so we can't completely redirect stdout/stderr on Windows.
         # Instead, we'll use a safer approach that preserves progress hooks
+        download_success = False
+        last_error = None
+        
+        # Try download with our format string first
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 current_download['ydl'] = ydl
@@ -1653,21 +1719,57 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 # Download with the format specified in ydl_opts
                 # DON'T use process_ie_result with old info - that would ignore the format
                 # Instead, download directly from URL which will apply the format from ydl_opts
-                logging.info(f"Starting download with format: {ydl_opts.get('format', 'default')}")
+                logging.info(f"Starting download with format: {ydl_opts.get('format', 'default')[:200]}...")
                 ydl.download([video_url])
+                download_success = True
+        except Exception as format_error:
+            # Check if this is a format availability error
+            if "Requested format is not available" in str(format_error) or "No video formats found" in str(format_error):
+                logging.warning(f"Primary format selection failed: {str(format_error)}")
+                logging.info("Retrying with simpler 'best' format fallback...")
+                last_error = format_error
                 
-                # Check for cancellation after download
-                if is_cancelled[0]:
-                    logging.info("Download cancelled after completion")
-                    # Remove the downloaded file if it exists
-                    if os.path.exists(output_path):
-                        try:
-                            os.remove(output_path)
-                            logging.info(f"Removed cancelled download file: {output_path}")
-                        except Exception as e:
-                            logging.error(f"Could not remove cancelled download file: {e}")
-                    logging.info('[CANCEL] Video download successfully cancelled after download - cleanup completed')
-                    return None
+                # Try again with simple 'best' format
+                try:
+                    # Update options with simpler format
+                    ydl_opts['format'] = 'best'
+                    logging.info("Attempting download with format: best")
+                    
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl_fallback:
+                        current_download['ydl'] = ydl_fallback
+                        
+                        # Check for cancellation before retry
+                        if is_cancelled[0]:
+                            logging.info("Download cancelled before fallback")
+                            return None
+                        
+                        ydl_fallback.download([video_url])
+                        download_success = True
+                        logging.info("Fallback download with 'best' format succeeded")
+                except Exception as fallback_error:
+                    logging.error(f"Fallback 'best' format also failed: {str(fallback_error)}")
+                    last_error = fallback_error
+                    raise fallback_error
+            else:
+                # Not a format error, re-raise
+                raise format_error
+        
+        if not download_success and last_error:
+            raise last_error
+        
+        # Check for cancellation after download
+        try:
+            if is_cancelled[0]:
+                logging.info("Download cancelled after completion")
+                # Remove the downloaded file if it exists
+                if os.path.exists(output_path):
+                    try:
+                        os.remove(output_path)
+                        logging.info(f"Removed cancelled download file: {output_path}")
+                    except Exception as e:
+                        logging.error(f"Could not remove cancelled download file: {e}")
+                logging.info('[CANCEL] Video download successfully cancelled after download - cleanup completed')
+                return None
                     
         except Exception as e:
             error_message = f"Error during video download: {str(e)}"
