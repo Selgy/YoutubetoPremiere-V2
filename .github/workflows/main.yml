@@ -601,16 +601,16 @@ jobs:
 
       - name: Verify source code before build
         run: |
-          echo "🔍 VERIFICATION: Checking video_processing.py line 1549..."
+          echo "Verification: Checking video_processing.py for format fix..."
           $line1549 = (Get-Content "app\video_processing.py")[1548]
           echo "Line 1549: $line1549"
           
           if ($line1549 -match "format.*best") {
-            echo "❌ ERROR: Old code detected! Line 1549 still has 'format': 'best'"
-            echo "This should have been removed in commit 8b10e41c"
+            echo "ERROR: Old code detected! Line 1549 still has format: best"
+            echo "This should have been removed in recent commits"
             exit 1
           } else {
-            echo "✅ OK: Line 1549 does NOT contain 'format': 'best'"
+            echo "OK: Line 1549 does NOT contain format: best"
           }
           
           # Verify the fix is present
