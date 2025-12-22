@@ -1541,6 +1541,33 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             if not cookies_file:
                 browser_cookies = try_extract_cookies_from_browser()
         
+        # Clean the video URL to remove playlist parameters that can trigger format validation
+        # YouTube URLs with &list= parameters can cause yt-dlp to validate formats even with noplaylist=True
+        from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+        
+        parsed_url = urlparse(video_url)
+        if parsed_url.query:
+            params = parse_qs(parsed_url.query)
+            # Keep only the 'v' parameter (video ID) and remove playlist-related parameters
+            cleaned_params = {}
+            if 'v' in params:
+                cleaned_params['v'] = params['v']
+            
+            # Rebuild URL with cleaned parameters
+            if cleaned_params:
+                cleaned_query = urlencode(cleaned_params, doseq=True)
+                video_url_cleaned = urlunparse((
+                    parsed_url.scheme,
+                    parsed_url.netloc,
+                    parsed_url.path,
+                    parsed_url.params,
+                    cleaned_query,
+                    parsed_url.fragment
+                ))
+                if video_url_cleaned != video_url:
+                    logging.info(f"Cleaned URL from {video_url} to {video_url_cleaned}")
+                    video_url = video_url_cleaned
+        
         # Configure initial yt-dlp options with robust settings including auth
         # For info extraction, use simple 'best' format to avoid complex format validation
         initial_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
