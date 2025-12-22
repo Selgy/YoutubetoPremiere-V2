@@ -1587,11 +1587,14 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         logging.info("Extracting video information (no format validation yet)...")
         try:
             with yt_dlp.YoutubeDL(initial_ydl_opts) as ydl:
-                # Extract info without format specification to avoid premature validation
-                # We'll specify the format later during actual download
-                info = ydl.extract_info(video_url, download=False)
+                # CRITICAL FIX: Use process=False to completely skip format validation during info extraction
+                # This prevents yt-dlp from applying its default "best" format selector prematurely
+                info = ydl.extract_info(video_url, download=False, process=False)
                 if not info:
                     raise Exception("Could not extract video information")
+                
+                # Now manually process the info to get the full format list WITHOUT format validation
+                info = ydl.process_ie_result(info, download=False)
                 logging.info("Successfully extracted video information and available formats")
         except Exception as info_error:
             # Check for cookie-related errors and retry without cookies
@@ -1604,9 +1607,12 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     # Do NOT set format during info extraction - let yt-dlp get all available formats first
                     
                     with yt_dlp.YoutubeDL(fallback_ydl_opts) as ydl_fallback:
-                        info = ydl_fallback.extract_info(video_url, download=False)
+                        # Use process=False to skip format validation
+                        info = ydl_fallback.extract_info(video_url, download=False, process=False)
                         if not info:
                             raise Exception("Could not extract video information")
+                        # Manually process to get full format list
+                        info = ydl_fallback.process_ie_result(info, download=False)
                         logging.info("Successfully extracted video info without cookies")
                 except Exception as fallback_info_error:
                     logging.error(f"Fallback info extraction also failed: {str(fallback_info_error)}")
