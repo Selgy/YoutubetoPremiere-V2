@@ -1188,10 +1188,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         # Note: We need to allow yt-dlp to capture progress information
         # so we can't completely redirect stdout/stderr on Windows.
         # Instead, we'll use a safer approach that preserves progress hooks
-        clip_download_success = False
-        clip_last_error = None
-        
-        # Try download with our format string first
+        # Download with yt-dlp (AVC1 format only, no fallback)
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 current_download['ydl'] = ydl
@@ -1207,7 +1204,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                     socketio.emit('download-failed', {'message': f"FFmpeg executable not found at: {ffmpeg_path}"})
                     return {"error": f"FFmpeg executable not found at: {ffmpeg_path}"}
                 
-                logging.info(f"Starting clip download for {video_url} using ffmpeg at {ffmpeg_path}")
+                logging.info(f"Starting clip download for {video_url} using AVC1 format and ffmpeg at {ffmpeg_path}")
                 
                 # Emit initial progress for clip
                 progress_data = {
@@ -1220,7 +1217,6 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                 socketio.emit('percentage', {'percentage': '0%'})
                 
                 ydl.download([video_url])
-                clip_download_success = True
                 
                 # Check if the download was canceled
                 if is_cancelled[0]:
@@ -1228,52 +1224,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                         os.remove(video_file_path)
                     return {"error": "Download cancelled by user"}
         
-        except Exception as clip_format_error:
-            # Check if this is a format availability error
-            if "Requested format is not available" in str(clip_format_error) or "No video formats found" in str(clip_format_error):
-                logging.warning(f"Primary format selection failed for clip: {str(clip_format_error)}")
-                logging.info("Retrying clip download with simpler 'best' format fallback...")
-                clip_last_error = clip_format_error
-                
-                # Try again with simple 'best' format
-                try:
-                    # Update options with simpler format
-                    ydl_opts['format'] = 'best'
-                    logging.info("Attempting clip download with format: best")
-                    
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl_fallback:
-                        current_download['ydl'] = ydl_fallback
-                        
-                        # Check for cancellation before retry
-                        if is_cancelled[0]:
-                            logging.info("Clip download cancelled before fallback")
-                            return {"error": "Download cancelled by user"}
-                        
-                        ydl_fallback.download([video_url])
-                        clip_download_success = True
-                        logging.info("Fallback clip download with 'best' format succeeded")
-                        
-                        # Check if the download was canceled
-                        if is_cancelled[0]:
-                            if os.path.exists(video_file_path):
-                                os.remove(video_file_path)
-                            return {"error": "Download cancelled by user"}
-                
-                except Exception as clip_fallback_error:
-                    logging.error(f"Fallback 'best' format also failed for clip: {str(clip_fallback_error)}")
-                    clip_last_error = clip_fallback_error
-                    # Continue to standard error handling below
-            else:
-                # Not a format error, set as last error for standard handling
-                clip_last_error = clip_format_error
-        
-        # Handle errors from download attempts
-        if not clip_download_success and clip_last_error:
-            e = clip_last_error
-            error_message = f"Error downloading clip: {str(e)}"
-        # Handle errors from download attempts
-        if not clip_download_success and clip_last_error:
-            e = clip_last_error
+        except Exception as e:
             error_message = f"Error downloading clip: {str(e)}"
             
             # Check if this is a cancellation exception
@@ -1312,7 +1263,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             socketio.emit('download-failed', {'message': error_message})
             return {"error": error_message}
         
-        # Cleanup after successful or failed download
+        # Cleanup after download
         try:
             current_download['ydl'] = None
             current_download['cancel_callback'] = None
@@ -1326,7 +1277,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                     logging.debug(f"Could not remove cookies file: {e}")
         except Exception as cleanup_error:
             logging.debug(f"Error during cleanup: {cleanup_error}")
-
+        
         # Add metadata to the video file if it exists
         if os.path.exists(video_file_path):
             logging.info(f"Clip downloaded successfully: {video_file_path}")
@@ -1725,10 +1676,6 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         # Note: We need to allow yt-dlp to capture progress information
         # so we can't completely redirect stdout/stderr on Windows.
         # Instead, we'll use a safer approach that preserves progress hooks
-        download_success = False
-        last_error = None
-        
-        # Try download with our format string first
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 current_download['ydl'] = ydl
@@ -1740,46 +1687,15 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     logging.info('[CANCEL] Video download successfully cancelled before start')
                     return None
                 
-                # Download with the format specified in ydl_opts
-                # DON'T use process_ie_result with old info - that would ignore the format
-                # Instead, download directly from URL which will apply the format from ydl_opts
-                logging.info(f"Starting download with format: {ydl_opts.get('format', 'default')[:200]}...")
+                # Download with AVC1 format specified in ydl_opts (no fallback)
+                # This ensures maximum Premiere Pro compatibility
+                logging.info(f"Starting download with AVC1-prioritized format: {ydl_opts.get('format', 'default')[:200]}...")
                 ydl.download([video_url])
-                download_success = True
-        except Exception as format_error:
-            # Check if this is a format availability error
-            if "Requested format is not available" in str(format_error) or "No video formats found" in str(format_error):
-                logging.warning(f"Primary format selection failed: {str(format_error)}")
-                logging.info("Retrying with simpler 'best' format fallback...")
-                last_error = format_error
-                
-                # Try again with simple 'best' format
-                try:
-                    # Update options with simpler format
-                    ydl_opts['format'] = 'best'
-                    logging.info("Attempting download with format: best")
-                    
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl_fallback:
-                        current_download['ydl'] = ydl_fallback
-                        
-                        # Check for cancellation before retry
-                        if is_cancelled[0]:
-                            logging.info("Download cancelled before fallback")
-                            return None
-                        
-                        ydl_fallback.download([video_url])
-                        download_success = True
-                        logging.info("Fallback download with 'best' format succeeded")
-                except Exception as fallback_error:
-                    logging.error(f"Fallback 'best' format also failed: {str(fallback_error)}")
-                    last_error = fallback_error
-                    raise fallback_error
-            else:
-                # Not a format error, re-raise
-                raise format_error
-        
-        if not download_success and last_error:
-            raise last_error
+        except Exception as e:
+            error_message = f"Error during video download: {str(e)}"
+            logging.error(error_message)
+            socketio.emit('download-failed', {'message': error_message})
+            raise e
         
         # Check for cancellation after download
         try:
