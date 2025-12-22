@@ -305,6 +305,30 @@ jobs:
           echo "Installing NSIS..."
           choco install nsis -y --force
           echo "NSIS installation completed"
+          
+          # Add NSIS to PATH
+          echo "Adding NSIS to PATH..."
+          $nsisPath = "C:\Program Files (x86)\NSIS"
+          echo "NSIS_PATH=$nsisPath" >> $env:GITHUB_ENV
+          echo "$nsisPath" >> $env:GITHUB_PATH
+          
+          # Verify NSIS installation
+          echo "Verifying NSIS installation..."
+          & "$nsisPath\makensis.exe" /VERSION
+        shell: powershell
+
+      - name: Setup NSIS PATH (for cached installation)
+        if: steps.cache-nsis.outputs.cache-hit == 'true'
+        run: |
+          echo "Setting up NSIS PATH for cached installation..."
+          $nsisPath = "C:\Program Files (x86)\NSIS"
+          echo "NSIS_PATH=$nsisPath" >> $env:GITHUB_ENV
+          echo "$nsisPath" >> $env:GITHUB_PATH
+          
+          # Verify NSIS installation
+          echo "Verifying cached NSIS installation..."
+          & "$nsisPath\makensis.exe" /VERSION
+        shell: powershell
 
       - name: Install NSIS nsProcess plugin
         run: |
