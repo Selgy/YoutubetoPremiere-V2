@@ -144,43 +144,9 @@ jobs:
       - name: Build Application with PyInstaller
         run: |
           pip install --upgrade pyinstaller
-          pyinstaller --onedir --clean \
-          --hidden-import=engineio.async_drivers.threading \
-          --hidden-import=engineio.async_drivers \
-          --hidden-import=websocket \
-          --hidden-import=websockets \
-          --hidden-import=wsproto \
-          --hidden-import=pygame \
-          --hidden-import=PIL \
-          --hidden-import=flask \
-          --hidden-import=flask_cors \
-          --hidden-import=flask_socketio \
-          --hidden-import=yt_dlp \
-          --hidden-import=pymiere \
-          --hidden-import=psutil \
-          --hidden-import=tkinter \
-          --hidden-import=video_processing \
-          --hidden-import=utils \
-          --hidden-import=routes \
-          --collect-all=yt_dlp \
-          --collect-all=flask \
-          --collect-all=flask_socketio \
-          --collect-all=flask_cors \
-          --collect-all=werkzeug \
-          --collect-all=psutil \
-          --collect-all=requests \
-          --collect-all=tqdm \
-          --collect-all=pygame \
-          --collect-all=curl_cffi \
-          --collect-all=python_dotenv \
-          --collect-all=eventlet \
-          --collect-all=gevent_websocket \
-          --collect-all=simple_websocket \
-          --add-data "app/sounds:sounds" \
-          --add-data "app/*.py:." \
-          app/YoutubetoPremiere.py
+          node tools/build-python.js
           
-          # Copy ffmpeg and deno to _internal directory
+          # Copy ffmpeg and deno to _internal directory (if not already done by build script)
           echo "Copying ffmpeg and deno to _internal directory..."
           if [ -f "ffmpeg" ]; then
             cp ffmpeg ./dist/YoutubetoPremiere/_internal/ffmpeg
@@ -637,38 +603,16 @@ jobs:
           Get-ChildItem -Path "app" -Filter "*.pyc" -Recurse -Force | Remove-Item -Force
           echo "All caches cleaned"
           
-          echo "Starting PyInstaller build..."
+          echo "Starting Python build using Node.js script..."
           
-          # Run PyInstaller directly - GitHub Actions has its own timeout mechanism
+          # Use the same build script as local builds
           $startTime = Get-Date
-          pyinstaller --onedir --clean --console --noupx `
-            --exclude-module=PIL --exclude-module=pymiere `
-            --hidden-import=engineio.async_drivers.threading `
-            --hidden-import=flask --hidden-import=flask_cors --hidden-import=flask_socketio `
-            --hidden-import=yt_dlp --hidden-import=psutil `
-            --hidden-import=video_processing --hidden-import=utils --hidden-import=routes `
-            --collect-all=yt_dlp `
-            --collect-all=flask `
-            --collect-all=flask_socketio `
-            --collect-all=flask_cors `
-            --collect-all=werkzeug `
-            --collect-all=psutil `
-            --collect-all=requests `
-            --collect-all=tqdm `
-            --collect-all=pygame `
-            --collect-all=curl_cffi `
-            --collect-all=python_dotenv `
-            --collect-all=eventlet `
-            --collect-all=gevent_websocket `
-            --collect-all=simple_websocket `
-            --add-data "app/sounds;sounds" `
-            --add-data "app/*.py;." `
-            app/YoutubetoPremiere.py
+          node tools/build-python.js
           
           $endTime = Get-Date
           $duration = ($endTime - $startTime).TotalSeconds
           
-          echo "PyInstaller completed in $([math]::Round($duration, 1)) seconds"
+          echo "Build completed in $([math]::Round($duration, 1)) seconds"
           
           # Verify build output
           if (Test-Path "dist\YoutubetoPremiere") {
@@ -685,7 +629,7 @@ jobs:
               echo "❌ WARNING: Sounds directory not found in build"
             }
             
-            # Copy ffmpeg.exe and deno.exe to _internal directory
+            # Copy ffmpeg.exe and deno.exe to _internal directory (if not already done by build script)
             echo "Copying ffmpeg.exe and deno.exe to _internal directory..."
             if (Test-Path "ffmpeg.exe") {
               Copy-Item "ffmpeg.exe" "dist\YoutubetoPremiere\_internal\ffmpeg.exe" -Force
