@@ -1573,42 +1573,27 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         initial_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
         initial_ydl_opts['skip_download'] = True  # Only extract metadata, don't download yet
         
-        # CRITICAL: Remove ANY options that could trigger format validation
-        # This avoids format validation errors in yt-dlp 2025.12.08+
-        format_related_keys = ['format', 'format_sort', 'format_sort_force']
-        removed_keys = []
-        for key in format_related_keys:
-            if key in initial_ydl_opts:
-                removed_keys.append(f"{key}={initial_ydl_opts[key]}")
-                del initial_ydl_opts[key]
-        
-        if removed_keys:
-            logging.info(f"Removed format-related options from initial_ydl_opts: {', '.join(removed_keys)}")
-        else:
-            logging.info("No format-related options found in initial_ydl_opts")
-        
-        logging.info(f"Info extraction options keys: {list(initial_ydl_opts.keys())}")
-        
         # Add browser cookies if available (fallback when no cookies file)
         if browser_cookies:
             initial_ydl_opts['cookiesfrombrowser'] = browser_cookies
             logging.info(f"Using cookies from browser for info extraction: {browser_cookies[0]}")
         
         # Extract video info first with authentication
-        # No format specified - yt-dlp will just extract metadata without format validation  
-        # CRITICAL: Use process=False to skip format processing entirely in yt-dlp 2025.12.08+
-        logging.info("Extracting video information without format validation...")
+        # CRITICAL FIX for yt-dlp 2025.12.08+:
+        # We must specify a valid format string EVEN during info extraction
+        # Otherwise yt-dlp will try to validate against "best" format which may not exist
+        # Use the same AVC1-prioritized format string for consistency
+        initial_ydl_opts['format'] = format_string
+        
+        logging.info("Extracting video information with AVC1 format specification...")
         try:
             with yt_dlp.YoutubeDL(initial_ydl_opts) as ydl:
-                # Extract with process=False to get raw info without format validation
-                info = ydl.extract_info(video_url, download=False, process=False)
+                # Extract info with our specific format - this prevents the "format not available" error
+                # because yt-dlp will use our format selector that has many fallback options
+                info = ydl.extract_info(video_url, download=False)
                 if not info:
                     raise Exception("Could not extract video information")
-                # Now process the info to get full video details (but still without downloading)
-                info = ydl.process_ie_result(info, download=False)
-                if not info:
-                    raise Exception("Could not process video information")
-                logging.info("Successfully extracted video information")
+                logging.info("Successfully extracted video information with AVC1 format")
         except Exception as info_error:
             # Check for cookie-related errors and retry without cookies
             if "invalid Netscape format cookies file" in str(info_error) or "CookieLoadError" in str(info_error) or "failed to load cookies" in str(info_error):
@@ -1617,17 +1602,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     # Retry info extraction without cookies but with comprehensive headers
                     fallback_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
                     fallback_ydl_opts['skip_download'] = True  # Only extract metadata, don't download yet
-                    
-                    # CRITICAL: Remove ANY options that could trigger format validation
-                    format_related_keys = ['format', 'format_sort', 'format_sort_force']
-                    removed_keys = []
-                    for key in format_related_keys:
-                        if key in fallback_ydl_opts:
-                            removed_keys.append(f"{key}={fallback_ydl_opts[key]}")
-                            del fallback_ydl_opts[key]
-                    
-                    if removed_keys:
-                        logging.info(f"Removed format-related options from fallback_ydl_opts: {', '.join(removed_keys)}")
+                    fallback_ydl_opts['format'] = format_string  # Use same format string to avoid validation errors
                     
                     with yt_dlp.YoutubeDL(fallback_ydl_opts) as ydl_fallback:
                         info = ydl_fallback.extract_info(video_url, download=False)
