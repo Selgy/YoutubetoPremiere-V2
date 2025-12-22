@@ -928,33 +928,15 @@ jobs:
         id: tag
         run: echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create Release and Upload Assets
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.TAG_NAME }}
-          release_name: Release ${{ steps.tag.outputs.TAG_NAME }}
+          name: Release ${{ steps.tag.outputs.TAG_NAME }}
           draft: false
           prerelease: false
-
-      - name: Upload macOS PKG
-        uses: actions/upload-release-asset@v1
+          files: |
+            ./artifacts/macos/YouTubetoPremiere.pkg
+            ./artifacts/windows/YouTubetoPremiere-Setup.exe
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./artifacts/macos/YouTubetoPremiere.pkg
-          asset_name: YouTubetoPremiere-macOS.pkg
-          asset_content_type: application/octet-stream
-
-      - name: Upload Windows EXE
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./artifacts/windows/YouTubetoPremiere-Setup.exe
-          asset_name: YouTubetoPremiere-Windows.exe
-          asset_content_type: application/octet-stream 
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
