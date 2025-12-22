@@ -1033,13 +1033,11 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             title_ydl_opts['quiet'] = True
             title_ydl_opts['skip_download'] = True
             
-            # CRITICAL: Remove any format specification for info extraction
-            if 'format' in title_ydl_opts:
-                del title_ydl_opts['format']
-            
-            # CRITICAL FIX: Also disable format selection and sorting which can trigger format validation
-            title_ydl_opts['format_sort'] = []  # Disable format sorting
-            title_ydl_opts['format_sort_force'] = False  # Don't force format sorting
+            # CRITICAL: Remove ANY options that could trigger format validation
+            format_related_keys = ['format', 'format_sort', 'format_sort_force']
+            for key in format_related_keys:
+                if key in title_ydl_opts:
+                    del title_ydl_opts[key]
             
             # Add browser cookies if that's what we're using
             if browser_cookies:
@@ -1597,17 +1595,19 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         initial_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
         initial_ydl_opts['skip_download'] = True  # Only extract metadata, don't download yet
         
-        # CRITICAL: Remove any format specification for info extraction
+        # CRITICAL: Remove ANY options that could trigger format validation
         # This avoids format validation errors in yt-dlp 2025.12.08+
-        if 'format' in initial_ydl_opts:
-            logging.info(f"Removing format specification from initial_ydl_opts: {initial_ydl_opts['format']}")
-            del initial_ydl_opts['format']
-        else:
-            logging.info("No format specification found in initial_ydl_opts")
+        format_related_keys = ['format', 'format_sort', 'format_sort_force']
+        removed_keys = []
+        for key in format_related_keys:
+            if key in initial_ydl_opts:
+                removed_keys.append(f"{key}={initial_ydl_opts[key]}")
+                del initial_ydl_opts[key]
         
-        # CRITICAL FIX: Also disable format selection and sorting which can trigger format validation
-        initial_ydl_opts['format_sort'] = []  # Disable format sorting
-        initial_ydl_opts['format_sort_force'] = False  # Don't force format sorting
+        if removed_keys:
+            logging.info(f"Removed format-related options from initial_ydl_opts: {', '.join(removed_keys)}")
+        else:
+            logging.info("No format-related options found in initial_ydl_opts")
         
         logging.info(f"Info extraction options keys: {list(initial_ydl_opts.keys())}")
         
@@ -1634,14 +1634,16 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     fallback_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
                     fallback_ydl_opts['skip_download'] = True  # Only extract metadata, don't download yet
                     
-                    # CRITICAL: Remove any format specification for info extraction
-                    if 'format' in fallback_ydl_opts:
-                        logging.info(f"Removing format specification from fallback_ydl_opts: {fallback_ydl_opts['format']}")
-                        del fallback_ydl_opts['format']
+                    # CRITICAL: Remove ANY options that could trigger format validation
+                    format_related_keys = ['format', 'format_sort', 'format_sort_force']
+                    removed_keys = []
+                    for key in format_related_keys:
+                        if key in fallback_ydl_opts:
+                            removed_keys.append(f"{key}={fallback_ydl_opts[key]}")
+                            del fallback_ydl_opts[key]
                     
-                    # CRITICAL FIX: Also disable format selection and sorting which can trigger format validation
-                    fallback_ydl_opts['format_sort'] = []  # Disable format sorting
-                    fallback_ydl_opts['format_sort_force'] = False  # Don't force format sorting
+                    if removed_keys:
+                        logging.info(f"Removed format-related options from fallback_ydl_opts: {', '.join(removed_keys)}")
                     
                     with yt_dlp.YoutubeDL(fallback_ydl_opts) as ydl_fallback:
                         info = ydl_fallback.extract_info(video_url, download=False)
