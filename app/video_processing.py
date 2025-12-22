@@ -1061,10 +1061,15 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             logging.info("Using User-Agent from extension for info extraction")
         
         # Extract video info first with authentication
+        # CRITICAL: Use process=False to prevent format validation during info extraction
+        # This prevents yt-dlp from trying to validate format availability prematurely
         with yt_dlp.YoutubeDL(initial_ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=False)
+            info = ydl.extract_info(video_url, download=False, process=False)
             if not info:
                 raise Exception("Could not extract video information")
+            
+            # Process the info to get format list WITHOUT validating format selection
+            info = ydl.process_ie_result(info, download=False)
             
             # Check if any video formats are available (accept both combined and separate video/audio streams)
             all_formats = info.get('formats', [])
