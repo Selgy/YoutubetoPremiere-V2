@@ -1595,13 +1595,19 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             logging.info(f"Using cookies from browser for info extraction: {browser_cookies[0]}")
         
         # Extract video info first with authentication
-        # No format specified - yt-dlp will just extract metadata without format validation
+        # No format specified - yt-dlp will just extract metadata without format validation  
+        # CRITICAL: Use process=False to skip format processing entirely in yt-dlp 2025.12.08+
         logging.info("Extracting video information without format validation...")
         try:
             with yt_dlp.YoutubeDL(initial_ydl_opts) as ydl:
-                info = ydl.extract_info(video_url, download=False)
+                # Extract with process=False to get raw info without format validation
+                info = ydl.extract_info(video_url, download=False, process=False)
                 if not info:
                     raise Exception("Could not extract video information")
+                # Now process the info to get full video details (but still without downloading)
+                info = ydl.process_ie_result(info, download=False)
+                if not info:
+                    raise Exception("Could not process video information")
                 logging.info("Successfully extracted video information")
         except Exception as info_error:
             # Check for cookie-related errors and retry without cookies
