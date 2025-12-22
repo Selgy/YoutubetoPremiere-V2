@@ -144,7 +144,7 @@ jobs:
       - name: Build Application with PyInstaller
         run: |
           pip install --upgrade pyinstaller
-          pyinstaller --onedir --clean --debug=all \
+          pyinstaller --onedir --clean \
           --hidden-import=engineio.async_drivers.threading \
           --hidden-import=engineio.async_drivers \
           --hidden-import=websocket \
