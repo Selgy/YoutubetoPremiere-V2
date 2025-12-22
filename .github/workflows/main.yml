@@ -384,14 +384,38 @@ jobs:
         if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
         run: |
           echo "Downloading FFmpeg for Windows..."
-          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile "ffmpeg.zip"
+          
+          # Try primary source first (with timeout)
+          $downloaded = $false
+          try {
+            Write-Host "Attempting download from gyan.dev..."
+            Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile "ffmpeg.zip" -TimeoutSec 60
+            $downloaded = $true
+          } catch {
+            Write-Host "Primary source failed: $_"
+          }
+          
+          # Try backup source if primary failed
+          if (-not $downloaded) {
+            try {
+              Write-Host "Attempting download from GitHub (BtbN)..."
+              Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile "ffmpeg.zip" -TimeoutSec 60
+              $downloaded = $true
+            } catch {
+              Write-Host "Backup source failed: $_"
+              throw "Failed to download FFmpeg from all sources"
+            }
+          }
+          
+          echo "Extracting FFmpeg..."
           Expand-Archive -Path "ffmpeg.zip" -DestinationPath "ffmpeg_temp" -Force
           $ffmpegExe = Get-ChildItem -Path "ffmpeg_temp" -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1 -ExpandProperty FullName
           Copy-Item -Path $ffmpegExe -Destination "ffmpeg.exe" -Force
           Remove-Item "ffmpeg.zip" -Force
           Remove-Item "ffmpeg_temp" -Recurse -Force
-          echo "FFmpeg downloaded and cached"
+          echo "FFmpeg downloaded and cached successfully"
         shell: powershell
+        timeout-minutes: 5
 
       - name: Verify FFmpeg
         run: |
