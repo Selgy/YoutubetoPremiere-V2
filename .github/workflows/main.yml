@@ -141,6 +141,41 @@ jobs:
           echo "Deno downloaded and moved to app/"
           ./app/deno --version
 
+      - name: Pre-download EJS challenge solver scripts
+        run: |
+          echo "Pre-downloading EJS challenge solver scripts for yt-dlp..."
+          mkdir -p ~/.cache/yt-dlp/ejs
+          # Add deno to PATH temporarily for this step
+          export PATH="$HOME/.deno/bin:$PATH"
+          # Run yt-dlp once to trigger EJS script download
+          python3 -c "
+          import yt_dlp
+          import os
+          
+          # Configure yt-dlp to download EJS scripts
+          ydl_opts = {
+              'quiet': True,
+              'no_warnings': False,
+              'extract_flat': True,
+          }
+          
+          try:
+              with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                  # This will trigger EJS download if needed
+                  ydl.extract_info('https://www.youtube.com/watch?v=dQw4w9WgXcQ', download=False)
+              print('✅ EJS scripts downloaded successfully')
+          except Exception as e:
+              print(f'EJS download attempt completed: {e}')
+          "
+          # Copy EJS cache to app directory for bundling
+          if [ -d "$HOME/.cache/yt-dlp" ]; then
+            cp -r "$HOME/.cache/yt-dlp" app/yt-dlp-cache
+            echo "✅ EJS cache copied to app/yt-dlp-cache for bundling"
+            ls -la app/yt-dlp-cache/
+          else
+            echo "⚠️ No yt-dlp cache found, EJS scripts may be downloaded at runtime"
+          fi
+
       - name: Build Application with PyInstaller
         run: |
           pip install --upgrade pyinstaller
@@ -198,6 +233,17 @@ jobs:
           else
             echo "❌ ERROR: app/deno not found"
             exit 1
+          fi
+          
+          # Copy yt-dlp cache (EJS scripts) to _internal directory
+          echo "Copying yt-dlp EJS cache to _internal directory..."
+          if [ -d "app/yt-dlp-cache" ]; then
+            mkdir -p ./dist/YoutubetoPremiere/_internal/yt-dlp-cache
+            cp -r app/yt-dlp-cache/* ./dist/YoutubetoPremiere/_internal/yt-dlp-cache/
+            echo "✅ yt-dlp EJS cache copied to _internal"
+            ls -la ./dist/YoutubetoPremiere/_internal/yt-dlp-cache/
+          else
+            echo "⚠️ No yt-dlp cache found to bundle"
           fi
 
       - name: Build CEP Extension
@@ -557,6 +603,44 @@ jobs:
           echo "✅ Deno ready for bundling"
         shell: powershell
 
+      - name: Pre-download EJS challenge solver scripts
+        run: |
+          echo "Pre-downloading EJS challenge solver scripts for yt-dlp..."
+          New-Item -ItemType Directory -Path "$env:LOCALAPPDATA\yt-dlp\ejs" -Force | Out-Null
+          
+          # Run yt-dlp once to trigger EJS script download
+          python -c @"
+          import yt_dlp
+          import os
+          
+          # Configure yt-dlp to download EJS scripts
+          ydl_opts = {
+              'quiet': True,
+              'no_warnings': False,
+              'extract_flat': True,
+          }
+          
+          try:
+              with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                  # This will trigger EJS download if needed
+                  ydl.extract_info('https://www.youtube.com/watch?v=dQw4w9WgXcQ', download=False)
+              print('✅ EJS scripts downloaded successfully')
+          except Exception as e:
+              print(f'EJS download attempt completed: {e}')
+          "@
+          
+          # Copy EJS cache to app directory for bundling
+          $ytdlpCache = "$env:LOCALAPPDATA\yt-dlp"
+          if (Test-Path $ytdlpCache) {
+            New-Item -ItemType Directory -Path "app\yt-dlp-cache" -Force | Out-Null
+            Copy-Item -Path "$ytdlpCache\*" -Destination "app\yt-dlp-cache\" -Recurse -Force
+            echo "✅ EJS cache copied to app\yt-dlp-cache for bundling"
+            Get-ChildItem "app\yt-dlp-cache" -Recurse | ForEach-Object { echo "  $($_.FullName)" }
+          } else {
+            echo "⚠️ No yt-dlp cache found, EJS scripts may be downloaded at runtime"
+          }
+        shell: powershell
+
       - name: Clean ALL Python and PyInstaller caches
         run: |
           echo "🧹 PURGE TOTALE: Nettoyage de TOUS les caches Python et PyInstaller..."
@@ -701,6 +785,17 @@ jobs:
             } else {
               echo "❌ ERROR: app\deno.exe not found"
               exit 1
+            }
+            
+            # Copy yt-dlp cache (EJS scripts) to _internal directory
+            echo "Copying yt-dlp EJS cache to _internal directory..."
+            if (Test-Path "app\yt-dlp-cache") {
+              New-Item -ItemType Directory -Path "dist\YoutubetoPremiere\_internal\yt-dlp-cache" -Force | Out-Null
+              Copy-Item -Path "app\yt-dlp-cache\*" -Destination "dist\YoutubetoPremiere\_internal\yt-dlp-cache\" -Recurse -Force
+              echo "✅ yt-dlp EJS cache copied to _internal"
+              Get-ChildItem "dist\YoutubetoPremiere\_internal\yt-dlp-cache" -Recurse | Select-Object -First 5 | ForEach-Object { echo "  $($_.FullName)" }
+            } else {
+              echo "⚠️ No yt-dlp cache found to bundle"
             }
           } else {
             echo "ERROR: Build verification failed - dist\YoutubetoPremiere not found"

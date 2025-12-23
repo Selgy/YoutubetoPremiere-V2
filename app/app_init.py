@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger('YoutubetoPremiere')
 
 def setup_deno_path():
-    """Add bundled Deno to PATH if available."""
+    """Add bundled Deno to PATH and configure yt-dlp cache if available."""
     try:
         # Get the directory where the executable is located
         if getattr(sys, 'frozen', False):
@@ -28,6 +28,15 @@ def setup_deno_path():
         else:
             # Running as Python script
             app_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # Setup yt-dlp cache directory for EJS challenge solver scripts
+        ytdlp_cache_dir = os.path.join(app_dir, 'yt-dlp-cache')
+        if os.path.exists(ytdlp_cache_dir):
+            # Set XDG_CACHE_HOME so yt-dlp uses our bundled cache
+            os.environ['XDG_CACHE_HOME'] = app_dir
+            logging.info(f"[YT-DLP] Using bundled EJS cache at: {ytdlp_cache_dir}")
+        else:
+            logging.info("[YT-DLP] No bundled EJS cache found, yt-dlp will use default cache location")
         
         # Check for deno executable in multiple locations
         if platform.system() == 'Windows':
