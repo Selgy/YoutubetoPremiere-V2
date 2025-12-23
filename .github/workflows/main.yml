@@ -141,43 +141,20 @@ jobs:
           echo "Deno downloaded and moved to app/"
           ./app/deno --version
 
-      - name: Download EJS challenge solver scripts via yt-dlp
+      - name: Verify yt-dlp cache for bundling
         run: |
-          echo "Downloading EJS challenge solver scripts via yt-dlp..."
+          echo "Verifying yt-dlp cache exists for bundling..."
           
-          # Create cache directory
-          mkdir -p ~/.cache/yt-dlp
-          
-          # Add deno to PATH
-          export PATH="$HOME/.deno/bin:$PATH"
-          
-          # Run yt-dlp with a test video to trigger EJS download
-          # Use --no-download to only extract info (faster)
-          echo "Triggering EJS download with yt-dlp..."
-          python3 -m yt_dlp --no-download --print "" "https://www.youtube.com/watch?v=dQw4w9WgXcQ" 2>&1 || true
-          
-          # Check if EJS was downloaded
-          YTDLP_CACHE="$HOME/.cache/yt-dlp"
-          echo "Checking for EJS cache at: $YTDLP_CACHE"
-          
-          if [ -d "$YTDLP_CACHE" ]; then
-            echo "✅ yt-dlp cache found, copying to app directory..."
-            mkdir -p app/yt-dlp-ejs
-            cp -r "$YTDLP_CACHE"/* app/yt-dlp-ejs/ 2>/dev/null || true
+          if [ -d "app/yt-dlp-cache" ]; then
+            echo "✅ yt-dlp cache found in repository"
+            echo "Cache contents:"
+            ls -laR app/yt-dlp-cache/ | head -30
             
-            echo "EJS cache contents:"
-            ls -laR app/yt-dlp-ejs/
-            
-            # Count files
-            FILE_COUNT=$(find app/yt-dlp-ejs -type f | wc -l)
-            if [ "$FILE_COUNT" -gt 0 ]; then
-              echo "✅ Successfully captured $FILE_COUNT EJS files"
-            else
-              echo "⚠️ No files found in EJS cache (yt-dlp may not have needed them for this video)"
-            fi
+            FILE_COUNT=$(find app/yt-dlp-cache -type f | wc -l | tr -d ' ')
+            echo "Total files: $FILE_COUNT"
           else
-            echo "⚠️ No yt-dlp cache found - EJS scripts may not have been downloaded"
-            echo "This might be OK if yt-dlp didn't need them for the test video"
+            echo "❌ WARNING: No yt-dlp cache found - EJS scripts won't be bundled"
+            echo "This will cause YouTube downloads to fail in the packaged app"
           fi
 
       - name: Build Application with PyInstaller
@@ -239,15 +216,15 @@ jobs:
             exit 1
           fi
           
-          # Copy yt-dlp EJS scripts to _internal directory
-          echo "Copying yt-dlp EJS scripts to _internal directory..."
-          if [ -d "app/yt-dlp-ejs" ]; then
-            mkdir -p ./dist/YoutubetoPremiere/_internal/yt-dlp-ejs
-            cp -r app/yt-dlp-ejs/* ./dist/YoutubetoPremiere/_internal/yt-dlp-ejs/
-            echo "✅ yt-dlp EJS scripts copied to _internal"
-            ls -laR ./dist/YoutubetoPremiere/_internal/yt-dlp-ejs/
+          # Copy yt-dlp cache to _internal directory
+          echo "Copying yt-dlp cache to _internal directory..."
+          if [ -d "app/yt-dlp-cache" ]; then
+            mkdir -p ./dist/YoutubetoPremiere/_internal/yt-dlp-cache
+            cp -r app/yt-dlp-cache/* ./dist/YoutubetoPremiere/_internal/yt-dlp-cache/
+            echo "✅ yt-dlp cache copied to _internal"
+            ls -la ./dist/YoutubetoPremiere/_internal/yt-dlp-cache/
           else
-            echo "⚠️ No yt-dlp EJS directory found to bundle"
+            echo "⚠️ No yt-dlp cache directory found to bundle"
           fi
 
       - name: Build CEP Extension
@@ -643,47 +620,20 @@ jobs:
           pip install --upgrade pyinstaller
           echo "Python dependencies and PyInstaller installed"
 
-      - name: Download EJS challenge solver scripts via yt-dlp
+      - name: Verify yt-dlp cache for bundling
         run: |
-          echo "Downloading EJS challenge solver scripts via yt-dlp..."
+          echo "Verifying yt-dlp cache exists for bundling..."
           
-          # Create cache directory
-          New-Item -ItemType Directory -Path "$env:LOCALAPPDATA\yt-dlp" -Force | Out-Null
-          
-          # Add deno to PATH
-          $env:PATH = "$((Get-Location).Path)\app;$env:PATH"
-          
-          # Run yt-dlp with a test video to trigger EJS download
-          # Use --no-download to only extract info (faster)
-          echo "Triggering EJS download with yt-dlp..."
-          try {
-            python -m yt_dlp --no-download --print "" "https://www.youtube.com/watch?v=dQw4w9WgXcQ" 2>&1 | Out-Host
-          } catch {
-            echo "⚠️ yt-dlp execution completed with warning (expected): $($_.Exception.Message)"
-          }
-          
-          # Check if EJS was downloaded
-          $ytdlpCache = "$env:LOCALAPPDATA\yt-dlp"
-          echo "Checking for EJS cache at: $ytdlpCache"
-          
-          if (Test-Path $ytdlpCache) {
-            echo "✅ yt-dlp cache found, copying to app directory..."
-            New-Item -ItemType Directory -Path "app\yt-dlp-ejs" -Force | Out-Null
-            Copy-Item -Path "$ytdlpCache\*" -Destination "app\yt-dlp-ejs\" -Recurse -Force -ErrorAction SilentlyContinue
+          if (Test-Path "app\yt-dlp-cache") {
+            echo "✅ yt-dlp cache found in repository"
+            echo "Cache contents:"
+            Get-ChildItem "app\yt-dlp-cache" -Recurse | Select-Object -First 20 | ForEach-Object { echo "  $($_.FullName)" }
             
-            echo "EJS cache contents:"
-            Get-ChildItem "app\yt-dlp-ejs" -Recurse | ForEach-Object { echo "  $($_.FullName)" }
-            
-            # Count files
-            $fileCount = (Get-ChildItem "app\yt-dlp-ejs" -Recurse -File).Count
-            if ($fileCount -gt 0) {
-              echo "✅ Successfully captured $fileCount EJS files"
-            } else {
-              echo "⚠️ No files found in EJS cache (yt-dlp may not have needed them for this video)"
-            }
+            $fileCount = (Get-ChildItem "app\yt-dlp-cache" -Recurse -File).Count
+            echo "Total files: $fileCount"
           } else {
-            echo "⚠️ No yt-dlp cache found - EJS scripts may not have been downloaded"
-            echo "This might be OK if yt-dlp didn't need them for the test video"
+            echo "❌ WARNING: No yt-dlp cache found - EJS scripts won't be bundled"
+            echo "This will cause YouTube downloads to fail in the packaged app"
           }
         shell: powershell
 
@@ -797,15 +747,15 @@ jobs:
               exit 1
             }
             
-            # Copy yt-dlp EJS scripts to _internal directory
-            echo "Copying yt-dlp EJS scripts to _internal directory..."
-            if (Test-Path "app\yt-dlp-ejs") {
-              New-Item -ItemType Directory -Path "dist\YoutubetoPremiere\_internal\yt-dlp-ejs" -Force | Out-Null
-              Copy-Item -Path "app\yt-dlp-ejs\*" -Destination "dist\YoutubetoPremiere\_internal\yt-dlp-ejs\" -Recurse -Force
-              echo "✅ yt-dlp EJS scripts copied to _internal"
-              Get-ChildItem "dist\YoutubetoPremiere\_internal\yt-dlp-ejs" -Recurse | Select-Object -First 10 | ForEach-Object { echo "  $($_.FullName)" }
+            # Copy yt-dlp cache to _internal directory
+            echo "Copying yt-dlp cache to _internal directory..."
+            if (Test-Path "app\yt-dlp-cache") {
+              New-Item -ItemType Directory -Path "dist\YoutubetoPremiere\_internal\yt-dlp-cache" -Force | Out-Null
+              Copy-Item -Path "app\yt-dlp-cache\*" -Destination "dist\YoutubetoPremiere\_internal\yt-dlp-cache\" -Recurse -Force
+              echo "✅ yt-dlp cache copied to _internal"
+              Get-ChildItem "dist\YoutubetoPremiere\_internal\yt-dlp-cache" | ForEach-Object { echo "  $($_.Name)" }
             } else {
-              echo "⚠️ No yt-dlp EJS directory found to bundle"
+              echo "⚠️ No yt-dlp cache directory found to bundle"
             }
           } else {
             echo "ERROR: Build verification failed - dist\YoutubetoPremiere not found"

@@ -2556,6 +2556,13 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
         'youtube_skip_hls_manifest': False,     # Don't skip HLS manifest
         # Let yt-dlp use its default player client logic - works better with YouTube's anti-bot measures
         
+        # Enable remote components (EJS scripts) download for Deno challenge solving
+        'extractor_args': {
+            'youtube': {
+                'remote_components': ['ejs:github']  # Allow downloading EJS scripts from GitHub
+            }
+        }
+        
         # Additional options to bypass bot detection
         'source_address': '0.0.0.0',  # Bind to IPv4
         'force_generic_extractor': False,  # Use YouTube extractor
@@ -2609,27 +2616,25 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
         if deno_path:
             logging.info(f"[OK] Deno runtime found at: {deno_path}")
             
-            # Check for bundled EJS scripts
+            # Check for bundled yt-dlp cache
             if getattr(sys, 'frozen', False):
-                # Running as frozen app - look for bundled EJS scripts
-                bundle_root = os.path.dirname(sys.executable)
-                app_dir = os.path.join(bundle_root, '_internal')
-                ejs_dir = os.path.join(app_dir, 'yt-dlp-ejs')
-                
-                if os.path.exists(ejs_dir):
-                    logging.info(f"[OK] Bundled EJS scripts found at: {ejs_dir}")
-                    # Set environment variable for yt-dlp to find EJS scripts
-                    os.environ['YT_DLP_EJS_PATH'] = ejs_dir
-                    logging.info("[OK] EJS path configured for yt-dlp")
-                    
-                    # List EJS files
-                    try:
-                        ejs_files = os.listdir(ejs_dir)
-                        logging.info(f"[OK] EJS files available: {ejs_files}")
-                    except Exception as e:
-                        logging.warning(f"Could not list EJS files: {e}")
+                # Running as frozen app - check if bundled cache is configured
+                xdg_cache_home = os.environ.get('XDG_CACHE_HOME')
+                if xdg_cache_home:
+                    cache_dir = os.path.join(xdg_cache_home, 'yt-dlp-cache')
+                    if os.path.exists(cache_dir):
+                        logging.info(f"[OK] Bundled yt-dlp cache found at: {cache_dir}")
+                        # Count cached files
+                        try:
+                            cache_dirs = os.listdir(cache_dir)
+                            file_count = sum([len(files) for _, _, files in os.walk(cache_dir)])
+                            logging.info(f"[OK] Cache contains {len(cache_dirs)} directories with {file_count} total files")
+                        except Exception as e:
+                            logging.warning(f"Could not list cache: {e}")
+                    else:
+                        logging.warning(f"[WARNING] XDG_CACHE_HOME set but cache not found at: {cache_dir}")
                 else:
-                    logging.warning(f"[WARNING] No bundled EJS scripts found at: {ejs_dir}")
+                    logging.warning("[WARNING] XDG_CACHE_HOME not set - yt-dlp will use default cache location")
             
             logging.info("[OK] External JavaScript runtime enabled (EJS challenge solver configured)")
             logging.info("[OK] Using yt-dlp's default player client logic for maximum format availability")

@@ -103,40 +103,16 @@ else
     log_success "Deno standalone déjà présent"
 fi
 
-# Télécharger les scripts EJS challenge solver pour yt-dlp
-log_step "Téléchargement des scripts EJS challenge solver via yt-dlp..."
-mkdir -p ~/.cache/yt-dlp
-
-# S'assurer que Deno est dans le PATH
-export PATH="$HOME/.deno/bin:$PATH"
-
-# Exécuter yt-dlp avec une vidéo de test pour déclencher le téléchargement EJS
-# Utiliser --no-download pour extraire seulement les infos (plus rapide)
-echo "Déclenchement du téléchargement EJS avec yt-dlp..."
-python3 -m yt_dlp --no-download --print "" "https://www.youtube.com/watch?v=dQw4w9WgXcQ" 2>&1 || true
-
-# Vérifier si EJS a été téléchargé
-YTDLP_CACHE="$HOME/.cache/yt-dlp"
-echo "Vérification du cache EJS à: $YTDLP_CACHE"
-
-if [ -d "$YTDLP_CACHE" ]; then
-    echo "✅ Cache yt-dlp trouvé, copie dans le répertoire app..."
-    mkdir -p app/yt-dlp-ejs
-    cp -r "$YTDLP_CACHE"/* app/yt-dlp-ejs/ 2>/dev/null || true
-    
-    echo "Contenu du cache EJS:"
-    ls -laR app/yt-dlp-ejs/
-    
-    # Compter les fichiers
-    FILE_COUNT=$(find app/yt-dlp-ejs -type f | wc -l | tr -d ' ')
-    if [ "$FILE_COUNT" -gt 0 ]; then
-        log_success "Capture réussie de $FILE_COUNT fichiers EJS"
-    else
-        echo "⚠️ Aucun fichier trouvé dans le cache EJS (yt-dlp n'en avait peut-être pas besoin pour cette vidéo)"
-    fi
+# Vérifier le cache yt-dlp EJS pour le bundling
+log_step "Vérification du cache yt-dlp EJS pour le bundling..."
+if [ -d "app/yt-dlp-cache" ]; then
+    FILE_COUNT=$(find app/yt-dlp-cache -type f | wc -l | tr -d ' ')
+    log_success "Cache yt-dlp trouvé dans le dépôt ($FILE_COUNT fichiers)"
+    echo "Contenu du cache:"
+    ls -la app/yt-dlp-cache/
 else
-    echo "⚠️ Aucun cache yt-dlp trouvé - les scripts EJS n'ont peut-être pas été téléchargés"
-    echo "Cela peut être normal si yt-dlp n'en avait pas besoin pour la vidéo de test"
+    log_error "Aucun cache yt-dlp trouvé - copiez votre cache local avec: cp -r ~/.cache/yt-dlp app/yt-dlp-cache"
+    exit 1
 fi
 
 # 6. Télécharger FFmpeg
@@ -221,15 +197,15 @@ else
     exit 1
 fi
 
-# Copier les scripts yt-dlp EJS dans _internal
-log_step "Copie des scripts yt-dlp EJS dans _internal..."
-if [ -d "app/yt-dlp-ejs" ]; then
-    mkdir -p ./dist/YoutubetoPremiere/_internal/yt-dlp-ejs
-    cp -r app/yt-dlp-ejs/* ./dist/YoutubetoPremiere/_internal/yt-dlp-ejs/
-    log_success "Scripts yt-dlp EJS copiés dans _internal"
-    ls -laR ./dist/YoutubetoPremiere/_internal/yt-dlp-ejs/
+# Copier le cache yt-dlp dans _internal
+log_step "Copie du cache yt-dlp dans _internal..."
+if [ -d "app/yt-dlp-cache" ]; then
+    mkdir -p ./dist/YoutubetoPremiere/_internal/yt-dlp-cache
+    cp -r app/yt-dlp-cache/* ./dist/YoutubetoPremiere/_internal/yt-dlp-cache/
+    log_success "Cache yt-dlp copié dans _internal"
+    ls -la ./dist/YoutubetoPremiere/_internal/yt-dlp-cache/
 else
-    echo "⚠️ Aucun répertoire yt-dlp-ejs trouvé à bundler"
+    echo "⚠️ Aucun répertoire yt-dlp-cache trouvé à bundler"
 fi
 
 # 10. Build CEP Extension
