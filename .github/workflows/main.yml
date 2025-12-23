@@ -603,6 +603,42 @@ jobs:
           echo "✅ Deno ready for bundling"
         shell: powershell
 
+      - name: Clean ALL Python and PyInstaller caches
+        run: |
+          echo "🧹 PURGE TOTALE: Nettoyage de TOUS les caches Python et PyInstaller..."
+          
+          # 1. Nettoyer les caches PyInstaller
+          echo "Cleaning PyInstaller build artifacts..."
+          Remove-Item -Path "build", "dist", "*.spec" -Recurse -Force -ErrorAction SilentlyContinue
+          
+          # 2. Nettoyer TOUS les __pycache__ et .pyc dans le projet
+          echo "Cleaning Python bytecode files..."
+          Get-ChildItem -Path "." -Recurse -Include "__pycache__", "*.pyc", "*.pyo" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          
+          # 3. Nettoyer le cache pip local
+          echo "Cleaning pip cache..."
+          python -m pip cache purge
+          
+          # 4. Nettoyer le cache de compilation Python
+          echo "Cleaning Python compilation cache..."
+          Remove-Item -Path "$env:LOCALAPPDATA\pip\Cache" -Recurse -Force -ErrorAction SilentlyContinue
+          
+          # 5. Forcer la recompilation de TOUS les modules Python
+          echo "Setting PYTHONDONTWRITEBYTECODE to prevent .pyc generation during install..."
+          echo "PYTHONDONTWRITEBYTECODE=1" >> $env:GITHUB_ENV
+          
+          echo "✅ Purge complète terminée - Build sera 100% frais"
+        shell: powershell
+
+      - name: Install Python dependencies
+        run: |
+          echo "Installing Python dependencies..."
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt
+          pip install --upgrade yt-dlp
+          pip install --upgrade pyinstaller
+          echo "Python dependencies and PyInstaller installed"
+
       - name: Pre-download EJS challenge solver scripts
         run: |
           echo "Pre-downloading EJS challenge solver scripts for yt-dlp..."
@@ -640,42 +676,6 @@ jobs:
             echo "⚠️ No yt-dlp cache found, EJS scripts may be downloaded at runtime"
           }
         shell: powershell
-
-      - name: Clean ALL Python and PyInstaller caches
-        run: |
-          echo "🧹 PURGE TOTALE: Nettoyage de TOUS les caches Python et PyInstaller..."
-          
-          # 1. Nettoyer les caches PyInstaller
-          echo "Cleaning PyInstaller build artifacts..."
-          Remove-Item -Path "build", "dist", "*.spec" -Recurse -Force -ErrorAction SilentlyContinue
-          
-          # 2. Nettoyer TOUS les __pycache__ et .pyc dans le projet
-          echo "Cleaning Python bytecode files..."
-          Get-ChildItem -Path "." -Recurse -Include "__pycache__", "*.pyc", "*.pyo" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-          
-          # 3. Nettoyer le cache pip local
-          echo "Cleaning pip cache..."
-          python -m pip cache purge
-          
-          # 4. Nettoyer le cache de compilation Python
-          echo "Cleaning Python compilation cache..."
-          Remove-Item -Path "$env:LOCALAPPDATA\pip\Cache" -Recurse -Force -ErrorAction SilentlyContinue
-          
-          # 5. Forcer la recompilation de TOUS les modules Python
-          echo "Setting PYTHONDONTWRITEBYTECODE to prevent .pyc generation during install..."
-          echo "PYTHONDONTWRITEBYTECODE=1" >> $env:GITHUB_ENV
-          
-          echo "✅ Purge complète terminée - Build sera 100% frais"
-        shell: powershell
-
-      - name: Install Python dependencies
-        run: |
-          echo "Installing Python dependencies..."
-          python -m pip install --upgrade pip setuptools wheel
-          pip install -r requirements.txt
-          pip install --upgrade yt-dlp
-          pip install --upgrade pyinstaller
-          echo "Python dependencies and PyInstaller installed"
 
       - name: Install Node.js dependencies
         run: |
