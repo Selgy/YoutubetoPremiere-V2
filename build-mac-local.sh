@@ -104,37 +104,39 @@ else
 fi
 
 # Télécharger les scripts EJS challenge solver pour yt-dlp
-log_step "Téléchargement des scripts EJS challenge solver pour yt-dlp..."
-mkdir -p app/yt-dlp-ejs
+log_step "Téléchargement des scripts EJS challenge solver via yt-dlp..."
+mkdir -p ~/.cache/yt-dlp
 
-# Télécharger le script EJS depuis le dépôt yt-dlp
-EJS_URL="https://raw.githubusercontent.com/yt-dlp/yt-dlp-ejs/main/yt-dlp-ejs.js"
+# S'assurer que Deno est dans le PATH
+export PATH="$HOME/.deno/bin:$PATH"
 
-echo "Téléchargement du script EJS depuis: $EJS_URL"
-if curl -fsSL "$EJS_URL" -o app/yt-dlp-ejs/yt-dlp-ejs.js; then
-    log_success "Script EJS téléchargé avec succès ($(wc -c < app/yt-dlp-ejs/yt-dlp-ejs.js) octets)"
-    echo "Aperçu du contenu du script EJS:"
-    head -5 app/yt-dlp-ejs/yt-dlp-ejs.js
-else
-    echo "⚠️ Échec du téléchargement du script EJS depuis GitHub"
-    echo "Alternative: tentative via yt-dlp CLI..."
+# Exécuter yt-dlp avec une vidéo de test pour déclencher le téléchargement EJS
+# Utiliser --no-download pour extraire seulement les infos (plus rapide)
+echo "Déclenchement du téléchargement EJS avec yt-dlp..."
+python3 -m yt_dlp --no-download --print "" "https://www.youtube.com/watch?v=dQw4w9WgXcQ" 2>&1 || true
+
+# Vérifier si EJS a été téléchargé
+YTDLP_CACHE="$HOME/.cache/yt-dlp"
+echo "Vérification du cache EJS à: $YTDLP_CACHE"
+
+if [ -d "$YTDLP_CACHE" ]; then
+    echo "✅ Cache yt-dlp trouvé, copie dans le répertoire app..."
+    mkdir -p app/yt-dlp-ejs
+    cp -r "$YTDLP_CACHE"/* app/yt-dlp-ejs/ 2>/dev/null || true
     
-    # Alternative: Utiliser yt-dlp CLI pour télécharger EJS
-    export PATH="$HOME/.deno/bin:$PATH"
-    yt-dlp --print "" "https://www.youtube.com/watch?v=dQw4w9WgXcQ" 2>&1 || true
-    
-    # Vérifier si yt-dlp a créé un cache
-    if [ -d "$HOME/.cache/yt-dlp" ]; then
-        echo "✅ Cache yt-dlp trouvé, copie des fichiers EJS..."
-        cp -r "$HOME/.cache/yt-dlp"/* app/yt-dlp-ejs/ 2>/dev/null || true
-    fi
-fi
-
-echo "Contenu final du répertoire EJS:"
-if [ -d "app/yt-dlp-ejs" ]; then
+    echo "Contenu du cache EJS:"
     ls -laR app/yt-dlp-ejs/
+    
+    # Compter les fichiers
+    FILE_COUNT=$(find app/yt-dlp-ejs -type f | wc -l | tr -d ' ')
+    if [ "$FILE_COUNT" -gt 0 ]; then
+        log_success "Capture réussie de $FILE_COUNT fichiers EJS"
+    else
+        echo "⚠️ Aucun fichier trouvé dans le cache EJS (yt-dlp n'en avait peut-être pas besoin pour cette vidéo)"
+    fi
 else
-    echo "⚠️ Aucun répertoire EJS créé"
+    echo "⚠️ Aucun cache yt-dlp trouvé - les scripts EJS n'ont peut-être pas été téléchargés"
+    echo "Cela peut être normal si yt-dlp n'en avait pas besoin pour la vidéo de test"
 fi
 
 # 6. Télécharger FFmpeg

@@ -141,42 +141,43 @@ jobs:
           echo "Deno downloaded and moved to app/"
           ./app/deno --version
 
-      - name: Download EJS challenge solver scripts manually
+      - name: Download EJS challenge solver scripts via yt-dlp
         run: |
-          echo "Downloading EJS challenge solver scripts manually from GitHub..."
+          echo "Downloading EJS challenge solver scripts via yt-dlp..."
           
-          # Create the EJS directory structure
-          mkdir -p app/yt-dlp-ejs
+          # Create cache directory
+          mkdir -p ~/.cache/yt-dlp
           
-          # Download the EJS challenge solver script from yt-dlp repository
-          EJS_URL="https://raw.githubusercontent.com/yt-dlp/yt-dlp-ejs/main/yt-dlp-ejs.js"
+          # Add deno to PATH
+          export PATH="$HOME/.deno/bin:$PATH"
           
-          echo "Downloading EJS script from: $EJS_URL"
-          if curl -fsSL "$EJS_URL" -o app/yt-dlp-ejs/yt-dlp-ejs.js; then
-            echo "✅ EJS script downloaded successfully ($(wc -c < app/yt-dlp-ejs/yt-dlp-ejs.js) bytes)"
-            echo "EJS script content preview:"
-            head -5 app/yt-dlp-ejs/yt-dlp-ejs.js
-          else
-            echo "⚠️ Failed to download EJS script from GitHub"
-            echo "Will try alternative: using yt-dlp's built-in download mechanism"
+          # Run yt-dlp with a test video to trigger EJS download
+          # Use --no-download to only extract info (faster)
+          echo "Triggering EJS download with yt-dlp..."
+          python3 -m yt_dlp --no-download --print "" "https://www.youtube.com/watch?v=dQw4w9WgXcQ" 2>&1 || true
+          
+          # Check if EJS was downloaded
+          YTDLP_CACHE="$HOME/.cache/yt-dlp"
+          echo "Checking for EJS cache at: $YTDLP_CACHE"
+          
+          if [ -d "$YTDLP_CACHE" ]; then
+            echo "✅ yt-dlp cache found, copying to app directory..."
+            mkdir -p app/yt-dlp-ejs
+            cp -r "$YTDLP_CACHE"/* app/yt-dlp-ejs/ 2>/dev/null || true
             
-            # Alternative: Use yt-dlp CLI to download EJS
-            export PATH="$HOME/.deno/bin:$PATH"
-            echo "Attempting to download EJS via yt-dlp CLI..."
-            yt-dlp --print "" "https://www.youtube.com/watch?v=dQw4w9WgXcQ" 2>&1 || true
-            
-            # Check if yt-dlp created a cache
-            if [ -d "$HOME/.cache/yt-dlp" ]; then
-              echo "✅ yt-dlp cache found, copying EJS files..."
-              cp -r "$HOME/.cache/yt-dlp"/* app/yt-dlp-ejs/ 2>/dev/null || true
-            fi
-          fi
-          
-          echo "Final EJS directory contents:"
-          if [ -d "app/yt-dlp-ejs" ]; then
+            echo "EJS cache contents:"
             ls -laR app/yt-dlp-ejs/
+            
+            # Count files
+            FILE_COUNT=$(find app/yt-dlp-ejs -type f | wc -l)
+            if [ "$FILE_COUNT" -gt 0 ]; then
+              echo "✅ Successfully captured $FILE_COUNT EJS files"
+            else
+              echo "⚠️ No files found in EJS cache (yt-dlp may not have needed them for this video)"
+            fi
           else
-            echo "⚠️ No EJS directory created"
+            echo "⚠️ No yt-dlp cache found - EJS scripts may not have been downloaded"
+            echo "This might be OK if yt-dlp didn't need them for the test video"
           fi
 
       - name: Build Application with PyInstaller
@@ -642,50 +643,47 @@ jobs:
           pip install --upgrade pyinstaller
           echo "Python dependencies and PyInstaller installed"
 
-      - name: Download EJS challenge solver scripts manually
+      - name: Download EJS challenge solver scripts via yt-dlp
         run: |
-          echo "Downloading EJS challenge solver scripts manually from GitHub..."
+          echo "Downloading EJS challenge solver scripts via yt-dlp..."
           
-          # Create the EJS directory structure
-          New-Item -ItemType Directory -Path "app\yt-dlp-ejs" -Force | Out-Null
+          # Create cache directory
+          New-Item -ItemType Directory -Path "$env:LOCALAPPDATA\yt-dlp" -Force | Out-Null
           
-          # Download the EJS challenge solver script from yt-dlp repository
-          # This is the main file that Deno needs to execute
-          $ejsUrl = "https://raw.githubusercontent.com/yt-dlp/yt-dlp-ejs/main/yt-dlp-ejs.js"
+          # Add deno to PATH
+          $env:PATH = "$((Get-Location).Path)\app;$env:PATH"
           
-          echo "Downloading EJS script from: $ejsUrl"
+          # Run yt-dlp with a test video to trigger EJS download
+          # Use --no-download to only extract info (faster)
+          echo "Triggering EJS download with yt-dlp..."
           try {
-            Invoke-WebRequest -Uri $ejsUrl -OutFile "app\yt-dlp-ejs\yt-dlp-ejs.js" -UseBasicParsing
-            
-            if (Test-Path "app\yt-dlp-ejs\yt-dlp-ejs.js") {
-              $fileSize = (Get-Item "app\yt-dlp-ejs\yt-dlp-ejs.js").Length
-              echo "✅ EJS script downloaded successfully ($fileSize bytes)"
-              echo "EJS script content preview:"
-              Get-Content "app\yt-dlp-ejs\yt-dlp-ejs.js" -TotalCount 5
-            } else {
-              echo "❌ EJS script file not found after download"
-            }
+            python -m yt_dlp --no-download --print "" "https://www.youtube.com/watch?v=dQw4w9WgXcQ" 2>&1 | Out-Host
           } catch {
-            echo "⚠️ Failed to download EJS script: $($_.Exception.Message)"
-            echo "Will try alternative: using yt-dlp's built-in download mechanism"
-            
-            # Alternative: Use yt-dlp CLI to download EJS
-            echo "Attempting to download EJS via yt-dlp CLI..."
-            & yt-dlp --print "" "https://www.youtube.com/watch?v=dQw4w9WgXcQ" 2>&1 | Out-Null
-            
-            # Check if yt-dlp created a cache
-            $ytdlpCache = "$env:LOCALAPPDATA\yt-dlp"
-            if (Test-Path $ytdlpCache) {
-              echo "✅ yt-dlp cache found, copying EJS files..."
-              Copy-Item -Path "$ytdlpCache\*" -Destination "app\yt-dlp-ejs\" -Recurse -Force -ErrorAction SilentlyContinue
-            }
+            echo "⚠️ yt-dlp execution completed with warning (expected): $($_.Exception.Message)"
           }
           
-          echo "Final EJS directory contents:"
-          if (Test-Path "app\yt-dlp-ejs") {
+          # Check if EJS was downloaded
+          $ytdlpCache = "$env:LOCALAPPDATA\yt-dlp"
+          echo "Checking for EJS cache at: $ytdlpCache"
+          
+          if (Test-Path $ytdlpCache) {
+            echo "✅ yt-dlp cache found, copying to app directory..."
+            New-Item -ItemType Directory -Path "app\yt-dlp-ejs" -Force | Out-Null
+            Copy-Item -Path "$ytdlpCache\*" -Destination "app\yt-dlp-ejs\" -Recurse -Force -ErrorAction SilentlyContinue
+            
+            echo "EJS cache contents:"
             Get-ChildItem "app\yt-dlp-ejs" -Recurse | ForEach-Object { echo "  $($_.FullName)" }
+            
+            # Count files
+            $fileCount = (Get-ChildItem "app\yt-dlp-ejs" -Recurse -File).Count
+            if ($fileCount -gt 0) {
+              echo "✅ Successfully captured $fileCount EJS files"
+            } else {
+              echo "⚠️ No files found in EJS cache (yt-dlp may not have needed them for this video)"
+            }
           } else {
-            echo "⚠️ No EJS directory created"
+            echo "⚠️ No yt-dlp cache found - EJS scripts may not have been downloaded"
+            echo "This might be OK if yt-dlp didn't need them for the test video"
           }
         shell: powershell
 
