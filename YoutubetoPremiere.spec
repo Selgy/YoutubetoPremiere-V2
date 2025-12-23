@@ -2,10 +2,10 @@
 from PyInstaller.utils.hooks import collect_all
 
 datas = [('app/sounds', 'sounds'), ('app/*.py', '.')]
-# Add yt-dlp cache if it exists (EJS challenge solver scripts)
+# Add yt-dlp EJS scripts if they exist (EJS challenge solver scripts)
 import os
-if os.path.exists('app/yt-dlp-cache'):
-    datas.append(('app/yt-dlp-cache', 'yt-dlp-cache'))
+if os.path.exists('app/yt-dlp-ejs'):
+    datas.append(('app/yt-dlp-ejs', 'yt-dlp-ejs'))
 binaries = []
 hiddenimports = ['engineio.async_drivers.threading', 'engineio.async_drivers', 'websocket', 'websockets', 'wsproto', 'pygame', 'flask', 'flask_cors', 'flask_socketio', 'yt_dlp', 'psutil', 'tkinter', 'video_processing', 'utils', 'routes']
 tmp_ret = collect_all('yt_dlp')

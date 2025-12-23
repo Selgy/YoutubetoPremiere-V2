@@ -103,41 +103,38 @@ else
     log_success "Deno standalone déjà présent"
 fi
 
-# Pré-télécharger les scripts EJS challenge solver pour yt-dlp
-log_step "Pré-téléchargement des scripts EJS challenge solver pour yt-dlp..."
-mkdir -p ~/.cache/yt-dlp/ejs
+# Télécharger les scripts EJS challenge solver pour yt-dlp
+log_step "Téléchargement des scripts EJS challenge solver pour yt-dlp..."
+mkdir -p app/yt-dlp-ejs
 
-# S'assurer que Deno est dans le PATH
-export PATH="$HOME/.deno/bin:$PATH"
+# Télécharger le script EJS depuis le dépôt yt-dlp
+EJS_URL="https://raw.githubusercontent.com/yt-dlp/yt-dlp-ejs/main/yt-dlp-ejs.js"
 
-# Exécuter yt-dlp une fois pour déclencher le téléchargement des scripts EJS
-python3 << 'EOF'
-import yt_dlp
-import os
-
-# Configurer yt-dlp pour télécharger les scripts EJS
-ydl_opts = {
-    'quiet': True,
-    'no_warnings': False,
-    'extract_flat': True,
-}
-
-try:
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        # Cela déclenchera le téléchargement EJS si nécessaire
-        ydl.extract_info('https://www.youtube.com/watch?v=dQw4w9WgXcQ', download=False)
-    print('✅ Scripts EJS téléchargés avec succès')
-except Exception as e:
-    print(f'Tentative de téléchargement EJS terminée: {e}')
-EOF
-
-# Copier le cache EJS dans le répertoire app pour le bundler
-if [ -d "$HOME/.cache/yt-dlp" ]; then
-    cp -r "$HOME/.cache/yt-dlp" app/yt-dlp-cache
-    log_success "Cache EJS copié dans app/yt-dlp-cache pour le bundler"
-    ls -la app/yt-dlp-cache/
+echo "Téléchargement du script EJS depuis: $EJS_URL"
+if curl -fsSL "$EJS_URL" -o app/yt-dlp-ejs/yt-dlp-ejs.js; then
+    log_success "Script EJS téléchargé avec succès ($(wc -c < app/yt-dlp-ejs/yt-dlp-ejs.js) octets)"
+    echo "Aperçu du contenu du script EJS:"
+    head -5 app/yt-dlp-ejs/yt-dlp-ejs.js
 else
-    echo "⚠️ Aucun cache yt-dlp trouvé, les scripts EJS seront peut-être téléchargés au runtime"
+    echo "⚠️ Échec du téléchargement du script EJS depuis GitHub"
+    echo "Alternative: tentative via yt-dlp CLI..."
+    
+    # Alternative: Utiliser yt-dlp CLI pour télécharger EJS
+    export PATH="$HOME/.deno/bin:$PATH"
+    yt-dlp --print "" "https://www.youtube.com/watch?v=dQw4w9WgXcQ" 2>&1 || true
+    
+    # Vérifier si yt-dlp a créé un cache
+    if [ -d "$HOME/.cache/yt-dlp" ]; then
+        echo "✅ Cache yt-dlp trouvé, copie des fichiers EJS..."
+        cp -r "$HOME/.cache/yt-dlp"/* app/yt-dlp-ejs/ 2>/dev/null || true
+    fi
+fi
+
+echo "Contenu final du répertoire EJS:"
+if [ -d "app/yt-dlp-ejs" ]; then
+    ls -laR app/yt-dlp-ejs/
+else
+    echo "⚠️ Aucun répertoire EJS créé"
 fi
 
 # 6. Télécharger FFmpeg
@@ -222,15 +219,15 @@ else
     exit 1
 fi
 
-# Copier le cache yt-dlp (scripts EJS) dans _internal
-log_step "Copie du cache yt-dlp EJS dans _internal..."
-if [ -d "app/yt-dlp-cache" ]; then
-    mkdir -p ./dist/YoutubetoPremiere/_internal/yt-dlp-cache
-    cp -r app/yt-dlp-cache/* ./dist/YoutubetoPremiere/_internal/yt-dlp-cache/
-    log_success "Cache yt-dlp EJS copié dans _internal"
-    ls -la ./dist/YoutubetoPremiere/_internal/yt-dlp-cache/
+# Copier les scripts yt-dlp EJS dans _internal
+log_step "Copie des scripts yt-dlp EJS dans _internal..."
+if [ -d "app/yt-dlp-ejs" ]; then
+    mkdir -p ./dist/YoutubetoPremiere/_internal/yt-dlp-ejs
+    cp -r app/yt-dlp-ejs/* ./dist/YoutubetoPremiere/_internal/yt-dlp-ejs/
+    log_success "Scripts yt-dlp EJS copiés dans _internal"
+    ls -laR ./dist/YoutubetoPremiere/_internal/yt-dlp-ejs/
 else
-    echo "⚠️ Aucun cache yt-dlp trouvé à bundler"
+    echo "⚠️ Aucun répertoire yt-dlp-ejs trouvé à bundler"
 fi
 
 # 10. Build CEP Extension

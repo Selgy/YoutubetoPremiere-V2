@@ -29,14 +29,26 @@ def setup_deno_path():
             # Running as Python script
             app_dir = os.path.dirname(os.path.abspath(__file__))
         
-        # Setup yt-dlp cache directory for EJS challenge solver scripts
-        ytdlp_cache_dir = os.path.join(app_dir, 'yt-dlp-cache')
-        if os.path.exists(ytdlp_cache_dir):
-            # Set XDG_CACHE_HOME so yt-dlp uses our bundled cache
-            os.environ['XDG_CACHE_HOME'] = app_dir
-            logging.info(f"[YT-DLP] Using bundled EJS cache at: {ytdlp_cache_dir}")
+        # Setup yt-dlp EJS directory for challenge solver scripts
+        ytdlp_ejs_dir = os.path.join(app_dir, 'yt-dlp-ejs')
+        if os.path.exists(ytdlp_ejs_dir):
+            # Set environment variable for yt-dlp to find EJS scripts
+            # yt-dlp looks for EJS scripts in specific locations
+            os.environ['YT_DLP_EJS_PATH'] = ytdlp_ejs_dir
+            # Also set XDG_CACHE_HOME as fallback
+            cache_parent = os.path.dirname(app_dir)
+            os.environ['XDG_CACHE_HOME'] = cache_parent if cache_parent else app_dir
+            logging.info(f"[YT-DLP] Using bundled EJS scripts at: {ytdlp_ejs_dir}")
+            logging.info(f"[YT-DLP] XDG_CACHE_HOME set to: {os.environ.get('XDG_CACHE_HOME')}")
+            
+            # List EJS files found
+            try:
+                ejs_files = os.listdir(ytdlp_ejs_dir)
+                logging.info(f"[YT-DLP] EJS files found: {ejs_files}")
+            except Exception as e:
+                logging.warning(f"[YT-DLP] Could not list EJS directory: {e}")
         else:
-            logging.info("[YT-DLP] No bundled EJS cache found, yt-dlp will use default cache location")
+            logging.info("[YT-DLP] No bundled EJS directory found, yt-dlp will use default locations")
         
         # Check for deno executable in multiple locations
         if platform.system() == 'Windows':

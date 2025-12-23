@@ -2608,7 +2608,30 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
         deno_path = shutil.which('deno')
         if deno_path:
             logging.info(f"[OK] Deno runtime found at: {deno_path}")
-            logging.info("[OK] External JavaScript runtime enabled (EJS challenge solver should be pre-downloaded)")
+            
+            # Check for bundled EJS scripts
+            if getattr(sys, 'frozen', False):
+                # Running as frozen app - look for bundled EJS scripts
+                bundle_root = os.path.dirname(sys.executable)
+                app_dir = os.path.join(bundle_root, '_internal')
+                ejs_dir = os.path.join(app_dir, 'yt-dlp-ejs')
+                
+                if os.path.exists(ejs_dir):
+                    logging.info(f"[OK] Bundled EJS scripts found at: {ejs_dir}")
+                    # Set environment variable for yt-dlp to find EJS scripts
+                    os.environ['YT_DLP_EJS_PATH'] = ejs_dir
+                    logging.info("[OK] EJS path configured for yt-dlp")
+                    
+                    # List EJS files
+                    try:
+                        ejs_files = os.listdir(ejs_dir)
+                        logging.info(f"[OK] EJS files available: {ejs_files}")
+                    except Exception as e:
+                        logging.warning(f"Could not list EJS files: {e}")
+                else:
+                    logging.warning(f"[WARNING] No bundled EJS scripts found at: {ejs_dir}")
+            
+            logging.info("[OK] External JavaScript runtime enabled (EJS challenge solver configured)")
             logging.info("[OK] Using yt-dlp's default player client logic for maximum format availability")
         else:
             logging.warning("[WARNING] Deno runtime not found in PATH. YouTube format availability may be limited.")
