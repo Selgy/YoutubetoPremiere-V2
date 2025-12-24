@@ -13,7 +13,6 @@ permissions:
 jobs:
   mac-build-apple-silicon:
     runs-on: macos-14
-    needs: [windows-build]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -178,6 +177,8 @@ jobs:
           --hidden-import=video_processing \
           --hidden-import=utils \
           --hidden-import=routes \
+          --hidden-import=config \
+          --hidden-import=app_init \
           --collect-all=yt_dlp \
           --collect-all=flask \
           --collect-all=flask_socketio \
@@ -334,7 +335,13 @@ jobs:
           xcrun notarytool store-credentials "notarytool-profile" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APP_SPECIFIC_PASSWORD"
           
           echo "Submitting PKG for notarization..."
-          xcrun notarytool submit "YouTubetoPremiere.pkg" --keychain-profile "notarytool-profile" --wait
+          if xcrun notarytool submit "YouTubetoPremiere.pkg" --keychain-profile "notarytool-profile" --wait; then
+            echo "✅ Notarization successful"
+          else
+            echo "❌ Notarization failed or timed out"
+            echo "You may need to notarize manually or check Apple Developer account status"
+            exit 1
+          fi
 
       - name: Upload macOS Build Artifacts
         uses: actions/upload-artifact@v4
@@ -480,28 +487,28 @@ jobs:
           foreach ($url in $ffmpegUrls) {
             echo "Trying to download from: $url"
             
-                         # Try download with retry
-             for ($attempt = 1; $attempt -le 3; $attempt++) {
-               try {
-                 echo "Download attempt $attempt/3..."
-                 
-                 # Use compatible download parameters for PowerShell 5.1
-                 $progressPreference = 'SilentlyContinue'
-                 Invoke-WebRequest -Uri $url -OutFile "ffmpeg.zip" -TimeoutSec 120 -UseBasicParsing
+            # Try download with retry
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              try {
+                echo "Download attempt $attempt/3..."
                 
-                                 if (Test-Path "ffmpeg.zip") {
-                   $fileSize = (Get-Item "ffmpeg.zip").Length
-                   if ($fileSize -gt 1MB) {
-                     echo "✅ FFmpeg downloaded successfully ($([math]::Round($fileSize / 1MB, 1)) MB)"
-                     $success = $true
-                     break
-                   } else {
-                     echo "❌ Downloaded file too small ($([math]::Round($fileSize / 1KB, 1)) KB)"
-                     Remove-Item "ffmpeg.zip" -Force
-                   }
-                 } else {
-                   echo "❌ Downloaded file missing"
-                 }
+                # Use compatible download parameters for PowerShell 5.1
+                $progressPreference = 'SilentlyContinue'
+                Invoke-WebRequest -Uri $url -OutFile "ffmpeg.zip" -TimeoutSec 120 -UseBasicParsing
+                
+                if (Test-Path "ffmpeg.zip") {
+                  $fileSize = (Get-Item "ffmpeg.zip").Length
+                  if ($fileSize -gt 1MB) {
+                    echo "✅ FFmpeg downloaded successfully ($([math]::Round($fileSize / 1MB, 1)) MB)"
+                    $success = $true
+                    break
+                  } else {
+                    echo "❌ Downloaded file too small ($([math]::Round($fileSize / 1KB, 1)) KB)"
+                    Remove-Item "ffmpeg.zip" -Force
+                  }
+                } else {
+                  echo "❌ Downloaded file missing"
+                }
               }
               catch {
                 echo "❌ Download attempt $attempt failed: $($_.Exception.Message)"
@@ -645,22 +652,15 @@ jobs:
 
       - name: Verify source code before build
         run: |
-          echo "Verification: Checking video_processing.py for format fix..."
-          $line1549 = (Get-Content "app\video_processing.py")[1548]
-          echo "Line 1549: $line1549"
-          
-          if ($line1549 -match "format.*best") {
-            echo "ERROR: Old code detected! Line 1549 still has format: best"
-            echo "This should have been removed in recent commits"
-            exit 1
+          echo "Verification: Checking video_processing.py exists..."
+          if (Test-Path "app\video_processing.py") {
+            echo "✅ video_processing.py found"
+            $fileSize = (Get-Item "app\video_processing.py").Length
+            echo "File size: $([math]::Round($fileSize / 1KB, 1)) KB"
           } else {
-            echo "OK: Line 1549 does NOT contain format: best"
+            echo "❌ ERROR: video_processing.py not found"
+            exit 1
           }
-          
-          # Verify the fix is present
-          $context = Get-Content "app\video_processing.py" | Select-Object -Skip 1544 -First 10
-          echo "Context around line 1549:"
-          $context | ForEach-Object { echo $_ }
         shell: powershell
 
       - name: Build Application with PyInstaller
@@ -691,6 +691,7 @@ jobs:
             --hidden-import=flask --hidden-import=flask_cors --hidden-import=flask_socketio `
             --hidden-import=yt_dlp --hidden-import=psutil `
             --hidden-import=video_processing --hidden-import=utils --hidden-import=routes `
+            --hidden-import=config --hidden-import=app_init `
             --collect-all=yt_dlp `
             --collect-all=flask `
             --collect-all=flask_socketio `
@@ -994,4 +995,4 @@ jobs:
             ./artifacts/macos/YouTubetoPremiere.pkg
             ./artifacts/windows/YouTubetoPremiere-Setup.exe
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

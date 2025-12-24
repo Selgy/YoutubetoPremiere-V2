@@ -19,5 +19,7 @@ API_TIMEOUT = 10
 LICENSE_CACHE_DURATION = 3600  # 1 heure
 
 # Version de l'application
-APP_VERSION = "2.0.0"
+# NOTE: Cette version est synchronisée automatiquement depuis package.json
+# Ne pas modifier manuellement - utilisez 'npm version' ou 'npm run sync:version'
+APP_VERSION = "3.0.36"
 

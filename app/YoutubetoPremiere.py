@@ -117,11 +117,12 @@ os.environ['YTPP_LOG_DIR'] = log_dir
 def write_test_log():
     """Write a test log to verify file logging works"""
     try:
+        from config import APP_VERSION
         # Write session header and test to main log
         session_header = f"""
 {'='*60}
 SESSION STARTED: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-YouTube to Premiere Pro Extension v3.0.21
+YouTube to Premiere Pro Extension v{APP_VERSION}
 {'='*60}
 """
         with open(main_log_file, 'a', encoding='utf-8') as f:
@@ -185,7 +186,6 @@ def check_server_running(port=17845):
         
     # Then try to connect to health endpoint
     try:
-        import requests
         response = requests.get(f'http://localhost:{port}/health', timeout=1)
         return response.status_code == 200
     except Exception:
@@ -207,7 +207,6 @@ def get_app_paths():
         if not path:
             return path
         # Replace username with [USER] in paths
-        import re
         # Match common user directory patterns - escape backslashes properly
         patterns = [
             (r'C:\\Users\\[^\\]+', r'C:\\Users\\[USER]'),

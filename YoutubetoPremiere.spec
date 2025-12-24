@@ -1,13 +1,35 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('app/sounds', 'sounds'), ('app/*.py', '.')]
+datas = [
+    ('app/sounds', 'sounds'),
+    ('app/*.py', '.'),
+    ('app/config.py', '.')  # Include config.py for APP_VERSION
+]
 # Add yt-dlp EJS scripts if they exist (EJS challenge solver scripts)
 import os
 if os.path.exists('app/yt-dlp-ejs'):
     datas.append(('app/yt-dlp-ejs', 'yt-dlp-ejs'))
 binaries = []
-hiddenimports = ['engineio.async_drivers.threading', 'engineio.async_drivers', 'websocket', 'websockets', 'wsproto', 'pygame', 'flask', 'flask_cors', 'flask_socketio', 'yt_dlp', 'psutil', 'tkinter', 'video_processing', 'utils', 'routes']
+hiddenimports = [
+    'engineio.async_drivers.threading', 
+    'engineio.async_drivers', 
+    'websocket', 
+    'websockets', 
+    'wsproto', 
+    'pygame', 
+    'flask', 
+    'flask_cors', 
+    'flask_socketio', 
+    'yt_dlp', 
+    'psutil', 
+    'tkinter', 
+    'video_processing', 
+    'utils', 
+    'routes',
+    'config',  # Include config module for APP_VERSION
+    'app_init'
+]
 tmp_ret = collect_all('yt_dlp')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('flask')

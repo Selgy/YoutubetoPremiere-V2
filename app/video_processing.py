@@ -2549,23 +2549,25 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
         'noprogress': redirect_output,  # Disable progress output to stdout/stderr on Windows
         'progress_with_newline': False,  # Use same line for progress when enabled
         
-        # YouTube-specific options to handle SABR and signature issues
-        'youtube_include_dash_manifest': True,  # Include DASH manifest
-        'youtube_include_hls_manifest': True,   # Include HLS manifest
-        'youtube_skip_dash_manifest': False,    # Don't skip DASH manifest
-        'youtube_skip_hls_manifest': False,     # Don't skip HLS manifest
-        # Let yt-dlp use its default player client logic - works better with YouTube's anti-bot measures
+        # Format sorting - Prioritize H.264/AVC1 for Premiere Pro compatibility
+        'format_sort': [
+            'codec:h264:vp9',  # Strongly prefer H.264/AVC1 over VP9/VP8
+            'res',             # Then sort by resolution
+            'fps',             # Then by frame rate
+            'br',              # Then by bitrate
+            'acodec:aac',      # Prefer AAC audio (best Premiere compatibility)
+        ],
+        
+        # Performance optimizations
+        'concurrent_fragment_downloads': 4,  # Download 4 fragments in parallel
+        'buffersize': 1024 * 1024,          # 1MB buffer for smooth downloads
         
         # Enable remote components (EJS scripts) download for Deno challenge solving
         'extractor_args': {
             'youtube': {
                 'remote_components': ['ejs:github']  # Allow downloading EJS scripts from GitHub
             }
-        }
-        
-        # Additional options to bypass bot detection
-        'source_address': '0.0.0.0',  # Bind to IPv4
-        'force_generic_extractor': False,  # Use YouTube extractor
+        },
         
         # FFmpeg configuration - handle both absolute paths and PATH resolution
         'ffmpeg_location': get_ffmpeg_location_for_ydl(ffmpeg_path),
@@ -2591,8 +2593,9 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
     if user_agent:
         http_headers['User-Agent'] = user_agent
     else:
-        # Use a modern Chrome user agent as fallback
-        http_headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        # Use a modern Chrome user agent (updated regularly)
+        # Chrome 131 (December 2024) - Update periodically
+        http_headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
     
     # Add essential browser headers - keep it minimal to avoid conflicts
     http_headers.update({

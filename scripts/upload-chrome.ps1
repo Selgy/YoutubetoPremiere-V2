@@ -39,6 +39,29 @@ if (-not (Test-Path "package.json")) {
     exit 1
 }
 
+# Vérifier que les versions sont synchronisées
+Write-ColorOutput "[CHECK] Verification de la synchronisation des versions..." $Cyan
+$packageVersion = (Get-Content "package.json" | ConvertFrom-Json).version
+$manifestPath = "extensions\Chrome\manifest.json"
+
+if (Test-Path $manifestPath) {
+    $manifestVersion = (Get-Content $manifestPath | ConvertFrom-Json).version
+    
+    if ($packageVersion -ne $manifestVersion) {
+        Write-ColorOutput "[ERREUR] Versions desynchronisees !" $Red
+        Write-ColorOutput "  package.json:          $packageVersion" $Yellow
+        Write-ColorOutput "  manifest.json Chrome:  $manifestVersion" $Yellow
+        Write-ColorOutput "" $Red
+        Write-ColorOutput "Executez 'npm run sync:version' avant d'uploader" $Yellow
+        exit 1
+    }
+    
+    Write-ColorOutput "  [OK] Versions synchronisees: $packageVersion" $Green
+} else {
+    Write-ColorOutput "[ERREUR] Manifest Chrome introuvable: $manifestPath" $Red
+    exit 1
+}
+
 # Vérifier les variables d'environnement
 $requiredVars = @(
     "CHROME_EXTENSION_ID",
@@ -69,9 +92,18 @@ if ($missingVars.Count -gt 0) {
 }
 
 # Chemin du dossier extension Chrome
-$extensionPath = "Extension Youtube\Chrome"
+$extensionPath = "extensions\Chrome"
 $zipFileName = "chrome-extension.zip"
 $zipPath = Join-Path $PWD $zipFileName
+
+# Fichiers à exclure du ZIP
+$excludePatterns = @(
+    "*.md",
+    ".DS_Store",
+    "Thumbs.db",
+    "package-lock.json",
+    "node_modules"
+)
 
 # Créer le fichier ZIP de l'extension
 Write-ColorOutput "[WORK] Creation du package ZIP..." $Cyan
@@ -81,8 +113,44 @@ if (Test-Path $zipPath) {
 }
 
 try {
-    # Utiliser PowerShell pour créer le ZIP
-    Compress-Archive -Path "$extensionPath\*" -DestinationPath $zipPath -Force
+    # Créer un dossier temporaire pour préparer le package
+    $tempDir = Join-Path $env:TEMP "chrome-extension-temp"
+    if (Test-Path $tempDir) {
+        Remove-Item $tempDir -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    
+    # Copier les fichiers en excluant ce qui ne doit pas être dans le package
+    Get-ChildItem -Path $extensionPath -Recurse | Where-Object {
+        $file = $_
+        $shouldInclude = $true
+        foreach ($pattern in $excludePatterns) {
+            if ($file.Name -like $pattern) {
+                $shouldInclude = $false
+                break
+            }
+        }
+        $shouldInclude
+    } | ForEach-Object {
+        $relativePath = $_.FullName.Substring($extensionPath.Length + 1)
+        $targetPath = Join-Path $tempDir $relativePath
+        $targetDir = Split-Path $targetPath -Parent
+        
+        if (-not (Test-Path $targetDir)) {
+            New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+        }
+        
+        if (-not $_.PSIsContainer) {
+            Copy-Item $_.FullName -Destination $targetPath -Force
+        }
+    }
+    
+    # Créer le ZIP depuis le dossier temporaire
+    Compress-Archive -Path "$tempDir\*" -DestinationPath $zipPath -Force
+    
+    # Nettoyer le dossier temporaire
+    Remove-Item $tempDir -Recurse -Force
+    
     Write-ColorOutput "  [OK] Package ZIP cree: $zipFileName" $Green
 } catch {
     Write-ColorOutput "[ERREUR] Echec de creation du ZIP: $($_.Exception.Message)" $Red

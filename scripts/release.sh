@@ -80,100 +80,18 @@ fi
 
 echo -e "${BLUE}📋 Mise à jour des versions dans tous les fichiers...${NC}"
 
-# 1. Mettre à jour package.json
-echo -e "${BLUE}  → package.json${NC}"
-if [ -f "package.json" ]; then
-    # Utiliser jq si disponible, sinon sed
-    if command -v jq >/dev/null 2>&1; then
-        jq ".version = \"$VERSION\"" package.json > package.json.tmp && mv package.json.tmp package.json
-    else
-        sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" package.json
-    fi
-    echo -e "${GREEN}    ✅ Version mise à jour dans package.json${NC}"
+# Utiliser le script de synchronisation Node.js
+echo -e "${BLUE}  → Utilisation du script sync-versions.js${NC}"
+if [ -f "scripts/sync-versions.js" ]; then
+    node scripts/sync-versions.js || {
+        echo -e "${RED}❌ Erreur lors de la synchronisation des versions${NC}"
+        exit 1
+    }
+    echo -e "${GREEN}✅ Toutes les versions synchronisées vers ${VERSION}${NC}"
 else
-    echo -e "${YELLOW}    ⚠️  package.json non trouvé${NC}"
+    echo -e "${RED}❌ Script sync-versions.js introuvable${NC}"
+    exit 1
 fi
-
-# 2. Mettre à jour l'extension Chrome
-echo -e "${BLUE}  → ChromeExtension/manifest.json${NC}"
-if [ -f "ChromeExtension/manifest.json" ]; then
-    if command -v jq >/dev/null 2>&1; then
-        jq ".version = \"$VERSION\"" ChromeExtension/manifest.json > ChromeExtension/manifest.json.tmp && mv ChromeExtension/manifest.json.tmp ChromeExtension/manifest.json
-    else
-        sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" ChromeExtension/manifest.json
-    fi
-    echo -e "${GREEN}    ✅ Version mise à jour dans ChromeExtension/manifest.json${NC}"
-else
-    echo -e "${YELLOW}    ⚠️  ChromeExtension/manifest.json non trouvé${NC}"
-fi
-
-# 3. Mettre à jour les fichiers de contenu Chrome Extension
-echo -e "${BLUE}  → ChromeExtension/background.js${NC}"
-if [ -f "ChromeExtension/background.js" ]; then
-    sed -i '' "s/Version [0-9]\+\.[0-9]\+\.[0-9]\+/Version $VERSION/g" ChromeExtension/background.js
-    echo -e "${GREEN}    ✅ Version mise à jour dans background.js${NC}"
-else
-    echo -e "${YELLOW}    ⚠️  ChromeExtension/background.js non trouvé${NC}"
-fi
-
-echo -e "${BLUE}  → ChromeExtension/content.js${NC}"
-if [ -f "ChromeExtension/content.js" ]; then
-    sed -i '' "s/Version [0-9]\+\.[0-9]\+\.[0-9]\+/Version $VERSION/g" ChromeExtension/content.js
-    echo -e "${GREEN}    ✅ Version mise à jour dans content.js${NC}"
-else
-    echo -e "${YELLOW}    ⚠️  ChromeExtension/content.js non trouvé${NC}"
-fi
-
-# 4. Mettre à jour popup.html
-echo -e "${BLUE}  → ChromeExtension/popup.html${NC}"
-if [ -f "ChromeExtension/popup.html" ]; then
-    sed -i '' "s/YouTube to Premiere Pro v[^<]*/YouTube to Premiere Pro v$VERSION/g" ChromeExtension/popup.html
-    echo -e "${GREEN}    ✅ Version mise à jour dans popup.html${NC}"
-else
-    echo -e "${YELLOW}    ⚠️  ChromeExtension/popup.html non trouvé${NC}"
-fi
-
-# 5. Mettre à jour project.config.js
-echo -e "${BLUE}  → project.config.js${NC}"
-if [ -f "project.config.js" ]; then
-    sed -i '' "s/version: '[^']*'/version: '$VERSION'/g" project.config.js
-    sed -i '' "s/version: \"[^\"]*\"/version: \"$VERSION\"/g" project.config.js
-    echo -e "${GREEN}    ✅ Version mise à jour dans project.config.js${NC}"
-else
-    echo -e "${YELLOW}    ⚠️  project.config.js non trouvé${NC}"
-fi
-
-# 6. Mettre à jour vite.config.ts si nécessaire
-echo -e "${BLUE}  → vite.config.ts${NC}"
-if [ -f "vite.config.ts" ]; then
-    # Rechercher et remplacer la version hardcodée
-    sed -i '' "s/const currentVersion = process\.env\.APP_VERSION || '[^']*'/const currentVersion = process.env.APP_VERSION || '$VERSION'/g" vite.config.ts
-    echo -e "${GREEN}    ✅ Version mise à jour dans vite.config.ts${NC}"
-else
-    echo -e "${YELLOW}    ⚠️  vite.config.ts non trouvé${NC}"
-fi
-
-# 7. Utiliser le script existant tools/version-update.js s'il existe
-if [ -f "tools/version-update.js" ]; then
-    echo -e "${BLUE}  → Exécution de tools/version-update.js${NC}"
-    node tools/version-update.js "$VERSION" || echo -e "${YELLOW}    ⚠️  Erreur lors de l'exécution de version-update.js${NC}"
-fi
-
-# 8. Mettre à jour app/routes.py
-echo -e "${BLUE}  → app/routes.py${NC}"
-if [ -f "app/routes.py" ]; then
-    sed -i '' "s/return jsonify(version='[^']*')/return jsonify(version='$VERSION')/g" app/routes.py
-    sed -i '' "s/current_version = '[^']*'/current_version = '$VERSION'/g" app/routes.py
-    echo -e "${GREEN}    ✅ Version mise à jour dans app/routes.py${NC}"
-else
-    echo -e "${YELLOW}    ⚠️  app/routes.py non trouvé${NC}"
-fi
-
-# 9. Mettre à jour les manifests CEP générés dans les configs vite
-echo -e "${BLUE}  → Mise à jour des templates manifest CEP${NC}"
-# Ces fichiers sont générés dynamiquement, donc on n'a pas besoin de les modifier
-
-echo -e "${GREEN}✅ Toutes les versions ont été mises à jour vers ${VERSION}${NC}"
 
 # Vérifier qu'il y a des changements à commiter
 if [ -z "$(git status --porcelain)" ]; then
