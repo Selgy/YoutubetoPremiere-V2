@@ -286,15 +286,15 @@ jobs:
             --install-location /Applications \
             --scripts ./scripts \
             --min-os-version 10.15 \
-            YouTubetoPremiere.pkg
+            YouTubetoPremiere-macOS.pkg
           echo "PKG installer created successfully"
           
       - name: Sign PKG installer
         run: |
           echo "Signing PKG installer..."
           # Use productsign with the installer certificate
-          productsign --sign "Developer ID Installer: mickael ducatez (9H8DB46V75)" YouTubetoPremiere.pkg YouTubetoPremiere-signed.pkg
-          mv YouTubetoPremiere-signed.pkg YouTubetoPremiere.pkg
+          productsign --sign "Developer ID Installer: mickael ducatez (9H8DB46V75)" YouTubetoPremiere-macOS.pkg YouTubetoPremiere-macOS-signed.pkg
+          mv YouTubetoPremiere-macOS-signed.pkg YouTubetoPremiere-macOS.pkg
           echo "PKG installer signed successfully"
 
       - name: Notarize PKG
@@ -307,14 +307,14 @@ jobs:
           xcrun notarytool store-credentials "notarytool-profile" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APP_SPECIFIC_PASSWORD"
           
           echo "Submitting PKG for notarization..."
-          xcrun notarytool submit "YouTubetoPremiere.pkg" --keychain-profile "notarytool-profile" --wait
+          xcrun notarytool submit "YouTubetoPremiere-macOS.pkg" --keychain-profile "notarytool-profile" --wait
 
       - name: Upload macOS Build Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: macos-build
           path: |
-            YouTubetoPremiere.pkg
+            YouTubetoPremiere-macOS.pkg
 
   windows-build:
     runs-on: windows-latest
@@ -936,7 +936,7 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            ./artifacts/macos/YouTubetoPremiere.pkg
+            ./artifacts/macos/YouTubetoPremiere-macOS.pkg
             ./artifacts/windows/YouTubetoPremiere-Setup.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
