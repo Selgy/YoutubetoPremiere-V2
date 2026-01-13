@@ -138,7 +138,7 @@ def register_routes(app, socketio, settings):
                     download_urls = {}
                     base_url = "https://github.com/Selgy/YoutubetoPremiere-V2/releases/latest/download"
                     
-                    download_urls['windows'] = f"{base_url}/YouTubetoPremiere-Windows.exe"
+                    download_urls['windows'] = f"{base_url}/YouTubetoPremiere-Setup.exe"
                     download_urls['mac_arm64'] = f"{base_url}/YouTubetoPremiere-macOS.pkg"
                     
                     # Get the appropriate download URL for current OS

@@ -51,6 +51,7 @@ echo -e "\n${GREEN}Vérification des exécutables...${NC}"
 EXECUTABLES=(
   "YoutubetoPremiere"
   "ffmpeg"
+  "deno"
 )
 
 # Correction des permissions
