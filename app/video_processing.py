@@ -1579,30 +1579,30 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             logging.info(f"Using cookies from browser for info extraction: {browser_cookies[0]}")
         
         # Extract video info first with authentication
-        # CRITICAL FIX for yt-dlp 2025.12.08+:
-        # We must specify a valid format string EVEN during info extraction
-        # Otherwise yt-dlp will try to validate against "best" format which may not exist
-        # Use the same AVC1-prioritized format string for consistency
-        initial_ydl_opts['format'] = format_string
+        # CRITICAL FIX: Use ultra-permissive format for info extraction only
+        # The actual AVC1 format will be used during download
+        # This prevents "Requested format is not available" errors that occur
+        # when yt-dlp validates complex format strings during info extraction
+        # (which can fail differently based on region/account/network)
+        initial_ydl_opts['format'] = 'best/worst'  # Ultra-permissive: any format works for metadata
         
-        logging.info("Extracting video information with AVC1 format specification...")
+        logging.info("Extracting video information with permissive format (AVC1 will be used for download)...")
         try:
             with yt_dlp.YoutubeDL(initial_ydl_opts) as ydl:
-                # Extract info with our specific format - this prevents the "format not available" error
-                # because yt-dlp will use our format selector that has many fallback options
                 info = ydl.extract_info(video_url, download=False)
                 if not info:
                     raise Exception("Could not extract video information")
-                logging.info("Successfully extracted video information with AVC1 format")
+                logging.info("Successfully extracted video information")
         except Exception as info_error:
+            error_str = str(info_error)
             # Check for cookie-related errors and retry without cookies
-            if "invalid Netscape format cookies file" in str(info_error) or "CookieLoadError" in str(info_error) or "failed to load cookies" in str(info_error):
+            if "invalid Netscape format cookies file" in error_str or "CookieLoadError" in error_str or "failed to load cookies" in error_str:
                 logging.warning("Cookie format error during info extraction. Retrying without cookies...")
                 try:
                     # Retry info extraction without cookies but with comprehensive headers
                     fallback_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
-                    fallback_ydl_opts['skip_download'] = True  # Only extract metadata, don't download yet
-                    fallback_ydl_opts['format'] = format_string  # Use same format string to avoid validation errors
+                    fallback_ydl_opts['skip_download'] = True
+                    fallback_ydl_opts['format'] = 'best/worst'  # Ultra-permissive
                     
                     with yt_dlp.YoutubeDL(fallback_ydl_opts) as ydl_fallback:
                         info = ydl_fallback.extract_info(video_url, download=False)
@@ -1612,8 +1612,24 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 except Exception as fallback_info_error:
                     logging.error(f"Fallback info extraction also failed: {str(fallback_info_error)}")
                     raise Exception(f"Info extraction failed with and without cookies: {str(fallback_info_error)}")
+            # Check for format-related errors and retry with even more permissive format
+            elif "Requested format is not available" in error_str:
+                logging.warning("Format validation failed. Retrying with no format specification...")
+                try:
+                    # Remove format entirely - let yt-dlp use its default
+                    if 'format' in initial_ydl_opts:
+                        del initial_ydl_opts['format']
+                    
+                    with yt_dlp.YoutubeDL(initial_ydl_opts) as ydl_retry:
+                        info = ydl_retry.extract_info(video_url, download=False)
+                        if not info:
+                            raise Exception("Could not extract video information")
+                        logging.info("Successfully extracted video info with default format")
+                except Exception as retry_error:
+                    logging.error(f"Retry without format also failed: {str(retry_error)}")
+                    raise info_error  # Raise original error
             else:
-                # Re-raise the original error if it's not cookie-related
+                # Re-raise the original error if it's not cookie/format-related
                 raise info_error
         
         # Check if any video formats are available (accept both combined and separate video/audio streams)
