@@ -2615,23 +2615,59 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
     
     # Configure external JavaScript runtime (Deno) for YouTube support
     # Required for yt-dlp 2025.11.12+ to fully support YouTube downloads
-    # Deno is enabled by default in yt-dlp, so we just verify it's available
+    # Deno is enabled by default in yt-dlp, so we just verify it's available AND working
     # IMPORTANT: Do NOT specify player_client in extractor_args - it severely limits format availability!
     # yt-dlp's default logic works best with Deno/EJS
+    deno_working = False
     try:
         # Check if Deno is available in PATH
         import shutil
+        import subprocess
         deno_path = shutil.which('deno')
         if deno_path:
             logging.info(f"[OK] Deno runtime found at: {deno_path}")
-            logging.info("[OK] External JavaScript runtime enabled (EJS challenge solver should be pre-downloaded)")
-            logging.info("[OK] Using yt-dlp's default player client logic for maximum format availability")
+            
+            # Actually TEST if Deno works (not just exists)
+            try:
+                result = subprocess.run(
+                    [deno_path, '--version'],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                )
+                if result.returncode == 0:
+                    deno_version = result.stdout.strip().split('\n')[0] if result.stdout else 'unknown'
+                    logging.info(f"[OK] Deno is working: {deno_version}")
+                    deno_working = True
+                else:
+                    logging.warning(f"[WARNING] Deno found but failed to execute: exit code {result.returncode}")
+                    logging.warning(f"  stderr: {result.stderr[:200] if result.stderr else 'none'}")
+            except subprocess.TimeoutExpired:
+                logging.warning("[WARNING] Deno found but timed out when testing")
+            except Exception as deno_test_error:
+                logging.warning(f"[WARNING] Deno found but failed to test: {deno_test_error}")
+            
+            if deno_working:
+                logging.info("[OK] External JavaScript runtime enabled (EJS challenge solver should be pre-downloaded)")
+                logging.info("[OK] Using yt-dlp's default player client logic for maximum format availability")
+            else:
+                logging.warning("[WARNING] Deno exists but may not work properly. Trying alternative clients...")
+                # If Deno doesn't work, try using web client which doesn't require JS runtime
+                base_options['extractor_args'] = {'youtube': {'player_client': ['web', 'mweb']}}
+                logging.info("[FALLBACK] Using web/mweb player clients (no Deno required)")
         else:
             logging.warning("[WARNING] Deno runtime not found in PATH. YouTube format availability may be limited.")
             logging.warning("  Install Deno with: .\\scripts\\install-deno.ps1")
             logging.warning("  Then restart the application or run: .\\scripts\\add-deno-to-path.ps1")
+            # Use web client as fallback
+            base_options['extractor_args'] = {'youtube': {'player_client': ['web', 'mweb']}}
+            logging.info("[FALLBACK] Using web/mweb player clients (no Deno required)")
     except Exception as e:
         logging.warning(f"Error checking for Deno runtime: {e}")
+        # Use web client as fallback
+        base_options['extractor_args'] = {'youtube': {'player_client': ['web', 'mweb']}}
+        logging.info("[FALLBACK] Using web/mweb player clients due to Deno check error")
     
     logging.info("YT-DLP options configured for robust YouTube downloading with EJS support")
     
