@@ -5,7 +5,7 @@ import time
 import threading
 from video_processing import handle_video_url, get_audio_language_options, set_emit_function
 from utils import play_notification_sound, save_license_key, get_license_key, load_settings, save_settings, save_download_path, open_sounds_folder
-from config import LICENSE_API_URL, API_TIMEOUT, LICENSE_CACHE_DURATION
+from config import LICENSE_API_URL, API_TIMEOUT, LICENSE_CACHE_DURATION, APP_VERSION
 import os
 import sys
 import requests
@@ -90,14 +90,14 @@ def register_routes(app, socketio, settings):
 
     @app.route('/get-version', methods=['GET'])
     def get_version():
-        return jsonify(version='3.0.21')
+        return jsonify(version=APP_VERSION)
 
     @app.route('/check-updates', methods=['GET'])
     def check_updates():
         """Check for available updates from GitHub releases"""
         try:
-            # Current version
-            current_version = '3.0.21'
+            # Current version from config
+            current_version = APP_VERSION
             
             # Detect OS
             system = platform.system().lower()

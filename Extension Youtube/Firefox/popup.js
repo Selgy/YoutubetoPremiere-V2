@@ -3,7 +3,7 @@ console.log('YTP Popup: Script loaded');
 
 // Download URLs for application installation
 const DOWNLOAD_URLS = {
-    windows: 'https://github.com/Selgy/YoutubetoPremiere-V2/releases/latest/download/YouTubetoPremiere-Windows.exe',
+    windows: 'https://github.com/Selgy/YoutubetoPremiere-V2/releases/latest/download/YouTubetoPremiere-Setup.exe',
     mac: 'https://github.com/Selgy/YoutubetoPremiere-V2/releases/latest/download/YouTubetoPremiere-macOS.pkg',
     github: 'https://github.com/Selgy/YoutubetoPremiere-V2/releases/latest',
     chromeStore: 'https://chromewebstore.google.com/detail/youtube-to-premiere-pro-v/fnhpeiohcfobchjffmgfdeobphhmaibb'
@@ -256,7 +256,7 @@ async function checkForExtensionUpdates() {
                 let downloadUrl;
                 
                 if (os === 'windows') {
-                    downloadUrl = `https://github.com/Selgy/YoutubetoPremiere-V2/releases/download/v${latestVersion}/YouTubetoPremiere-Windows.exe`;
+                    downloadUrl = `https://github.com/Selgy/YoutubetoPremiere-V2/releases/download/v${latestVersion}/YouTubetoPremiere-Setup.exe`;
                 } else if (os === 'mac') {
                     downloadUrl = `https://github.com/Selgy/YoutubetoPremiere-V2/releases/download/v${latestVersion}/YouTubetoPremiere-macOS.pkg`;
                 } else {
