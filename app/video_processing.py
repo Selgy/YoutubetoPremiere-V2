@@ -1627,7 +1627,31 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                         logging.info("Successfully extracted video info with default format")
                 except Exception as retry_error:
                     logging.error(f"Retry without format also failed: {str(retry_error)}")
-                    raise info_error  # Raise original error
+                    
+                    # THIRD LEVEL FALLBACK: Use web player clients that don't require login
+                    # YouTube is rolling out LOGIN_REQUIRED for 'tv' player client (A/B test)
+                    # See: https://github.com/yt-dlp/yt-dlp/issues/15583
+                    # Solution: Use web/mweb/android clients that don't require login
+                    logging.warning("Trying fallback with web player clients (avoiding 'tv' which may require login)...")
+                    try:
+                        web_fallback_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
+                        web_fallback_opts['skip_download'] = True
+                        # Use player clients that DON'T require login (avoid 'tv')
+                        # Order: web_creator (best formats), web, mweb, android (fallbacks)
+                        web_fallback_opts['extractor_args'] = {'youtube': {'player_client': ['web_creator', 'web', 'mweb', 'android']}}
+                        # Remove format to be as permissive as possible
+                        if 'format' in web_fallback_opts:
+                            del web_fallback_opts['format']
+                        
+                        logging.info("Using web_creator/web/mweb/android player clients as fallback (no login required)...")
+                        with yt_dlp.YoutubeDL(web_fallback_opts) as ydl_web:
+                            info = ydl_web.extract_info(video_url, download=False)
+                            if not info:
+                                raise Exception("Could not extract video information with web client")
+                            logging.info("Successfully extracted video info with web player client fallback")
+                    except Exception as web_fallback_error:
+                        logging.error(f"Web player client fallback also failed: {str(web_fallback_error)}")
+                        raise info_error  # Raise original error
             else:
                 # Re-raise the original error if it's not cookie/format-related
                 raise info_error
