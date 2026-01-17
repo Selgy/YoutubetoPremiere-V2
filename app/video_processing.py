@@ -1628,30 +1628,45 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 except Exception as retry_error:
                     logging.error(f"Retry without format also failed: {str(retry_error)}")
                     
-                    # THIRD LEVEL FALLBACK: Use web player clients that don't require login
-                    # YouTube is rolling out LOGIN_REQUIRED for 'tv' player client (A/B test)
-                    # See: https://github.com/yt-dlp/yt-dlp/issues/15583
-                    # Solution: Use web/mweb/android clients that don't require login
-                    logging.warning("Trying fallback with web player clients (avoiding 'tv' which may require login)...")
+                    # THIRD LEVEL FALLBACK: Try Android player client
+                    # Android player works without login for most videos
+                    logging.warning("Trying fallback with Android player client...")
                     try:
-                        web_fallback_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
-                        web_fallback_opts['skip_download'] = True
-                        # Use player clients that DON'T require login (avoid 'tv')
-                        # Order: web_creator (best formats), web, mweb, android (fallbacks)
-                        web_fallback_opts['extractor_args'] = {'youtube': {'player_client': ['web_creator', 'web', 'mweb', 'android']}}
-                        # Remove format to be as permissive as possible
-                        if 'format' in web_fallback_opts:
-                            del web_fallback_opts['format']
+                        android_fallback_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
+                        android_fallback_opts['skip_download'] = True
+                        android_fallback_opts['extractor_args'] = {'youtube': {'player_client': ['android']}}
+                        if 'format' in android_fallback_opts:
+                            del android_fallback_opts['format']
                         
-                        logging.info("Using web_creator/web/mweb/android player clients as fallback (no login required)...")
-                        with yt_dlp.YoutubeDL(web_fallback_opts) as ydl_web:
-                            info = ydl_web.extract_info(video_url, download=False)
+                        logging.info("Using Android player client as fallback...")
+                        with yt_dlp.YoutubeDL(android_fallback_opts) as ydl_android:
+                            info = ydl_android.extract_info(video_url, download=False)
                             if not info:
-                                raise Exception("Could not extract video information with web client")
-                            logging.info("Successfully extracted video info with web player client fallback")
-                    except Exception as web_fallback_error:
-                        logging.error(f"Web player client fallback also failed: {str(web_fallback_error)}")
-                        raise info_error  # Raise original error
+                                raise Exception("Could not extract video information with Android client")
+                            logging.info("Successfully extracted video info with Android player client fallback")
+                    except Exception as android_fallback_error:
+                        logging.error(f"Android player client fallback also failed: {str(android_fallback_error)}")
+                        
+                        # FOURTH LEVEL FALLBACK: Try without cookies
+                        # Sometimes cookies cause issues with YouTube's bot detection
+                        logging.warning("Trying fallback WITHOUT cookies...")
+                        try:
+                            no_cookie_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
+                            no_cookie_opts['skip_download'] = True
+                            if 'format' in no_cookie_opts:
+                                del no_cookie_opts['format']
+                            if 'cookiefile' in no_cookie_opts:
+                                del no_cookie_opts['cookiefile']
+                            
+                            logging.info("Retrying extraction without cookies...")
+                            with yt_dlp.YoutubeDL(no_cookie_opts) as ydl_nocookie:
+                                info = ydl_nocookie.extract_info(video_url, download=False)
+                                if not info:
+                                    raise Exception("Could not extract video information without cookies")
+                                logging.info("Successfully extracted video info without cookies")
+                        except Exception as nocookie_error:
+                            logging.error(f"Fallback without cookies also failed: {str(nocookie_error)}")
+                            raise info_error  # Raise original error
             else:
                 # Re-raise the original error if it's not cookie/format-related
                 raise info_error
