@@ -1573,6 +1573,10 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         initial_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
         initial_ydl_opts['skip_download'] = True  # Only extract metadata, don't download yet
         
+        # Track which method succeeded for download phase
+        use_cookies_for_download = True  # Default: use cookies
+        use_android_player = False  # Default: don't force Android player
+        
         # Add browser cookies if available (fallback when no cookies file)
         if browser_cookies:
             initial_ydl_opts['cookiesfrombrowser'] = browser_cookies
@@ -1644,6 +1648,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                             if not info:
                                 raise Exception("Could not extract video information with Android client")
                             logging.info("Successfully extracted video info with Android player client fallback")
+                            use_android_player = True  # Remember to use Android player for download
                     except Exception as android_fallback_error:
                         logging.error(f"Android player client fallback also failed: {str(android_fallback_error)}")
                         
@@ -1664,6 +1669,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                                 if not info:
                                     raise Exception("Could not extract video information without cookies")
                                 logging.info("Successfully extracted video info without cookies")
+                                use_cookies_for_download = False  # Remember to NOT use cookies for download
                         except Exception as nocookie_error:
                             logging.error(f"Fallback without cookies also failed: {str(nocookie_error)}")
                             raise info_error  # Raise original error
@@ -1698,8 +1704,23 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         output_path = os.path.join(download_path, unique_filename)
         logging.info(f"Setting output path to: {output_path}")
 
-        # Configure download options with robust settings (including auth and comprehensive headers)
-        ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
+        # Configure download options based on which extraction method succeeded
+        # CRITICAL: Use the same method that worked for extraction!
+        if use_cookies_for_download:
+            ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
+            logging.info("Download will use cookies (same as extraction)")
+        else:
+            # Extraction worked without cookies - don't use them for download either!
+            ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
+            if 'cookiefile' in ydl_opts:
+                del ydl_opts['cookiefile']
+            logging.info("Download will NOT use cookies (extraction succeeded without them)")
+        
+        # If Android player client worked, use it for download too
+        if use_android_player:
+            ydl_opts['extractor_args'] = {'youtube': {'player_client': ['android']}}
+            logging.info("Download will use Android player client (same as extraction)")
+        
         ydl_opts.update({
             'format': format_string,
             'merge_output_format': 'mp4',
@@ -1711,7 +1732,8 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         })
         
         # Add browser cookies if that's what we're using (fallback when no cookies file)
-        if browser_cookies:
+        # But only if we're supposed to use cookies!
+        if browser_cookies and use_cookies_for_download:
             ydl_opts['cookiesfrombrowser'] = browser_cookies
             logging.info("Using browser cookies for download")
 
@@ -1739,6 +1761,36 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         # Note: We need to allow yt-dlp to capture progress information
         # so we can't completely redirect stdout/stderr on Windows.
         # Instead, we'll use a safer approach that preserves progress hooks
+        # IMPORTANT: Build format string based on AVAILABLE AVC1 formats
+        # This ensures we only request formats that actually exist
+        avc1_formats = [f for f in video_formats if 'avc' in str(f.get('vcodec', '')).lower()]
+        if avc1_formats:
+            # Sort by height (resolution) descending
+            avc1_formats.sort(key=lambda f: f.get('height', 0) or 0, reverse=True)
+            # Filter by max resolution
+            target_height = int(resolution)
+            valid_avc1 = [f for f in avc1_formats if (f.get('height', 0) or 0) <= target_height]
+            
+            if valid_avc1:
+                # Use specific format IDs that we KNOW exist
+                format_ids = [f.get('format_id') for f in valid_avc1[:3] if f.get('format_id')]
+                if format_ids:
+                    # Build format string using actual format IDs + best audio
+                    actual_format = '/'.join([f"{fid}+bestaudio[ext=m4a]/{fid}+bestaudio" for fid in format_ids])
+                    ydl_opts['format'] = actual_format
+                    logging.info(f"Using verified AVC1 format IDs: {format_ids}")
+            else:
+                # No AVC1 at requested resolution, use best available AVC1
+                best_avc1 = avc1_formats[0].get('format_id')
+                if best_avc1:
+                    ydl_opts['format'] = f"{best_avc1}+bestaudio[ext=m4a]/{best_avc1}+bestaudio"
+                    logging.info(f"No AVC1 at {resolution}p, using best available: {best_avc1}")
+        else:
+            # No AVC1 formats found - this is a real error
+            logging.error(f"No AVC1 formats available! Available codecs: {set(f.get('vcodec', 'none') for f in video_formats)}")
+            socketio.emit('download-failed', {'message': f"Aucun format AVC1 disponible pour cette vidéo. Codecs disponibles: {set(f.get('vcodec', 'none') for f in video_formats)}"})
+            return None
+        
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 current_download['ydl'] = ydl
@@ -1750,9 +1802,8 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     logging.info('[CANCEL] Video download successfully cancelled before start')
                     return None
                 
-                # Download with AVC1 format specified in ydl_opts (no fallback)
-                # This ensures maximum Premiere Pro compatibility
-                logging.info(f"Starting download with AVC1-prioritized format: {ydl_opts.get('format', 'default')[:200]}...")
+                # Download with verified AVC1 format
+                logging.info(f"Starting download with verified AVC1 format: {ydl_opts.get('format', 'default')[:200]}...")
                 ydl.download([video_url])
         except Exception as e:
             error_message = f"Error during video download: {str(e)}"
