@@ -90,8 +90,14 @@ def get_subprocess_creation_flags():
         return subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
     return 0
 
-def run_hidden_subprocess(cmd, **kwargs):
-    """Run subprocess with hidden console window on Windows"""
+def run_hidden_subprocess(cmd, timeout=300, **kwargs):
+    """Run subprocess with hidden console window on Windows
+    
+    Args:
+        cmd: Command to run
+        timeout: Maximum time to wait in seconds (default: 300s = 5 minutes)
+        **kwargs: Additional arguments passed to subprocess.run
+    """
     if sys.platform == 'win32':
         # Add Windows-specific flags to hide console window
         creation_flags = get_subprocess_creation_flags()
@@ -100,7 +106,23 @@ def run_hidden_subprocess(cmd, **kwargs):
         kwargs['startupinfo'].dwFlags |= subprocess.STARTF_USESHOWWINDOW
         kwargs['startupinfo'].wShowWindow = subprocess.SW_HIDE
     
-    return subprocess.run(cmd, **kwargs)
+    # Add timeout if not already specified
+    if 'timeout' not in kwargs:
+        kwargs['timeout'] = timeout
+    
+    cmd_name = os.path.basename(cmd[0]) if cmd else 'unknown'
+    logging.info(f"[SUBPROCESS] Starting {cmd_name} with timeout={kwargs.get('timeout')}s")
+    
+    try:
+        result = subprocess.run(cmd, **kwargs)
+        logging.info(f"[SUBPROCESS] {cmd_name} completed successfully")
+        return result
+    except subprocess.TimeoutExpired as e:
+        logging.error(f"[SUBPROCESS] {cmd_name} TIMEOUT after {kwargs.get('timeout')}s - killing process")
+        raise
+    except Exception as e:
+        logging.error(f"[SUBPROCESS] {cmd_name} error: {e}")
+        raise
 
 def cleanup_ffmpeg_processes():
     """Clean up zombie or stuck ffmpeg processes to prevent resource exhaustion (Windows only)"""
@@ -1343,7 +1365,8 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         
         # Add metadata to the video file if it exists
         if os.path.exists(video_file_path):
-            logging.info(f"Clip downloaded successfully: {video_file_path}")
+            logging.info(f"[CLIP-COMPLETE] Clip downloaded successfully: {video_file_path}")
+            socketio.emit('percentage', {'percentage': '100% - Ajout métadonnées clip...'})
 
             # Add URL to metadata using hidden subprocess to prevent CMD popup
             metadata_command = [
@@ -1358,22 +1381,30 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             ]
 
             try:
-                run_hidden_subprocess(metadata_command, check=True, capture_output=True, text=True)
+                # Use 5 minute timeout for clip metadata
+                run_hidden_subprocess(metadata_command, timeout=300, check=True, capture_output=True, text=True)
                 os.replace(f'{video_file_path}_with_metadata.mp4', video_file_path)
-                logging.info(f"Metadata added: {video_file_path}")
+                logging.info(f"[CLIP-METADATA] Metadata added: {video_file_path}")
                 
                 # Emit events
                 socketio.emit('complete', {'type': 'clip', 'message': 'Clip téléchargé avec succès'})
                 socketio.emit('download-complete', {'url': video_url, 'path': video_file_path})
                 socketio.emit('import_video', {'path': video_file_path})
-                logging.info("Import signal sent to Premiere Pro extension via SocketIO")
+                logging.info("[CLIP-COMPLETE] Import signal sent to Premiere Pro extension via SocketIO")
                 return {"success": True, "path": video_file_path}
-            except subprocess.CalledProcessError as e:
-                logging.error(f"Error adding metadata: {e.stderr}")
+            except subprocess.TimeoutExpired as e:
+                logging.error(f"[CLIP-METADATA] FFmpeg timeout after {e.timeout}s")
                 # Continue anyway, as the clip itself is fine
                 socketio.emit('download-complete', {'url': video_url, 'path': video_file_path})
                 socketio.emit('import_video', {'path': video_file_path})
-                logging.info("Import signal sent to Premiere Pro extension via SocketIO")
+                logging.info("[CLIP-COMPLETE] Import signal sent (without metadata due to timeout)")
+                return {"success": True, "path": video_file_path}
+            except subprocess.CalledProcessError as e:
+                logging.error(f"[CLIP-METADATA] Error adding metadata: {e.stderr}")
+                # Continue anyway, as the clip itself is fine
+                socketio.emit('download-complete', {'url': video_url, 'path': video_file_path})
+                socketio.emit('import_video', {'path': video_file_path})
+                logging.info("[CLIP-COMPLETE] Import signal sent (without metadata due to error)")
                 return {"success": True, "path": video_file_path}
         else:
             error_message = "Clip download failed - output file not found"
@@ -1933,14 +1964,19 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
 
         # Get the final path of the downloaded file
         final_path = output_path
-        logging.info(f"Expected final path: {final_path}")
+        logging.info(f"[POST-DOWNLOAD] Download phase complete, starting post-processing...")
+        logging.info(f"[POST-DOWNLOAD] Expected final path: {final_path}")
+        
+        # Emit post-processing status to client
+        socketio.emit('progress', {'progress': '100', 'type': 'full', 'status': 'processing'})
+        socketio.emit('percentage', {'percentage': '100% - Traitement en cours...'})
 
         # Check for downloaded files - first try exact path, then look for variants
         actual_file = None
         
         if os.path.exists(final_path):
             actual_file = final_path
-            logging.info(f"File exists at expected path: {final_path}")
+            logging.info(f"[POST-DOWNLOAD] File exists at expected path: {final_path}")
         else:
             # Look for separate video/audio files that need merging
             base_name = os.path.splitext(final_path)[0]
@@ -1964,7 +2000,8 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 video_file = video_files[0]  # Use first found
                 audio_file = audio_files[0]  # Use first found
                 
-                logging.info(f"Merging {video_file} and {audio_file} into {final_path}")
+                logging.info(f"[MERGE] Starting video+audio merge: {video_file} + {audio_file}")
+                socketio.emit('percentage', {'percentage': '100% - Fusion vidéo/audio...'})
                 
                 merge_command = [
                     ffmpeg_path,
@@ -1977,8 +2014,9 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 ]
                 
                 try:
-                    run_hidden_subprocess(merge_command, check=True, capture_output=True, text=True)
-                    logging.info(f"Successfully merged files into: {final_path}")
+                    # Use 10 minute timeout for large video merges
+                    run_hidden_subprocess(merge_command, timeout=600, check=True, capture_output=True, text=True)
+                    logging.info(f"[MERGE] Successfully merged files into: {final_path}")
                     
                     # Clean up separate files
                     try:
@@ -1990,15 +2028,22 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     
                     actual_file = final_path
                     
+                except subprocess.TimeoutExpired as e:
+                    logging.error(f"[MERGE] FFmpeg merge TIMEOUT after {e.timeout}s - this may happen with very large files")
+                    socketio.emit('percentage', {'percentage': 'Fusion trop longue - utilisation vidéo seule'})
+                    # Don't fail completely - use video file alone
+                    if os.path.exists(video_file):
+                        actual_file = video_file
+                        logging.info(f"[MERGE] Using video file as fallback after timeout: {video_file}")
                 except subprocess.CalledProcessError as e:
-                    logging.error(f"Error merging files: {e}")
+                    logging.error(f"[MERGE] Error merging files: {e}")
                     if e.stderr:
-                        logging.error(f"FFmpeg stderr: {e.stderr}")
+                        logging.error(f"[MERGE] FFmpeg stderr: {e.stderr}")
                     # Don't fail completely - maybe one of the files is usable
                     if os.path.exists(video_file):
                         # Use video file if it exists and seems complete
                         actual_file = video_file
-                        logging.info(f"Using video file as fallback: {video_file}")
+                        logging.info(f"[MERGE] Using video file as fallback: {video_file}")
             
             # If still no file, look for any files with similar names
             if not actual_file:
@@ -2025,7 +2070,8 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                             logging.warning(f"Could not move file to expected location: {e}")
 
         if actual_file and os.path.exists(actual_file):
-            logging.info(f"Using file: {actual_file}")
+            logging.info(f"[METADATA] Starting metadata addition for: {actual_file}")
+            socketio.emit('percentage', {'percentage': '100% - Ajout métadonnées...'})
             
             # Add URL to metadata
             metadata_command = [
@@ -2036,30 +2082,39 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             ] + get_ffmpeg_postprocessor_args() + [
                 f'{actual_file}_with_metadata.mp4'
             ]
-            logging.info(f"Running FFmpeg command: {' '.join(metadata_command)}")
+            logging.info(f"[METADATA] Running FFmpeg command: {' '.join(metadata_command)}")
 
             try:
-                run_hidden_subprocess(metadata_command, check=True)
+                # Use 5 minute timeout for metadata (should be quick with -codec copy)
+                run_hidden_subprocess(metadata_command, timeout=300, check=True)
                 os.replace(f'{actual_file}_with_metadata.mp4', actual_file)
                 
-                logging.info(f"Video downloaded and processed: {actual_file}")
+                logging.info(f"[COMPLETE] Video downloaded and processed: {actual_file}")
                 socketio.emit('import_video', {'path': actual_file})
                 # Emit both formats to ensure compatibility
                 socketio.emit('download-complete', {'url': video_url, 'path': actual_file})  # Hyphenated format for Chrome extension
                 logging.info("Import signal sent to Premiere Pro extension via SocketIO")
                 
                 return actual_file
-            except subprocess.CalledProcessError as e:
-                logging.error(f"Error adding metadata: {e}")
-                logging.error(f"FFmpeg stderr: {e.stderr if hasattr(e, 'stderr') else 'No stderr'}")
+            except subprocess.TimeoutExpired as e:
+                logging.error(f"[METADATA] FFmpeg metadata TIMEOUT after {e.timeout}s")
                 # Still return the file even if metadata failed
-                logging.info(f"Returning file without metadata: {actual_file}")
+                logging.info(f"[METADATA] Returning file without metadata due to timeout: {actual_file}")
+                socketio.emit('import_video', {'path': actual_file})
+                socketio.emit('download-complete', {'url': video_url, 'path': actual_file})
+                logging.info("Import signal sent to Premiere Pro extension via SocketIO")
+                return actual_file
+            except subprocess.CalledProcessError as e:
+                logging.error(f"[METADATA] Error adding metadata: {e}")
+                logging.error(f"[METADATA] FFmpeg stderr: {e.stderr if hasattr(e, 'stderr') else 'No stderr'}")
+                # Still return the file even if metadata failed
+                logging.info(f"[METADATA] Returning file without metadata: {actual_file}")
                 socketio.emit('import_video', {'path': actual_file})
                 socketio.emit('download-complete', {'url': video_url, 'path': actual_file})
                 logging.info("Import signal sent to Premiere Pro extension via SocketIO")
                 return actual_file
         else:
-            logging.error(f"No suitable file found. Expected: {final_path}")
+            logging.error(f"[ERROR] No suitable file found. Expected: {final_path}")
             # List all files in directory for debugging
             try:
                 all_files = os.listdir(os.path.dirname(final_path))
@@ -2501,26 +2556,46 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                     temp_output
                 ]
 
-                logging.info('[AUDIO] Adding metadata - fast copy mode (no reencoding)')
-                run_hidden_subprocess(metadata_cmd, check=True)
-                logging.info('[AUDIO] Metadata added successfully')
-
-                # Clean up and rename
+                logging.info('[AUDIO-METADATA] Adding metadata - fast copy mode (no reencoding)')
+                socketio.emit('percentage', {'percentage': '100% - Ajout métadonnées audio...'})
+                
                 try:
-                    os.remove(downloaded_file)
-                except:
-                    pass
-
-                try:
-                    os.rename(temp_output, output_path)
-                except:
-                    # If rename fails, try copy and delete
-                    import shutil
-                    shutil.copy2(temp_output, output_path)
+                    # Use 2 minute timeout for audio metadata (should be quick)
+                    run_hidden_subprocess(metadata_cmd, timeout=120, check=True)
+                    logging.info('[AUDIO-METADATA] Metadata added successfully')
+                    
+                    # Clean up and rename
                     try:
-                        os.remove(temp_output)
+                        os.remove(downloaded_file)
                     except:
                         pass
+
+                    try:
+                        os.rename(temp_output, output_path)
+                    except:
+                        # If rename fails, try copy and delete
+                        import shutil
+                        shutil.copy2(temp_output, output_path)
+                        try:
+                            os.remove(temp_output)
+                        except:
+                            pass
+                except subprocess.TimeoutExpired as e:
+                    logging.error(f'[AUDIO-METADATA] FFmpeg timeout after {e.timeout}s')
+                    # Use original file without metadata
+                    try:
+                        os.rename(downloaded_file, output_path)
+                    except:
+                        import shutil
+                        shutil.copy2(downloaded_file, output_path)
+                except subprocess.CalledProcessError as e:
+                    logging.error(f'[AUDIO-METADATA] FFmpeg error: {e}')
+                    # Use original file without metadata
+                    try:
+                        os.rename(downloaded_file, output_path)
+                    except:
+                        import shutil
+                        shutil.copy2(downloaded_file, output_path)
 
                 # Clean up current_download references on success
                 if current_download:
@@ -2528,7 +2603,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                     current_download['cancel_callback'] = None
 
                 # Emit completion progress (100%)
-                logging.info('[AUDIO COMPLETE] Audio extraction finished successfully')
+                logging.info('[AUDIO-COMPLETE] Audio extraction finished successfully')
                 socketio.emit('progress', {'progress': '100', 'type': 'audio', 'status': 'complete'})
                 socketio.emit('percentage', {'percentage': '100%'})
 
