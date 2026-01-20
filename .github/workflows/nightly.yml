@@ -1,0 +1,566 @@
+name: Nightly Build (Test)
+
+on:
+  push:
+    branches:
+      - Pre-released
+  workflow_dispatch:
+    inputs:
+      release_name:
+        description: 'Custom release name (optional)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  mac-build-apple-silicon:
+    runs-on: macos-14
+    needs: [windows-build]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.13.5'
+          architecture: 'arm64'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'yarn'
+
+      - name: Sync clock
+        run: sudo sntp -sS time.windows.com
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip setuptools wheel
+
+      - name: Install Deno for YouTube challenge solver
+        run: |
+          echo "Installing Deno for yt-dlp EJS challenge solver..."
+          curl -fsSL https://deno.land/install.sh | sh
+          echo "$HOME/.deno/bin" >> $GITHUB_PATH
+          export PATH="$HOME/.deno/bin:$PATH"
+          deno --version
+          echo "✅ Deno installed successfully"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install --upgrade yt-dlp
+          pip install python-dotenv
+
+      - name: Install Node.js dependencies
+        run: |
+          yarn install --frozen-lockfile
+
+      - name: Debug Secrets
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "=== DEBUGGING SECRETS ==="
+          echo "BUILD_CERTIFICATE_BASE64 length: ${#BUILD_CERTIFICATE_BASE64}"
+          echo "P12_PASSWORD length: ${#P12_PASSWORD}"
+          echo "KEYCHAIN_PASSWORD length: ${#KEYCHAIN_PASSWORD}"
+          
+          if [ -z "$BUILD_CERTIFICATE_BASE64" ]; then
+            echo "❌ BUILD_CERTIFICATE_BASE64 is empty!"
+            exit 1
+          fi
+          
+          if [ -z "$P12_PASSWORD" ]; then
+            echo "❌ P12_PASSWORD is empty!"
+            exit 1
+          fi
+          
+          if [ -z "$KEYCHAIN_PASSWORD" ]; then
+            echo "❌ KEYCHAIN_PASSWORD is empty!"
+            exit 1
+          fi
+          
+          echo "✅ All required secrets are present"
+
+      - name: Create and Configure Keychain
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          INSTALLER_CERTIFICATE_BASE64: ${{ secrets.SIGN_INSTALL_CERTIFICATE }}
+          P12_INSTALL_PASSWORD: ${{ secrets.P12_INSTALL_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          # create variables
+          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
+          INSTALLER_CERTIFICATE_PATH=$RUNNER_TEMP/installer_certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/SelgykeyAPP.keychain-db
+          
+          # import application certificate from secrets
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode > $CERTIFICATE_PATH
+          echo "Application certificate decoded, size: $(wc -c < $CERTIFICATE_PATH) bytes"
+          
+          # import installer certificate from secrets
+          echo -n "$INSTALLER_CERTIFICATE_BASE64" | base64 --decode > $INSTALLER_CERTIFICATE_PATH
+          echo "Installer certificate decoded, size: $(wc -c < $INSTALLER_CERTIFICATE_PATH) bytes"
+          
+          # create temporary keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          
+          # import both certificates to keychain
+          echo "Importing application certificate..."
+          security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          
+          echo "Importing installer certificate..."
+          security import $INSTALLER_CERTIFICATE_PATH -P "$P12_INSTALL_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          
+          security list-keychain -d user -s $KEYCHAIN_PATH
+          
+          # List all identities in custom keychain
+          echo "Listing all identities in SelgykeyAPP keychain:"
+          security find-identity -p codesigning $KEYCHAIN_PATH
+
+      - name: Download FFmpeg for macOS
+        run: |
+          echo "Downloading FFmpeg for macOS..."
+          curl -L "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/snapshot/ffmpeg.zip" -o ffmpeg.zip
+          unzip ffmpeg.zip
+          chmod +x ffmpeg
+          echo "FFmpeg downloaded and made executable"
+
+      - name: Download Deno standalone for macOS
+        run: |
+          echo "Downloading Deno standalone for macOS ARM64..."
+          curl -fsSL https://github.com/denoland/deno/releases/latest/download/deno-aarch64-apple-darwin.zip -o deno.zip
+          unzip deno.zip
+          chmod +x deno
+          # Move to app directory for PyInstaller
+          mv deno app/deno
+          echo "Deno downloaded and moved to app/"
+          ./app/deno --version
+
+      - name: Build Application with PyInstaller
+        run: |
+          pip install --upgrade pyinstaller
+          pyinstaller --onedir --clean --debug=all \
+          --hidden-import=engineio.async_drivers.threading \
+          --hidden-import=engineio.async_drivers \
+          --hidden-import=websocket \
+          --hidden-import=websockets \
+          --hidden-import=wsproto \
+          --hidden-import=pygame \
+          --hidden-import=PIL \
+          --hidden-import=flask \
+          --hidden-import=flask_cors \
+          --hidden-import=flask_socketio \
+          --hidden-import=yt_dlp \
+          --hidden-import=pymiere \
+          --hidden-import=psutil \
+          --hidden-import=tkinter \
+          --hidden-import=video_processing \
+          --hidden-import=utils \
+          --hidden-import=routes \
+          --collect-all=yt_dlp \
+          --collect-all=flask \
+          --collect-all=flask_socketio \
+          --collect-all=flask_cors \
+          --collect-all=werkzeug \
+          --collect-all=psutil \
+          --collect-all=requests \
+          --collect-all=tqdm \
+          --collect-all=pygame \
+          --collect-all=curl_cffi \
+          --collect-all=python_dotenv \
+          --collect-all=eventlet \
+          --collect-all=gevent_websocket \
+          --collect-all=simple_websocket \
+          --add-data "app/sounds:sounds" \
+          --add-data "app/*.py:." \
+          app/YoutubetoPremiere.py
+          
+          # Copy ffmpeg and deno to _internal directory
+          echo "Copying ffmpeg and deno to _internal directory..."
+          if [ -f "ffmpeg" ]; then
+            cp ffmpeg ./dist/YoutubetoPremiere/_internal/ffmpeg
+            chmod +x ./dist/YoutubetoPremiere/_internal/ffmpeg
+            echo "✅ ffmpeg copied to _internal"
+          else
+            echo "❌ ERROR: ffmpeg not found"
+            exit 1
+          fi
+          
+          if [ -f "app/deno" ]; then
+            cp app/deno ./dist/YoutubetoPremiere/_internal/deno
+            chmod +x ./dist/YoutubetoPremiere/_internal/deno
+            echo "✅ deno copied to _internal"
+          else
+            echo "❌ ERROR: app/deno not found"
+            exit 1
+          fi
+
+      - name: Build CEP Extension
+        run: |
+          echo "Building CEP extension..."
+          yarn build:cep
+          echo "CEP build completed"
+        env:
+          ZXP_PACKAGE: false
+
+      - name: Copy Python executable to CEP extension
+        run: |
+          echo "Copying Python executable to CEP extension..."
+          rm -rf ./dist/cep/exec
+          mkdir -p ./dist/cep/exec
+          cp -R ./dist/YoutubetoPremiere/* ./dist/cep/exec/
+          echo "Python executable copied to CEP extension"
+          
+          # Set executable permissions on macOS
+          chmod +x ./dist/cep/exec/YoutubetoPremiere
+          echo "Executable permissions set for YoutubetoPremiere"
+
+      - name: Make Executable
+        run: |
+          chmod +x ./dist/YoutubetoPremiere/YoutubetoPremiere
+
+      - name: Sign the Application
+        run: |
+          echo "Signing the application..."
+          codesign --deep --timestamp --options runtime --force --verify --verbose --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" "./dist/YoutubetoPremiere"
+
+      - name: Sign all binaries in dist
+        run: |
+          echo "Signing all binaries and frameworks in dist directory..."
+          find ./dist -type f \( -name "*.dylib" -o -name "*.so" -o -perm +111 \) -exec codesign --timestamp --options runtime --force --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" {} \; 2>/dev/null || true
+          find ./dist -type d -name "*.framework" -exec codesign --deep --timestamp --options runtime --force --sign "Developer ID Application: mickael ducatez (9H8DB46V75)" {} \; 2>/dev/null || true
+          echo "All binaries signed"
+
+      - name: Prepare PKG structure
+        run: |
+          echo "Preparing PKG structure..."
+          mkdir -p ./pkg-root/YoutubetoPremiere
+          mkdir -p ./pkg-root/com.selgy.youtubetopremiere
+          
+          cp -R ./dist/YoutubetoPremiere/* ./pkg-root/YoutubetoPremiere/
+          cp -R ./dist/cep/* ./pkg-root/com.selgy.youtubetopremiere/
+          cp -R ./dist/cep/.debug ./pkg-root/com.selgy.youtubetopremiere/ 2>/dev/null || true
+          
+          echo "PKG structure prepared"
+
+      - name: Create PKG installer
+        run: |
+          echo "Creating PKG installer..."
+          pkgbuild --root ./pkg-root \
+            --identifier com.selgy.youtubetopremiere \
+            --version 1.0 \
+            --install-location /Applications \
+            --scripts ./scripts \
+            --min-os-version 10.15 \
+            YouTubetoPremiere-macOS-nightly.pkg
+          echo "PKG installer created successfully"
+          
+      - name: Sign PKG installer
+        run: |
+          echo "Signing PKG installer..."
+          productsign --sign "Developer ID Installer: mickael ducatez (9H8DB46V75)" YouTubetoPremiere-macOS-nightly.pkg YouTubetoPremiere-macOS-nightly-signed.pkg
+          mv YouTubetoPremiere-macOS-nightly-signed.pkg YouTubetoPremiere-macOS-nightly.pkg
+          echo "PKG installer signed successfully"
+
+      - name: Notarize PKG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          echo "Creating keychain profile for notarization..."
+          xcrun notarytool store-credentials "notarytool-profile" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APP_SPECIFIC_PASSWORD"
+          
+          echo "Submitting PKG for notarization..."
+          xcrun notarytool submit "YouTubetoPremiere-macOS-nightly.pkg" --keychain-profile "notarytool-profile" --wait
+
+      - name: Upload macOS Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-nightly-build
+          path: |
+            YouTubetoPremiere-macOS-nightly.pkg
+
+  windows-build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.13.5'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'yarn'
+
+      - name: Cache FFmpeg
+        id: cache-ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg.exe
+          key: ${{ runner.os }}-ffmpeg-6.1-v1
+
+      - name: Cache NSIS
+        id: cache-nsis
+        uses: actions/cache@v4
+        with:
+          path: C:\Program Files (x86)\NSIS
+          key: ${{ runner.os }}-nsis-3.10.0-v1
+
+      - name: Install NSIS (if not cached)
+        if: steps.cache-nsis.outputs.cache-hit != 'true'
+        run: |
+          echo "Installing NSIS..."
+          choco install nsis -y --force
+          $nsisPath = "C:\Program Files (x86)\NSIS"
+          echo "NSIS_PATH=$nsisPath" >> $env:GITHUB_ENV
+          echo "$nsisPath" >> $env:GITHUB_PATH
+          & "$nsisPath\makensis.exe" /VERSION
+        shell: powershell
+
+      - name: Setup NSIS PATH (for cached installation)
+        if: steps.cache-nsis.outputs.cache-hit == 'true'
+        run: |
+          $nsisPath = "C:\Program Files (x86)\NSIS"
+          echo "NSIS_PATH=$nsisPath" >> $env:GITHUB_ENV
+          echo "$nsisPath" >> $env:GITHUB_PATH
+          & "$nsisPath\makensis.exe" /VERSION
+        shell: powershell
+
+      - name: Install NSIS nsProcess plugin
+        run: |
+          New-Item -ItemType Directory -Path "C:\Program Files (x86)\NSIS\Plugins\x86-unicode" -Force | Out-Null
+          New-Item -ItemType Directory -Path "C:\Program Files (x86)\NSIS\Plugins\x86-ansi" -Force | Out-Null
+          New-Item -ItemType Directory -Path "C:\Program Files (x86)\NSIS\Include" -Force | Out-Null
+          
+          $nsProcessNsh = @"
+          !ifndef NSPROCESS_NSH
+          !define NSPROCESS_NSH
+          
+          !define nsProcess::FindProcess "!insertmacro nsProcess_FindProcess"
+          !define nsProcess::KillProcess "!insertmacro nsProcess_KillProcess"
+          
+          !macro nsProcess_FindProcess PROCESS_NAME RESULT_VAR
+            nsExec::ExecToLog 'tasklist /FI "IMAGENAME eq `${PROCESS_NAME}" /NH /FO CSV 2>nul | find /I "`${PROCESS_NAME}"'
+            Pop `$0
+            `${If} `$0 == 0
+              StrCpy `${RESULT_VAR} 0
+            `${Else}
+              StrCpy `${RESULT_VAR} 603
+            `${EndIf}
+          !macroend
+          
+          !macro nsProcess_KillProcess PROCESS_NAME RESULT_VAR
+            nsExec::ExecToLog 'taskkill /F /IM "`${PROCESS_NAME}" 2>nul'
+            Pop `$0
+            `${If} `$0 == 0
+              StrCpy `${RESULT_VAR} 0
+            `${Else}
+              StrCpy `${RESULT_VAR} 601
+            `${EndIf}
+          !macroend
+          
+          !endif
+          "@
+          
+          $nsProcessNsh | Out-File -FilePath "C:\Program Files (x86)\NSIS\Include\nsProcess.nsh" -Encoding ASCII -Force
+        shell: powershell
+
+      - name: Download FFmpeg (if not cached)
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          $ffmpegUrls = @(
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
+            "https://github.com/GyanD/codexffmpeg/releases/download/6.1.1/ffmpeg-6.1.1-essentials_build.zip"
+          )
+          
+          $success = $false
+          foreach ($url in $ffmpegUrls) {
+            try {
+              Invoke-WebRequest -Uri $url -OutFile "ffmpeg.zip" -TimeoutSec 120 -UseBasicParsing
+              if ((Get-Item "ffmpeg.zip").Length -gt 1MB) {
+                $success = $true
+                break
+              }
+            } catch { }
+          }
+          
+          if (-not $success) { exit 1 }
+          
+          Expand-Archive -Path "ffmpeg.zip" -DestinationPath "ffmpeg_temp" -Force
+          $ffmpegExe = Get-ChildItem -Path "ffmpeg_temp" -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1 -ExpandProperty FullName
+          Copy-Item -Path $ffmpegExe -Destination "ffmpeg.exe" -Force
+          Remove-Item "ffmpeg.zip" -Force
+          Remove-Item "ffmpeg_temp" -Recurse -Force
+        shell: powershell
+
+      - name: Download Deno standalone for Windows
+        run: |
+          $denoUrl = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip"
+          Invoke-WebRequest -Uri $denoUrl -OutFile "deno.zip" -UseBasicParsing
+          Expand-Archive -Path "deno.zip" -DestinationPath "." -Force
+          Move-Item -Path "deno.exe" -Destination "app\deno.exe" -Force
+          .\app\deno.exe --version
+          Remove-Item "deno.zip" -Force
+        shell: powershell
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt
+          pip install --upgrade yt-dlp
+          pip install --upgrade pyinstaller
+
+      - name: Install Node.js dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build Application with PyInstaller
+        run: |
+          if (Test-Path "build") { Remove-Item "build" -Recurse -Force }
+          if (Test-Path "dist") { Remove-Item "dist" -Recurse -Force }
+          
+          pyinstaller --onedir --clean --console --noupx `
+            --exclude-module=PIL --exclude-module=pymiere `
+            --hidden-import=engineio.async_drivers.threading `
+            --hidden-import=flask --hidden-import=flask_cors --hidden-import=flask_socketio `
+            --hidden-import=yt_dlp --hidden-import=psutil `
+            --hidden-import=video_processing --hidden-import=utils --hidden-import=routes `
+            --collect-all=yt_dlp --collect-all=flask --collect-all=flask_socketio `
+            --collect-all=flask_cors --collect-all=werkzeug --collect-all=psutil `
+            --collect-all=requests --collect-all=tqdm --collect-all=pygame `
+            --collect-all=curl_cffi --collect-all=python_dotenv `
+            --collect-all=eventlet --collect-all=gevent_websocket --collect-all=simple_websocket `
+            --add-data "app/sounds;sounds" --add-data "app/*.py;." `
+            app/YoutubetoPremiere.py
+          
+          Copy-Item "ffmpeg.exe" "dist\YoutubetoPremiere\_internal\ffmpeg.exe" -Force
+          Copy-Item "app\deno.exe" "dist\YoutubetoPremiere\_internal\deno.exe" -Force
+        shell: powershell
+        timeout-minutes: 10
+
+      - name: Build CEP Extension
+        run: yarn build:cep
+        env:
+          ZXP_PACKAGE: false
+        shell: powershell
+        timeout-minutes: 5
+
+      - name: Copy Python executable to CEP extension
+        run: |
+          if (Test-Path "./dist/cep/exec") { Remove-Item "./dist/cep/exec" -Recurse -Force }
+          New-Item -ItemType Directory -Path "./dist/cep/exec" -Force
+          Copy-Item -Path "./dist/YoutubetoPremiere/*" -Destination "./dist/cep/exec/" -Recurse -Force
+        shell: powershell
+
+      - name: Create Windows Installer
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          & "C:\Program Files (x86)\NSIS\makensis.exe" /DVERSION=$version installer.nsi
+          
+          $sourceFile = "YoutubetoPremiere-$version-Setup.exe"
+          $targetFile = "YouTubetoPremiere-Setup-nightly.exe"
+          if (Test-Path $sourceFile) {
+            Rename-Item $sourceFile $targetFile
+          } else {
+            $foundFiles = Get-ChildItem "YoutubetoPremiere*.exe"
+            if ($foundFiles) {
+              Rename-Item $foundFiles[0].Name $targetFile
+            } else {
+              exit 1
+            }
+          }
+        shell: powershell
+
+      - name: Upload Windows Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-nightly-build
+          path: |
+            YouTubetoPremiere-Setup-nightly.exe
+
+  release:
+    needs: [mac-build-apple-silicon, windows-build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-nightly-build
+          path: ./artifacts/macos
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-nightly-build
+          path: ./artifacts/windows
+
+      - name: Generate release info
+        id: release_info
+        run: |
+          # Get current date/time for release name
+          RELEASE_DATE=$(date +'%Y%m%d-%H%M%S')
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          
+          # Use custom name if provided, otherwise generate one
+          if [ -n "${{ github.event.inputs.release_name }}" ]; then
+            RELEASE_NAME="${{ github.event.inputs.release_name }}"
+            TAG_NAME="nightly-${{ github.event.inputs.release_name }}"
+          else
+            RELEASE_NAME="Nightly Build $RELEASE_DATE"
+            TAG_NAME="nightly-$RELEASE_DATE-$SHORT_SHA"
+          fi
+          
+          echo "RELEASE_NAME=$RELEASE_NAME" >> $GITHUB_OUTPUT
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_OUTPUT
+
+      - name: Create Pre-Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_info.outputs.TAG_NAME }}
+          name: "🌙 ${{ steps.release_info.outputs.RELEASE_NAME }}"
+          draft: false
+          prerelease: true
+          body: |
+            ## 🌙 Nightly Build - Test Version
+            
+            **⚠️ Cette version est une pré-release pour tests uniquement.**
+            
+            ### 📋 Informations
+            - **Commit:** `${{ steps.release_info.outputs.SHORT_SHA }}`
+            - **Branch:** `${{ github.ref_name }}`
+            - **Date:** `${{ github.event.head_commit.timestamp || 'Manual trigger' }}`
+            
+            ### 📥 Téléchargements
+            - **Windows:** `YouTubetoPremiere-Setup-nightly.exe`
+            - **macOS:** `YouTubetoPremiere-macOS-nightly.pkg`
+            
+            ### ⚠️ Avertissement
+            Cette version peut contenir des bugs. Utilisez-la uniquement pour tester les nouvelles fonctionnalités avant la release officielle.
+            
+            ---
+            *Auto-generated nightly build from commit ${{ github.sha }}*
+          files: |
+            ./artifacts/macos/YouTubetoPremiere-macOS-nightly.pkg
+            ./artifacts/windows/YouTubetoPremiere-Setup-nightly.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
