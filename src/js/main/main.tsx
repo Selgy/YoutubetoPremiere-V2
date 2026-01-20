@@ -307,6 +307,13 @@ const Main = () => {
       showNotification(data.message || 'Download failed', 'error');
     });
 
+    // Handle diagnostic messages from server
+    socket.on('diagnostic', (data: any) => {
+      console.warn('Diagnostic:', data);
+      const type = data.type === 'error' ? 'error' : 'warning';
+      showNotification(`⚠️ ${data.message || 'Diagnostic issue'}`, type);
+    });
+
     socket.on('import_complete', (data: any) => {
       console.log('Import complete:', data);
     });

@@ -1438,6 +1438,27 @@ function initializeSocket() {
             showNotification(errorMessage, 'error', 10000);
         });
 
+        // Handle diagnostic messages from server
+        socket.on('diagnostic', (data) => {
+            console.log('🔍 [DIAGNOSTIC] Received:', data);
+            if (!validateExtensionContext()) return;
+            
+            const type = data.type === 'error' ? 'error' : 'warning';
+            const message = data.message || 'Diagnostic issue detected';
+            
+            // Show diagnostic notification with longer duration for errors
+            const duration = type === 'error' ? 15000 : 8000;
+            showNotification(`⚠️ ${message}`, type, duration);
+            
+            // Log additional diagnostic info
+            if (data.disk_space_gb !== undefined) {
+                console.log(`📊 [DIAGNOSTIC] Disk space: ${data.disk_space_gb} GB`);
+            }
+            if (data.ffmpeg_ok !== undefined) {
+                console.log(`📊 [DIAGNOSTIC] FFmpeg OK: ${data.ffmpeg_ok}`);
+            }
+        });
+
         socket.on('error', (data) => {
             // Silently handle server errors to prevent console spam
             if (!validateExtensionContext()) return;

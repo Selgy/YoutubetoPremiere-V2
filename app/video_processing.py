@@ -90,6 +90,211 @@ def get_subprocess_creation_flags():
         return subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
     return 0
 
+def run_pre_download_diagnostics(download_path, ffmpeg_path, socketio=None):
+    """
+    Run comprehensive diagnostics before starting a download.
+    Checks for common issues that cause downloads to fail or hang.
+    
+    Returns:
+        dict: {
+            'success': bool,
+            'warnings': list of warning messages,
+            'errors': list of error messages,
+            'disk_space_gb': float,
+            'can_write': bool,
+            'ffmpeg_responsive': bool
+        }
+    """
+    result = {
+        'success': True,
+        'warnings': [],
+        'errors': [],
+        'disk_space_gb': 0,
+        'can_write': False,
+        'ffmpeg_responsive': False
+    }
+    
+    logging.info("[DIAGNOSTIC] Starting pre-download diagnostics...")
+    
+    # 1. CHECK DISK SPACE
+    try:
+        if sys.platform == 'win32':
+            import ctypes
+            free_bytes = ctypes.c_ulonglong(0)
+            drive = os.path.splitdrive(download_path)[0]
+            if not drive:
+                drive = os.path.splitdrive(os.path.abspath(download_path))[0]
+            if drive:
+                ctypes.windll.kernel32.GetDiskFreeSpaceExW(
+                    ctypes.c_wchar_p(drive + '\\'),
+                    None, None,
+                    ctypes.pointer(free_bytes)
+                )
+                free_gb = free_bytes.value / (1024 ** 3)
+                result['disk_space_gb'] = round(free_gb, 2)
+                
+                if free_gb < 0.5:  # Less than 500MB
+                    result['errors'].append(f"DISQUE PRESQUE PLEIN: Seulement {free_gb:.2f} GB disponible sur {drive}")
+                    result['success'] = False
+                    logging.error(f"[DIAGNOSTIC] ❌ DISK SPACE CRITICAL: Only {free_gb:.2f} GB free on {drive}")
+                elif free_gb < 2:  # Less than 2GB
+                    result['warnings'].append(f"Espace disque faible: {free_gb:.2f} GB disponible sur {drive}")
+                    logging.warning(f"[DIAGNOSTIC] ⚠️ Low disk space: {free_gb:.2f} GB free on {drive}")
+                else:
+                    logging.info(f"[DIAGNOSTIC] ✅ Disk space OK: {free_gb:.2f} GB free on {drive}")
+        else:
+            # Unix-like systems
+            stat = os.statvfs(download_path if os.path.exists(download_path) else os.path.dirname(download_path))
+            free_gb = (stat.f_bavail * stat.f_frsize) / (1024 ** 3)
+            result['disk_space_gb'] = round(free_gb, 2)
+            
+            if free_gb < 0.5:
+                result['errors'].append(f"DISQUE PRESQUE PLEIN: Seulement {free_gb:.2f} GB disponible")
+                result['success'] = False
+                logging.error(f"[DIAGNOSTIC] ❌ DISK SPACE CRITICAL: Only {free_gb:.2f} GB free")
+            elif free_gb < 2:
+                result['warnings'].append(f"Espace disque faible: {free_gb:.2f} GB disponible")
+                logging.warning(f"[DIAGNOSTIC] ⚠️ Low disk space: {free_gb:.2f} GB free")
+            else:
+                logging.info(f"[DIAGNOSTIC] ✅ Disk space OK: {free_gb:.2f} GB free")
+    except Exception as e:
+        logging.warning(f"[DIAGNOSTIC] Could not check disk space: {e}")
+        result['warnings'].append(f"Impossible de vérifier l'espace disque: {e}")
+    
+    # 2. CHECK WRITE PERMISSIONS
+    try:
+        # Ensure download directory exists
+        os.makedirs(download_path, exist_ok=True)
+        
+        # Try to create a test file
+        test_file = os.path.join(download_path, f'.ytp_write_test_{int(time.time())}.tmp')
+        try:
+            with open(test_file, 'w') as f:
+                f.write('test')
+            os.remove(test_file)
+            result['can_write'] = True
+            logging.info(f"[DIAGNOSTIC] ✅ Write permissions OK for: {download_path}")
+        except PermissionError:
+            result['errors'].append(f"PERMISSION REFUSÉE: Impossible d'écrire dans {download_path}")
+            result['success'] = False
+            logging.error(f"[DIAGNOSTIC] ❌ PERMISSION DENIED: Cannot write to {download_path}")
+        except Exception as write_error:
+            result['warnings'].append(f"Problème d'écriture: {write_error}")
+            logging.warning(f"[DIAGNOSTIC] ⚠️ Write test failed: {write_error}")
+    except Exception as e:
+        result['errors'].append(f"Impossible de créer le dossier de destination: {e}")
+        result['success'] = False
+        logging.error(f"[DIAGNOSTIC] ❌ Cannot create download directory: {e}")
+    
+    # 3. CHECK FFMPEG ACCESSIBILITY (Antivirus detection)
+    try:
+        if ffmpeg_path and os.path.exists(ffmpeg_path):
+            logging.info(f"[DIAGNOSTIC] Testing FFmpeg responsiveness: {ffmpeg_path}")
+            start_time = time.time()
+            
+            try:
+                # Quick FFmpeg version check with short timeout
+                proc = subprocess.run(
+                    [ffmpeg_path, '-version'],
+                    capture_output=True,
+                    timeout=10,  # 10 second timeout - if it takes longer, something is blocking it
+                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                )
+                elapsed = time.time() - start_time
+                
+                if proc.returncode == 0:
+                    result['ffmpeg_responsive'] = True
+                    if elapsed > 3:
+                        result['warnings'].append(f"FFmpeg répond lentement ({elapsed:.1f}s) - possible interférence antivirus")
+                        logging.warning(f"[DIAGNOSTIC] ⚠️ FFmpeg slow response ({elapsed:.1f}s) - possible antivirus interference")
+                    else:
+                        logging.info(f"[DIAGNOSTIC] ✅ FFmpeg responsive ({elapsed:.2f}s)")
+                else:
+                    result['warnings'].append(f"FFmpeg a retourné une erreur (code {proc.returncode})")
+                    logging.warning(f"[DIAGNOSTIC] ⚠️ FFmpeg returned error code {proc.returncode}")
+                    
+            except subprocess.TimeoutExpired:
+                result['errors'].append("FFMPEG BLOQUÉ: L'antivirus bloque probablement ffmpeg.exe. Ajoutez une exception dans votre antivirus.")
+                result['success'] = False
+                logging.error("[DIAGNOSTIC] ❌ FFMPEG BLOCKED: Timed out after 10s - likely blocked by antivirus!")
+                
+            except FileNotFoundError:
+                result['errors'].append(f"FFmpeg introuvable: {ffmpeg_path}")
+                result['success'] = False
+                logging.error(f"[DIAGNOSTIC] ❌ FFmpeg not found at: {ffmpeg_path}")
+                
+        else:
+            result['errors'].append("FFmpeg non configuré ou introuvable")
+            result['success'] = False
+            logging.error("[DIAGNOSTIC] ❌ FFmpeg not configured or not found")
+            
+    except Exception as e:
+        result['warnings'].append(f"Erreur lors du test FFmpeg: {e}")
+        logging.warning(f"[DIAGNOSTIC] FFmpeg test error: {e}")
+    
+    # 4. CHECK FOR LOCKED FILES IN DOWNLOAD DIRECTORY (optional)
+    try:
+        if os.path.exists(download_path):
+            # Look for any .tmp or partial download files that might be locked
+            temp_files = glob.glob(os.path.join(download_path, '*.part')) + \
+                        glob.glob(os.path.join(download_path, '*.ytdl')) + \
+                        glob.glob(os.path.join(download_path, '*.temp'))
+            
+            if temp_files:
+                locked_files = []
+                for temp_file in temp_files[:5]:  # Check first 5 only
+                    try:
+                        # Try to open for writing to check if locked
+                        with open(temp_file, 'a'):
+                            pass
+                    except (PermissionError, IOError):
+                        locked_files.append(os.path.basename(temp_file))
+                
+                if locked_files:
+                    result['warnings'].append(f"Fichiers temporaires verrouillés détectés: {', '.join(locked_files)}")
+                    logging.warning(f"[DIAGNOSTIC] ⚠️ Locked temp files found: {locked_files}")
+                else:
+                    # Clean up old temp files
+                    for temp_file in temp_files:
+                        try:
+                            os.remove(temp_file)
+                            logging.info(f"[DIAGNOSTIC] Cleaned up old temp file: {temp_file}")
+                        except:
+                            pass
+    except Exception as e:
+        logging.debug(f"[DIAGNOSTIC] Could not check for locked files: {e}")
+    
+    # SUMMARY
+    if result['errors']:
+        logging.error(f"[DIAGNOSTIC] ❌ DIAGNOSTICS FAILED: {len(result['errors'])} error(s), {len(result['warnings'])} warning(s)")
+        for err in result['errors']:
+            logging.error(f"[DIAGNOSTIC]   ERROR: {err}")
+    elif result['warnings']:
+        logging.warning(f"[DIAGNOSTIC] ⚠️ DIAGNOSTICS PASSED WITH WARNINGS: {len(result['warnings'])} warning(s)")
+        for warn in result['warnings']:
+            logging.warning(f"[DIAGNOSTIC]   WARNING: {warn}")
+    else:
+        logging.info("[DIAGNOSTIC] ✅ All diagnostics passed successfully")
+    
+    # Emit diagnostic results to client
+    if socketio and (result['errors'] or result['warnings']):
+        diagnostic_message = ""
+        if result['errors']:
+            diagnostic_message = result['errors'][0]  # Show first error
+        elif result['warnings']:
+            diagnostic_message = result['warnings'][0]  # Show first warning
+        
+        if diagnostic_message:
+            socketio.emit('diagnostic', {
+                'type': 'error' if result['errors'] else 'warning',
+                'message': diagnostic_message,
+                'disk_space_gb': result['disk_space_gb'],
+                'can_write': result['can_write'],
+                'ffmpeg_ok': result['ffmpeg_responsive']
+            })
+    
+    return result
+
 def run_hidden_subprocess(cmd, timeout=300, **kwargs):
     """Run subprocess with hidden console window on Windows
     
@@ -1022,6 +1227,14 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         socketio.emit('download-failed', {'message': error_msg})
         return {"error": error_msg}
 
+    # Run pre-download diagnostics
+    diag = run_pre_download_diagnostics(download_path, ffmpeg_path, socketio)
+    if not diag['success']:
+        error_msg = diag['errors'][0] if diag['errors'] else "Diagnostic check failed"
+        logging.error(f"[CLIP] Pre-download diagnostics failed: {error_msg}")
+        socketio.emit('download-failed', {'message': error_msg})
+        return {"error": error_msg}
+
     try:
         # Ensure ffmpeg path is valid
         if not ffmpeg_path:
@@ -1253,7 +1466,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         
         # Configure yt-dlp options based on what worked for extraction
         if use_cookies_for_download:
-            ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
+        ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
             logging.info("Clip download will use cookies")
         else:
             ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
@@ -1280,7 +1493,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         # so we can't completely redirect stdout/stderr on Windows.
         # Instead, we'll use a safer approach that preserves progress hooks
         # Download with yt-dlp (AVC1 format only, no fallback)
-        try:
+            try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 current_download['ydl'] = ydl
                 logging.info('[DOWNLOAD] Set ydl object in current_download structure for clip download')
@@ -1314,61 +1527,61 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                     if os.path.exists(video_file_path):
                         os.remove(video_file_path)
                     return {"error": "Download cancelled by user"}
-        
-        except Exception as e:
-            error_message = f"Error downloading clip: {str(e)}"
-            
-            # Check if this is a cancellation exception
-            if 'cancelled' in str(e).lower():
-                logging.info("Clip download cancelled by user")
-                # Clean up all partial files created by yt-dlp for clips
-                cleanup_partial_video_files(video_file_path)
-                logging.info('[CANCEL] Clip download successfully cancelled - cleanup completed')
-                return {"error": "Download cancelled by user"}
-            
-            # Log detailed context for debugging
-            log_download_context(e, {
-                'function': 'download_and_process_clip',
-                'video_url': video_url,
-                'resolution': resolution,
-                'clip_start': clip_start,
-                'clip_end': clip_end,
-                'video_file_path': video_file_path,
-                'ffmpeg_path': ffmpeg_path
-            })
-            
-            logging.error(error_message)
-            logging.error(f"Exception type: {type(e).__name__}")
-            
-            # Check for Windows-specific stdout/stderr issues
-            if "[Errno 22]" in str(e) or "Invalid argument" in str(e) or "BrokenPipeError" in str(type(e)):
-                error_message = "Clip download failed due to Windows output stream issue. This has been fixed in the latest version. Please try again."
-                logging.error("Windows stdout/stderr pipe error detected during clip download - fix has been applied")
-            # Check if error is related to ffmpeg
-            elif 'ffmpeg' in str(e).lower() or 'executable' in str(e).lower():
-                logging.error(f"FFmpeg-related error detected. Current ffmpeg path: {ffmpeg_path}")
-                # Suggest potential solutions
-                solutions = "Try restarting the application or using a different clip download approach."
-                error_message += f" This appears to be related to ffmpeg. {solutions}"
-            
-            socketio.emit('download-failed', {'message': error_message})
-            return {"error": error_message}
+                        
+            except Exception as e:
+                error_message = f"Error downloading clip: {str(e)}"
+                
+                # Check if this is a cancellation exception
+                if 'cancelled' in str(e).lower():
+                    logging.info("Clip download cancelled by user")
+                    # Clean up all partial files created by yt-dlp for clips
+                    cleanup_partial_video_files(video_file_path)
+                    logging.info('[CANCEL] Clip download successfully cancelled - cleanup completed')
+                    return {"error": "Download cancelled by user"}
+                
+                # Log detailed context for debugging
+                log_download_context(e, {
+                    'function': 'download_and_process_clip',
+                    'video_url': video_url,
+                    'resolution': resolution,
+                    'clip_start': clip_start,
+                    'clip_end': clip_end,
+                    'video_file_path': video_file_path,
+                    'ffmpeg_path': ffmpeg_path
+                })
+                
+                logging.error(error_message)
+                logging.error(f"Exception type: {type(e).__name__}")
+                
+                # Check for Windows-specific stdout/stderr issues
+                if "[Errno 22]" in str(e) or "Invalid argument" in str(e) or "BrokenPipeError" in str(type(e)):
+                    error_message = "Clip download failed due to Windows output stream issue. This has been fixed in the latest version. Please try again."
+                    logging.error("Windows stdout/stderr pipe error detected during clip download - fix has been applied")
+                # Check if error is related to ffmpeg
+                elif 'ffmpeg' in str(e).lower() or 'executable' in str(e).lower():
+                    logging.error(f"FFmpeg-related error detected. Current ffmpeg path: {ffmpeg_path}")
+                    # Suggest potential solutions
+                    solutions = "Try restarting the application or using a different clip download approach."
+                    error_message += f" This appears to be related to ffmpeg. {solutions}"
+                
+                socketio.emit('download-failed', {'message': error_message})
+                return {"error": error_message}
         
         # Cleanup after download
         try:
-            current_download['ydl'] = None
-            current_download['cancel_callback'] = None
-            
-            # Clean up the cookies file after download (Windows only)
-            if sys.platform == 'win32' and cookies_file and os.path.exists(cookies_file):
-                try:
-                    os.remove(cookies_file)
-                    logging.info(f"[Windows] Cleaned up temporary cookies file: {cookies_file}")
-                except Exception as e:
-                    logging.debug(f"Could not remove cookies file: {e}")
+                current_download['ydl'] = None
+                current_download['cancel_callback'] = None
+                
+                # Clean up the cookies file after download (Windows only)
+                if sys.platform == 'win32' and cookies_file and os.path.exists(cookies_file):
+                    try:
+                        os.remove(cookies_file)
+                        logging.info(f"[Windows] Cleaned up temporary cookies file: {cookies_file}")
+                    except Exception as e:
+                        logging.debug(f"Could not remove cookies file: {e}")
         except Exception as cleanup_error:
             logging.debug(f"Error during cleanup: {cleanup_error}")
-        
+
         # Add metadata to the video file if it exists
         if os.path.exists(video_file_path):
             logging.info(f"[CLIP-COMPLETE] Clip downloaded successfully: {video_file_path}")
@@ -1458,6 +1671,14 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
     check_result = check_ffmpeg(settings, socketio)
     if not check_result['success']:
         return None
+    
+    # Run pre-download diagnostics
+    diag = run_pre_download_diagnostics(download_path, ffmpeg_path, socketio)
+    if not diag['success']:
+        error_msg = diag['errors'][0] if diag['errors'] else "Diagnostic check failed"
+        logging.error(f"[DOWNLOAD] Pre-download diagnostics failed: {error_msg}")
+        socketio.emit('download-failed', {'message': error_msg})
+        return {"error": error_msg}
 
     try:
         import yt_dlp
@@ -1807,7 +2028,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         # Configure download options based on which extraction method succeeded
         # CRITICAL: Use the same method that worked for extraction!
         if use_cookies_for_download:
-            ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
+        ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
             logging.info("Download will use cookies (same as extraction)")
         else:
             # Extraction worked without cookies - don't use them for download either!
@@ -1910,20 +2131,20 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             logging.error(error_message)
             socketio.emit('download-failed', {'message': error_message})
             raise e
-        
-        # Check for cancellation after download
+                
+                # Check for cancellation after download
         try:
-            if is_cancelled[0]:
-                logging.info("Download cancelled after completion")
-                # Remove the downloaded file if it exists
-                if os.path.exists(output_path):
-                    try:
-                        os.remove(output_path)
-                        logging.info(f"Removed cancelled download file: {output_path}")
-                    except Exception as e:
-                        logging.error(f"Could not remove cancelled download file: {e}")
-                logging.info('[CANCEL] Video download successfully cancelled after download - cleanup completed')
-                return None
+                if is_cancelled[0]:
+                    logging.info("Download cancelled after completion")
+                    # Remove the downloaded file if it exists
+                    if os.path.exists(output_path):
+                        try:
+                            os.remove(output_path)
+                            logging.info(f"Removed cancelled download file: {output_path}")
+                        except Exception as e:
+                            logging.error(f"Could not remove cancelled download file: {e}")
+                    logging.info('[CANCEL] Video download successfully cancelled after download - cleanup completed')
+                    return None
                     
         except Exception as e:
             error_message = f"Error during video download: {str(e)}"
@@ -2271,6 +2492,14 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
             socketio.emit('download-failed', {'message': error_msg})
             return None
 
+        # Run pre-download diagnostics
+        diag = run_pre_download_diagnostics(download_path, ffmpeg_path, socketio)
+        if not diag['success']:
+            error_msg = diag['errors'][0] if diag['errors'] else "Diagnostic check failed"
+            logging.error(f"[AUDIO] Pre-download diagnostics failed: {error_msg}")
+            socketio.emit('download-failed', {'message': error_msg})
+            return {"error": error_msg}
+
         # Get preferred audio language from settings
         preferred_language = 'original'
         if settings:
@@ -2392,7 +2621,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
         
         # Configure yt-dlp options based on what worked for extraction
         if use_cookies_for_download:
-            ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
+        ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
             logging.info("Audio download will use cookies")
         else:
             ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
@@ -2569,23 +2798,23 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                     # Use 2 minute timeout for audio metadata (should be quick)
                     run_hidden_subprocess(metadata_cmd, timeout=120, check=True)
                     logging.info('[AUDIO-METADATA] Metadata added successfully')
-                    
-                    # Clean up and rename
+
+                # Clean up and rename
+                try:
+                    os.remove(downloaded_file)
+                except:
+                    pass
+
+                try:
+                    os.rename(temp_output, output_path)
+                except:
+                    # If rename fails, try copy and delete
+                    import shutil
+                    shutil.copy2(temp_output, output_path)
                     try:
-                        os.remove(downloaded_file)
+                        os.remove(temp_output)
                     except:
                         pass
-
-                    try:
-                        os.rename(temp_output, output_path)
-                    except:
-                        # If rename fails, try copy and delete
-                        import shutil
-                        shutil.copy2(temp_output, output_path)
-                        try:
-                            os.remove(temp_output)
-                        except:
-                            pass
                 except subprocess.TimeoutExpired as e:
                     logging.error(f'[AUDIO-METADATA] FFmpeg timeout after {e.timeout}s')
                     # Use original file without metadata
@@ -2927,8 +3156,8 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
                 logging.warning(f"[WARNING] Deno found but failed to test: {deno_test_error}")
             
             if deno_working:
-                logging.info("[OK] External JavaScript runtime enabled (EJS challenge solver should be pre-downloaded)")
-                logging.info("[OK] Using yt-dlp's default player client logic for maximum format availability")
+            logging.info("[OK] External JavaScript runtime enabled (EJS challenge solver should be pre-downloaded)")
+            logging.info("[OK] Using yt-dlp's default player client logic for maximum format availability")
             else:
                 logging.warning("[WARNING] Deno exists but may not work properly. Trying alternative clients...")
                 # If Deno doesn't work, try using web client which doesn't require JS runtime
