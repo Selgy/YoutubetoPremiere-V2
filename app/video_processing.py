@@ -90,6 +90,9 @@ def get_subprocess_creation_flags():
         return subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
     return 0
 
+# Track if system info has been logged this session
+_system_info_logged = False
+
 def run_pre_download_diagnostics(download_path, ffmpeg_path, socketio=None):
     """
     Run comprehensive diagnostics before starting a download.
@@ -105,6 +108,8 @@ def run_pre_download_diagnostics(download_path, ffmpeg_path, socketio=None):
             'ffmpeg_responsive': bool
         }
     """
+    global _system_info_logged
+    
     result = {
         'success': True,
         'warnings': [],
@@ -115,6 +120,11 @@ def run_pre_download_diagnostics(download_path, ffmpeg_path, socketio=None):
     }
     
     logging.info("[DIAGNOSTIC] Starting pre-download diagnostics...")
+    
+    # Log system info once per session
+    if not _system_info_logged:
+        log_system_info()
+        _system_info_logged = True
     
     # 1. CHECK DISK SPACE
     try:
@@ -294,6 +304,355 @@ def run_pre_download_diagnostics(download_path, ffmpeg_path, socketio=None):
             })
     
     return result
+
+
+def log_system_info():
+    """
+    Log detailed system information for debugging.
+    Includes RAM, antivirus detection, Windows version, etc.
+    """
+    logging.info("[SYSTEM-INFO] ========== SYSTEM DIAGNOSTICS ==========")
+    
+    # 1. OS Information
+    try:
+        import platform
+        logging.info(f"[SYSTEM-INFO] OS: {platform.system()} {platform.release()}")
+        logging.info(f"[SYSTEM-INFO] OS Version: {platform.version()}")
+        logging.info(f"[SYSTEM-INFO] Architecture: {platform.machine()}")
+        logging.info(f"[SYSTEM-INFO] Processor: {platform.processor()}")
+    except Exception as e:
+        logging.warning(f"[SYSTEM-INFO] Could not get OS info: {e}")
+    
+    # 2. RAM Information
+    try:
+        if PSUTIL_AVAILABLE:
+            import psutil
+            mem = psutil.virtual_memory()
+            total_gb = mem.total / (1024 ** 3)
+            available_gb = mem.available / (1024 ** 3)
+            used_percent = mem.percent
+            logging.info(f"[SYSTEM-INFO] RAM Total: {total_gb:.1f} GB")
+            logging.info(f"[SYSTEM-INFO] RAM Available: {available_gb:.1f} GB ({100-used_percent:.0f}% free)")
+            
+            if available_gb < 1:
+                logging.warning(f"[SYSTEM-INFO] ⚠️ LOW RAM: Only {available_gb:.2f} GB available!")
+            elif available_gb < 2:
+                logging.info(f"[SYSTEM-INFO] RAM somewhat low but OK")
+        else:
+            logging.info("[SYSTEM-INFO] RAM info not available (psutil not installed)")
+    except Exception as e:
+        logging.warning(f"[SYSTEM-INFO] Could not get RAM info: {e}")
+    
+    # 3. Antivirus Detection (Windows only)
+    if sys.platform == 'win32':
+        try:
+            detected_av = []
+            
+            # Method 1: Check running processes for known AV
+            if PSUTIL_AVAILABLE:
+                import psutil
+                av_processes = {
+                    'MsMpEng.exe': 'Windows Defender',
+                    'avastui.exe': 'Avast',
+                    'avgui.exe': 'AVG',
+                    'avguard.exe': 'Avira',
+                    'bdagent.exe': 'Bitdefender',
+                    'ekrn.exe': 'ESET NOD32',
+                    'mcshield.exe': 'McAfee',
+                    'NortonSecurity.exe': 'Norton',
+                    'ns.exe': 'Norton',
+                    'kavtray.exe': 'Kaspersky',
+                    'avp.exe': 'Kaspersky',
+                    'mbam.exe': 'Malwarebytes',
+                    'SophosHealth.exe': 'Sophos',
+                    'cmdagent.exe': 'Comodo',
+                    'zlclient.exe': 'ZoneAlarm',
+                    'fshoster32.exe': 'F-Secure',
+                    'panda_url_filtering.exe': 'Panda',
+                    'dwengine.exe': 'Dr.Web',
+                    'vsserv.exe': 'Bitdefender',
+                    'savservice.exe': 'Sophos',
+                }
+                
+                try:
+                    for proc in psutil.process_iter(['name']):
+                        try:
+                            proc_name = proc.info['name']
+                            if proc_name and proc_name.lower() in [k.lower() for k in av_processes.keys()]:
+                                for k, v in av_processes.items():
+                                    if proc_name.lower() == k.lower():
+                                        if v not in detected_av:
+                                            detected_av.append(v)
+                                        break
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+                except Exception:
+                    pass
+            
+            # Method 2: Check Windows Security Center via WMI (more reliable)
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ['powershell', '-Command', 
+                     'Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct | Select-Object -ExpandProperty displayName'],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    for av_name in result.stdout.strip().split('\n'):
+                        av_name = av_name.strip()
+                        if av_name and av_name not in detected_av:
+                            detected_av.append(av_name)
+            except Exception:
+                pass
+            
+            if detected_av:
+                logging.info(f"[SYSTEM-INFO] 🛡️ Antivirus detected: {', '.join(detected_av)}")
+                logging.info("[SYSTEM-INFO] ⚠️ If downloads fail, try adding ffmpeg.exe and YoutubetoPremiere.exe to antivirus exceptions")
+            else:
+                logging.info("[SYSTEM-INFO] No antivirus detected (or could not detect)")
+                
+        except Exception as e:
+            logging.warning(f"[SYSTEM-INFO] Could not detect antivirus: {e}")
+    
+    # 4. Check if running as admin (Windows)
+    if sys.platform == 'win32':
+        try:
+            import ctypes
+            is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+            logging.info(f"[SYSTEM-INFO] Running as Administrator: {is_admin}")
+        except Exception:
+            pass
+    
+    # 5. Environment variables that matter
+    try:
+        temp_dir = os.environ.get('TEMP', os.environ.get('TMP', 'Not set'))
+        logging.info(f"[SYSTEM-INFO] TEMP directory: {temp_dir}")
+        
+        # Check if temp dir is writable and has space
+        if os.path.exists(temp_dir):
+            try:
+                if sys.platform == 'win32':
+                    import ctypes
+                    free_bytes = ctypes.c_ulonglong(0)
+                    ctypes.windll.kernel32.GetDiskFreeSpaceExW(
+                        ctypes.c_wchar_p(temp_dir),
+                        None, None,
+                        ctypes.pointer(free_bytes)
+                    )
+                    temp_free_gb = free_bytes.value / (1024 ** 3)
+                    logging.info(f"[SYSTEM-INFO] TEMP disk space: {temp_free_gb:.1f} GB free")
+            except Exception:
+                pass
+    except Exception as e:
+        logging.warning(f"[SYSTEM-INFO] Could not check environment: {e}")
+    
+    logging.info("[SYSTEM-INFO] ==========================================")
+
+
+def log_youtube_formats(info_dict, resolution, selected_format_id=None):
+    """
+    Log detailed information about available YouTube formats.
+    Helps diagnose "format not available" errors.
+    
+    Args:
+        info_dict: The info dictionary from yt-dlp
+        resolution: The target resolution
+        selected_format_id: The format ID that was selected (if any)
+    """
+    if not info_dict:
+        logging.warning("[FORMATS] No info_dict provided")
+        return
+    
+    logging.info("[FORMATS] ========== YOUTUBE FORMAT ANALYSIS ==========")
+    
+    try:
+        video_id = info_dict.get('id', 'unknown')
+        title = info_dict.get('title', 'unknown')[:50]
+        logging.info(f"[FORMATS] Video: {title}... (ID: {video_id})")
+        logging.info(f"[FORMATS] Target resolution: {resolution}p")
+        
+        formats = info_dict.get('formats', [])
+        if not formats:
+            logging.error("[FORMATS] ❌ NO FORMATS AVAILABLE - YouTube may be blocking this request")
+            return
+        
+        logging.info(f"[FORMATS] Total formats available: {len(formats)}")
+        
+        # Categorize formats
+        video_formats = []
+        audio_formats = []
+        combined_formats = []
+        avc1_formats = []
+        
+        for f in formats:
+            fmt_id = f.get('format_id', '?')
+            ext = f.get('ext', '?')
+            vcodec = f.get('vcodec', 'none')
+            acodec = f.get('acodec', 'none')
+            height = f.get('height', 0)
+            width = f.get('width', 0)
+            filesize = f.get('filesize') or f.get('filesize_approx', 0)
+            filesize_mb = filesize / (1024 * 1024) if filesize else 0
+            tbr = f.get('tbr', 0)
+            
+            has_video = vcodec and vcodec != 'none'
+            has_audio = acodec and acodec != 'none'
+            
+            format_info = {
+                'id': fmt_id,
+                'ext': ext,
+                'vcodec': vcodec,
+                'acodec': acodec,
+                'height': height,
+                'width': width,
+                'size_mb': round(filesize_mb, 1),
+                'tbr': tbr
+            }
+            
+            if has_video and has_audio:
+                combined_formats.append(format_info)
+            elif has_video:
+                video_formats.append(format_info)
+                if vcodec and ('avc1' in vcodec.lower() or 'h264' in vcodec.lower() or '264' in vcodec):
+                    avc1_formats.append(format_info)
+            elif has_audio:
+                audio_formats.append(format_info)
+        
+        # Log video formats (sorted by height)
+        video_formats.sort(key=lambda x: x['height'] or 0, reverse=True)
+        logging.info(f"[FORMATS] Video-only formats: {len(video_formats)}")
+        for vf in video_formats[:10]:  # Top 10
+            marker = "⭐" if vf['id'] == selected_format_id else "  "
+            avc_marker = "🎬" if 'avc1' in str(vf['vcodec']).lower() or '264' in str(vf['vcodec']) else "  "
+            logging.info(f"[FORMATS] {marker}{avc_marker} ID:{vf['id']:>5} | {vf['height']:>4}p | {vf['vcodec'][:15]:<15} | {vf['ext']:<4} | {vf['size_mb']:>6.1f}MB")
+        
+        # Log AVC1 availability
+        avc1_heights = sorted(set(f['height'] for f in avc1_formats if f['height']), reverse=True)
+        if avc1_formats:
+            logging.info(f"[FORMATS] ✅ AVC1/H.264 available at: {', '.join(f'{h}p' for h in avc1_heights)}")
+        else:
+            logging.warning("[FORMATS] ⚠️ NO AVC1/H.264 FORMATS AVAILABLE - Only VP9/AV1 codecs found")
+            logging.warning("[FORMATS] This video may not import correctly into Premiere Pro!")
+            # Log what codecs ARE available
+            available_codecs = set(f['vcodec'].split('.')[0] for f in video_formats if f['vcodec'] and f['vcodec'] != 'none')
+            logging.info(f"[FORMATS] Available video codecs: {', '.join(available_codecs)}")
+        
+        # Log audio formats
+        logging.info(f"[FORMATS] Audio-only formats: {len(audio_formats)}")
+        audio_formats.sort(key=lambda x: x.get('tbr', 0) or 0, reverse=True)
+        for af in audio_formats[:5]:  # Top 5
+            logging.info(f"[FORMATS]    ID:{af['id']:>5} | {af['acodec'][:15]:<15} | {af['ext']:<4} | {af.get('tbr', 0):>3}kbps")
+        
+        # Log combined formats (usually lower quality)
+        if combined_formats:
+            logging.info(f"[FORMATS] Combined (video+audio) formats: {len(combined_formats)}")
+            for cf in combined_formats[:3]:
+                logging.info(f"[FORMATS]    ID:{cf['id']:>5} | {cf['height']:>4}p | {cf['vcodec'][:10]}/{cf['acodec'][:10]}")
+        
+        # Resolution match check
+        target_height = int(resolution.replace('p', ''))
+        matching_avc1 = [f for f in avc1_formats if f['height'] == target_height]
+        if matching_avc1:
+            logging.info(f"[FORMATS] ✅ Found {len(matching_avc1)} AVC1 format(s) at target {target_height}p")
+        else:
+            closest = min(avc1_formats, key=lambda x: abs((x['height'] or 0) - target_height)) if avc1_formats else None
+            if closest:
+                logging.warning(f"[FORMATS] ⚠️ No AVC1 at {target_height}p, closest is {closest['height']}p")
+            else:
+                logging.error(f"[FORMATS] ❌ No AVC1 formats available at any resolution!")
+        
+    except Exception as e:
+        logging.error(f"[FORMATS] Error analyzing formats: {e}")
+    
+    logging.info("[FORMATS] ================================================")
+
+
+def monitor_ffmpeg_process(process, operation_name="FFmpeg", socketio=None, timeout=600):
+    """
+    Monitor an FFmpeg subprocess and log its progress.
+    Helps diagnose hangs and performance issues.
+    
+    Args:
+        process: subprocess.Popen object
+        operation_name: Name of the operation for logging
+        socketio: SocketIO instance for emitting progress
+        timeout: Maximum time to wait in seconds
+    
+    Returns:
+        bool: True if process completed successfully, False otherwise
+    """
+    import threading
+    
+    start_time = time.time()
+    pid = process.pid
+    
+    logging.info(f"[FFMPEG-MONITOR] Starting {operation_name} (PID: {pid})")
+    
+    last_log_time = start_time
+    log_interval = 10  # Log every 10 seconds
+    
+    try:
+        while process.poll() is None:
+            elapsed = time.time() - start_time
+            
+            # Check timeout
+            if elapsed > timeout:
+                logging.error(f"[FFMPEG-MONITOR] ❌ TIMEOUT after {elapsed:.0f}s - killing process {pid}")
+                process.kill()
+                return False
+            
+            # Periodic logging
+            if time.time() - last_log_time >= log_interval:
+                last_log_time = time.time()
+                
+                # Get process info if psutil available
+                if PSUTIL_AVAILABLE:
+                    try:
+                        import psutil
+                        proc = psutil.Process(pid)
+                        cpu_percent = proc.cpu_percent(interval=0.1)
+                        mem_info = proc.memory_info()
+                        mem_mb = mem_info.rss / (1024 * 1024)
+                        
+                        status = "🟢 Active" if cpu_percent > 1 else "🟡 Idle/Waiting"
+                        logging.info(f"[FFMPEG-MONITOR] {status} | Elapsed: {elapsed:.0f}s | CPU: {cpu_percent:.0f}% | RAM: {mem_mb:.0f}MB")
+                        
+                        # Emit to client
+                        if socketio:
+                            socketio.emit('percentage', {'percentage': f'100% - {operation_name} ({elapsed:.0f}s)...'})
+                        
+                        # Warning if FFmpeg seems stuck (no CPU usage)
+                        if cpu_percent < 0.5 and elapsed > 30:
+                            logging.warning(f"[FFMPEG-MONITOR] ⚠️ FFmpeg appears idle - may be stuck or waiting for I/O")
+                            
+                    except psutil.NoSuchProcess:
+                        logging.info(f"[FFMPEG-MONITOR] Process {pid} ended")
+                        break
+                    except Exception as e:
+                        logging.debug(f"[FFMPEG-MONITOR] Could not get process info: {e}")
+                else:
+                    logging.info(f"[FFMPEG-MONITOR] {operation_name} running... Elapsed: {elapsed:.0f}s")
+            
+            time.sleep(1)
+        
+        # Process finished
+        elapsed = time.time() - start_time
+        return_code = process.returncode
+        
+        if return_code == 0:
+            logging.info(f"[FFMPEG-MONITOR] ✅ {operation_name} completed successfully in {elapsed:.1f}s")
+            return True
+        else:
+            logging.error(f"[FFMPEG-MONITOR] ❌ {operation_name} failed with code {return_code} after {elapsed:.1f}s")
+            return False
+            
+    except Exception as e:
+        logging.error(f"[FFMPEG-MONITOR] Error monitoring process: {e}")
+        return False
+
 
 def run_hidden_subprocess(cmd, timeout=300, **kwargs):
     """Run subprocess with hidden console window on Windows
@@ -1290,6 +1649,8 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                 if video_info:
                     sanitized_title = sanitize_youtube_title(video_info.get('title', 'video'))
                     logging.info(f"Successfully extracted title for clip: {sanitized_title}")
+                    # Log format analysis for debugging
+                    log_youtube_formats(video_info, resolution)
                 else:
                     sanitized_title = 'clip_' + str(int(time.time()))
         except Exception as e:
@@ -1466,7 +1827,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         
         # Configure yt-dlp options based on what worked for extraction
         if use_cookies_for_download:
-        ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
+            ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
             logging.info("Clip download will use cookies")
         else:
             ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
@@ -1493,7 +1854,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         # so we can't completely redirect stdout/stderr on Windows.
         # Instead, we'll use a safer approach that preserves progress hooks
         # Download with yt-dlp (AVC1 format only, no fallback)
-            try:
+        try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 current_download['ydl'] = ydl
                 logging.info('[DOWNLOAD] Set ydl object in current_download structure for clip download')
@@ -1528,7 +1889,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                         os.remove(video_file_path)
                     return {"error": "Download cancelled by user"}
                         
-            except Exception as e:
+        except Exception as e:
                 error_message = f"Error downloading clip: {str(e)}"
                 
                 # Check if this is a cancellation exception
@@ -1998,6 +2359,9 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 # Re-raise the original error if it's not cookie/format-related
                 raise info_error
         
+        # Log detailed format analysis for debugging
+        log_youtube_formats(info, resolution)
+        
         # Check if any video formats are available (accept both combined and separate video/audio streams)
         all_formats = info.get('formats', [])
         video_formats = [f for f in all_formats if f.get('vcodec') != 'none']  # Video streams (can be video-only)
@@ -2028,7 +2392,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         # Configure download options based on which extraction method succeeded
         # CRITICAL: Use the same method that worked for extraction!
         if use_cookies_for_download:
-        ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
+            ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
             logging.info("Download will use cookies (same as extraction)")
         else:
             # Extraction worked without cookies - don't use them for download either!
@@ -2621,7 +2985,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
         
         # Configure yt-dlp options based on what worked for extraction
         if use_cookies_for_download:
-        ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
+            ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
             logging.info("Audio download will use cookies")
         else:
             ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
@@ -2799,22 +3163,23 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                     run_hidden_subprocess(metadata_cmd, timeout=120, check=True)
                     logging.info('[AUDIO-METADATA] Metadata added successfully')
 
-                # Clean up and rename
-                try:
-                    os.remove(downloaded_file)
-                except:
-                    pass
-
-                try:
-                    os.rename(temp_output, output_path)
-                except:
-                    # If rename fails, try copy and delete
-                    import shutil
-                    shutil.copy2(temp_output, output_path)
+                    # Clean up and rename
                     try:
-                        os.remove(temp_output)
+                        os.remove(downloaded_file)
                     except:
                         pass
+
+                    try:
+                        os.rename(temp_output, output_path)
+                    except:
+                        # If rename fails, try copy and delete
+                        import shutil
+                        shutil.copy2(temp_output, output_path)
+                        try:
+                            os.remove(temp_output)
+                        except:
+                            pass
+                            
                 except subprocess.TimeoutExpired as e:
                     logging.error(f'[AUDIO-METADATA] FFmpeg timeout after {e.timeout}s')
                     # Use original file without metadata
@@ -3156,8 +3521,8 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
                 logging.warning(f"[WARNING] Deno found but failed to test: {deno_test_error}")
             
             if deno_working:
-            logging.info("[OK] External JavaScript runtime enabled (EJS challenge solver should be pre-downloaded)")
-            logging.info("[OK] Using yt-dlp's default player client logic for maximum format availability")
+                logging.info("[OK] External JavaScript runtime enabled (EJS challenge solver should be pre-downloaded)")
+                logging.info("[OK] Using yt-dlp's default player client logic for maximum format availability")
             else:
                 logging.warning("[WARNING] Deno exists but may not work properly. Trying alternative clients...")
                 # If Deno doesn't work, try using web client which doesn't require JS runtime
