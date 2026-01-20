@@ -292,15 +292,24 @@ def register_routes(app, socketio, settings):
                             user_agent=user_agent
                         )
                     
-                    # Log result but don't try to send HTTP response (already sent)
+                    # Log result and notify client of errors
                     if 'error' in result:
                         logging.error(f"Legacy download failed: {result['error']}")
+                        # CRITICAL: Notify client of error so it doesn't stay stuck at 0%
+                        socketio.emit('download-failed', {'message': result['error']})
+                        socketio.emit('percentage', {'percentage': 'Erreur'})
                     else:
                         logging.info(f"Legacy download completed successfully: {result.get('path', 'unknown')}")
                         
                 except Exception as async_error:
                     error_message = f"Error in async legacy download processing: {str(async_error)}"
                     logging.error(error_message, exc_info=True)
+                    # CRITICAL: Notify client of error so it doesn't stay stuck
+                    try:
+                        socketio.emit('download-failed', {'message': error_message})
+                        socketio.emit('percentage', {'percentage': 'Erreur'})
+                    except:
+                        logging.error("Could not emit error to client")
             
             # Start download in background thread
             download_thread = threading.Thread(target=process_legacy_download_async, daemon=True)
@@ -422,15 +431,24 @@ def register_routes(app, socketio, settings):
                             user_agent=user_agent
                         )
                     
-                    # Log result but don't try to send HTTP response (already sent)
+                    # Log result and notify client of errors
                     if 'error' in result:
                         logging.error(f"Download failed: {result['error']}")
+                        # CRITICAL: Notify client of error so it doesn't stay stuck at 0%
+                        socketio.emit('download-failed', {'message': result['error']})
+                        socketio.emit('percentage', {'percentage': 'Erreur'})
                     else:
                         logging.info(f"Download completed successfully: {result.get('path', 'unknown')}")
                         
                 except Exception as async_error:
                     error_message = f"Error in async download processing: {str(async_error)}"
                     logging.error(error_message, exc_info=True)
+                    # CRITICAL: Notify client of error so it doesn't stay stuck
+                    try:
+                        socketio.emit('download-failed', {'message': error_message})
+                        socketio.emit('percentage', {'percentage': 'Erreur'})
+                    except:
+                        logging.error("Could not emit error to client")
             
             # Start download in background thread
             download_thread = threading.Thread(target=process_download_async, daemon=True)

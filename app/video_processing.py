@@ -849,8 +849,12 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
     """
     Handle video URL processing based on the download type.
     """
+    logging.info(f"[HANDLE_VIDEO_URL] Starting processing for URL: {video_url}")
+    logging.info(f"[HANDLE_VIDEO_URL] Download type: {download_type}, Clip: {clip_start}-{clip_end}")
+    
     try:
         # Validate and prepare environment
+        logging.info("[HANDLE_VIDEO_URL] Checking FFmpeg...")
         ffmpeg_check_result = check_ffmpeg(settings, socketio)
         if not ffmpeg_check_result['success']:
             return {"error": ffmpeg_check_result['message']}
@@ -865,11 +869,13 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
         download_mp3 = settings.get('downloadMP3', False)
         download_path = settings.get('downloadPath', '')
         
-        # Validate license if required
-        if download_type == 'video':
+        # Validate license if required (for video and full downloads)
+        # Note: 'full' is the actual type sent by the extension for video downloads
+        if download_type in ('video', 'full'):
             license_valid = validate_license(settings.get('licenseKey'))
             if not license_valid:
-                return {"error": "Invalid license. Please purchase a license to download videos."}
+                logging.warning(f"License validation failed for download type: {download_type}")
+                return {"error": "Licence invalide. Veuillez acheter une licence pour télécharger des vidéos."}
         
         # If no download path is set, use a default path
         if not download_path:

@@ -302,6 +302,11 @@ const Main = () => {
       console.error('Download error:', data);
     });
 
+    socket.on('download-failed', (data: any) => {
+      console.error('Download failed:', data);
+      showNotification(data.message || 'Download failed', 'error');
+    });
+
     socket.on('import_complete', (data: any) => {
       console.log('Import complete:', data);
     });

@@ -1426,7 +1426,17 @@ function initializeSocket() {
             showNotification(errorMessage, 'error', 10000);
         });
 
-
+        // Handle download-failed event (server-side processing error)
+        socket.on('download-failed', (data) => {
+            console.log('❌ [SERVER] Download failed:', data);
+            if (!validateExtensionContext()) return;
+            
+            let errorMessage = data.message || data.error || 'Erreur de téléchargement';
+            
+            // Reset all buttons and show error
+            resetAllButtons();
+            showNotification(errorMessage, 'error', 10000);
+        });
 
         socket.on('error', (data) => {
             // Silently handle server errors to prevent console spam

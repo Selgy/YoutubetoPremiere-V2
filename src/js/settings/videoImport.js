@@ -368,6 +368,12 @@ export async function setupVideoImportHandler(csInterface) {
             }
         });
 
+        socket.on('download-failed', (data) => {
+            console.error('Download failed:', data.message || data.error);
+            // Clean up any pending imports
+            pendingImports.clear();
+        });
+
         socket.on('request_project_path', async () => {
             try {
                 const script = `
