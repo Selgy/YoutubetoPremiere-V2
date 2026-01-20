@@ -343,8 +343,9 @@ def log_system_info():
     except Exception as e:
         logging.warning(f"[SYSTEM-INFO] Could not get RAM info: {e}")
     
-    # 3. Antivirus Detection (Windows only)
+    # 3. Security Software Detection (Platform-specific)
     if sys.platform == 'win32':
+        # Windows: Antivirus detection
         try:
             detected_av = []
             
@@ -417,7 +418,79 @@ def log_system_info():
         except Exception as e:
             logging.warning(f"[SYSTEM-INFO] Could not detect antivirus: {e}")
     
-    # 4. Check if running as admin (Windows)
+    elif sys.platform == 'darwin':
+        # macOS: Check security-related settings
+        try:
+            import subprocess
+            
+            # Check Gatekeeper status
+            try:
+                result = subprocess.run(
+                    ['spctl', '--status'],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                gatekeeper_status = 'enabled' if 'enabled' in result.stdout.lower() else 'disabled'
+                logging.info(f"[SYSTEM-INFO] 🛡️ Gatekeeper: {gatekeeper_status}")
+            except Exception:
+                pass
+            
+            # Check if running from quarantined location
+            try:
+                exec_path = sys.executable
+                result = subprocess.run(
+                    ['xattr', '-l', exec_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if 'com.apple.quarantine' in result.stdout:
+                    logging.warning("[SYSTEM-INFO] ⚠️ App has quarantine flag - may need to allow in Security preferences")
+                else:
+                    logging.info("[SYSTEM-INFO] ✅ No quarantine flag on executable")
+            except Exception:
+                pass
+            
+            # Check for common macOS security software
+            if PSUTIL_AVAILABLE:
+                import psutil
+                mac_security_processes = {
+                    'eset_daemon': 'ESET',
+                    'SophosServiceManager': 'Sophos',
+                    'bdservicehostapps': 'Bitdefender',
+                    'Avast': 'Avast',
+                    'ClamXAV': 'ClamXAV',
+                    'Malwarebytes': 'Malwarebytes',
+                    'Norton': 'Norton',
+                    'Kaspersky': 'Kaspersky',
+                    'LittleSnitch': 'Little Snitch (Firewall)',
+                    'LuLu': 'LuLu (Firewall)',
+                }
+                detected_security = []
+                try:
+                    for proc in psutil.process_iter(['name']):
+                        try:
+                            proc_name = proc.info['name']
+                            if proc_name:
+                                for pattern, name in mac_security_processes.items():
+                                    if pattern.lower() in proc_name.lower():
+                                        if name not in detected_security:
+                                            detected_security.append(name)
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+                except Exception:
+                    pass
+                
+                if detected_security:
+                    logging.info(f"[SYSTEM-INFO] 🛡️ Security software detected: {', '.join(detected_security)}")
+                else:
+                    logging.info("[SYSTEM-INFO] No third-party security software detected")
+                    
+        except Exception as e:
+            logging.warning(f"[SYSTEM-INFO] Could not check macOS security settings: {e}")
+    
+    # 4. Check if running with elevated privileges
     if sys.platform == 'win32':
         try:
             import ctypes
@@ -425,13 +498,22 @@ def log_system_info():
             logging.info(f"[SYSTEM-INFO] Running as Administrator: {is_admin}")
         except Exception:
             pass
+    elif sys.platform == 'darwin':
+        try:
+            is_root = os.geteuid() == 0
+            logging.info(f"[SYSTEM-INFO] Running as root: {is_root}")
+        except Exception:
+            pass
     
-    # 5. Environment variables that matter
+    # 5. Environment variables and temp directory (cross-platform)
     try:
-        temp_dir = os.environ.get('TEMP', os.environ.get('TMP', 'Not set'))
+        if sys.platform == 'win32':
+            temp_dir = os.environ.get('TEMP', os.environ.get('TMP', 'Not set'))
+        else:
+            temp_dir = os.environ.get('TMPDIR', '/tmp')
         logging.info(f"[SYSTEM-INFO] TEMP directory: {temp_dir}")
         
-        # Check if temp dir is writable and has space
+        # Check if temp dir is writable and has space (cross-platform)
         if os.path.exists(temp_dir):
             try:
                 if sys.platform == 'win32':
@@ -444,7 +526,13 @@ def log_system_info():
                     )
                     temp_free_gb = free_bytes.value / (1024 ** 3)
                     logging.info(f"[SYSTEM-INFO] TEMP disk space: {temp_free_gb:.1f} GB free")
-            except Exception:
+                else:
+                    # macOS/Linux: Use os.statvfs
+                    stat = os.statvfs(temp_dir)
+                    temp_free_gb = (stat.f_bavail * stat.f_frsize) / (1024 ** 3)
+                    logging.info(f"[SYSTEM-INFO] TEMP disk space: {temp_free_gb:.1f} GB free")
+            except Exception as e:
+                logging.debug(f"[SYSTEM-INFO] Could not check temp disk space: {e}")
                 pass
     except Exception as e:
         logging.warning(f"[SYSTEM-INFO] Could not check environment: {e}")
