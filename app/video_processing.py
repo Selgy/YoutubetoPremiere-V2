@@ -1901,17 +1901,59 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                     logging.error(f"Clip extraction without cookies also failed: {str(nocookie_error)[:100]}")
         
         # Build format string based on available AVC1 formats
-        avc1_formats = [f for f in video_formats if 'avc' in str(f.get('vcodec', '')).lower()]
+        # Detect format types: HLS (m3u8, already combined) vs DASH (https, video-only)
+        all_formats = video_info.get('formats', []) if video_info else []
+        combined_formats = [f for f in all_formats if f.get('vcodec') != 'none' and f.get('acodec') != 'none']
+        
+        hls_avc1_formats = [f for f in video_formats 
+                           if 'avc' in str(f.get('vcodec', '')).lower() 
+                           and (f.get('protocol', '').startswith('m3u8') or 
+                                (f.get('acodec') and f.get('acodec') != 'none'))]
+        
+        dash_avc1_formats = [f for f in video_formats 
+                            if 'avc' in str(f.get('vcodec', '')).lower() 
+                            and f.get('protocol', '') == 'https' 
+                            and f.get('acodec') == 'none']
+        
+        # Determine which format type to use
+        use_hls_formats = False
+        if dash_avc1_formats:
+            avc1_formats = dash_avc1_formats
+            use_hls_formats = False
+            logging.info(f"[CLIP FORMAT] Found {len(dash_avc1_formats)} DASH AVC1 formats")
+        elif hls_avc1_formats:
+            avc1_formats = hls_avc1_formats
+            use_hls_formats = True
+            logging.info(f"[CLIP FORMAT] Found {len(hls_avc1_formats)} HLS AVC1 formats (already includes audio)")
+        else:
+            avc1_combined = [f for f in combined_formats if 'avc' in str(f.get('vcodec', '')).lower()]
+            if avc1_combined:
+                avc1_formats = avc1_combined
+                use_hls_formats = True
+                logging.info(f"[CLIP FORMAT] Found {len(avc1_combined)} combined AVC1 formats")
+            else:
+                avc1_formats = []
+        
         if avc1_formats:
             target_height = int(sanitized_resolution)
             valid_avc1 = [f for f in avc1_formats if (f.get('height', 0) or 0) <= target_height]
             valid_avc1.sort(key=lambda f: f.get('height', 0) or 0, reverse=True)
             
+            # If no formats at or below target resolution, use best available
+            if not valid_avc1:
+                valid_avc1 = sorted(avc1_formats, key=lambda f: f.get('height', 0) or 0, reverse=True)
+            
             if valid_avc1:
                 format_ids = [f.get('format_id') for f in valid_avc1[:3] if f.get('format_id')]
                 if format_ids:
-                    format_str = '/'.join([f"{fid}+bestaudio[ext=m4a]/{fid}+bestaudio" for fid in format_ids])
-                    logging.info(f"Using verified AVC1 format IDs for clip: {format_ids}")
+                    if use_hls_formats:
+                        # HLS/Combined formats already include audio
+                        format_str = '/'.join(format_ids)
+                        logging.info(f"[CLIP FORMAT] Using HLS format IDs (audio included): {format_ids}")
+                    else:
+                        # DASH formats need audio merged
+                        format_str = '/'.join([f"{fid}+bestaudio[ext=m4a]/{fid}+bestaudio" for fid in format_ids])
+                        logging.info(f"[CLIP FORMAT] Using DASH AVC1 format IDs with audio merge: {format_ids}")
         
         # Configure yt-dlp options based on what worked for extraction
         if use_cookies_for_download:
@@ -2536,7 +2578,42 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         # Instead, we'll use a safer approach that preserves progress hooks
         # IMPORTANT: Build format string based on AVAILABLE AVC1 formats
         # This ensures we only request formats that actually exist
-        avc1_formats = [f for f in video_formats if 'avc' in str(f.get('vcodec', '')).lower()]
+        
+        # Detect format types: HLS (m3u8, already combined) vs DASH (https, video-only)
+        # HLS formats have protocol starting with 'm3u8' and already include audio
+        # DASH formats have protocol 'https' and are typically video-only (acodec='none')
+        hls_avc1_formats = [f for f in video_formats 
+                           if 'avc' in str(f.get('vcodec', '')).lower() 
+                           and (f.get('protocol', '').startswith('m3u8') or 
+                                (f.get('acodec') and f.get('acodec') != 'none'))]
+        
+        dash_avc1_formats = [f for f in video_formats 
+                            if 'avc' in str(f.get('vcodec', '')).lower() 
+                            and f.get('protocol', '') == 'https' 
+                            and f.get('acodec') == 'none']
+        
+        # Determine which format type to use
+        use_hls_formats = False
+        if dash_avc1_formats:
+            # Prefer DASH formats (better quality, separate streams)
+            avc1_formats = dash_avc1_formats
+            use_hls_formats = False
+            logging.info(f"[FORMAT] Found {len(dash_avc1_formats)} DASH AVC1 formats (video-only, will merge with audio)")
+        elif hls_avc1_formats:
+            # Fallback to HLS formats (already combined with audio)
+            avc1_formats = hls_avc1_formats
+            use_hls_formats = True
+            logging.info(f"[FORMAT] Found {len(hls_avc1_formats)} HLS AVC1 formats (already includes audio)")
+        else:
+            # Check combined formats as last resort
+            avc1_combined = [f for f in combined_formats if 'avc' in str(f.get('vcodec', '')).lower()]
+            if avc1_combined:
+                avc1_formats = avc1_combined
+                use_hls_formats = True  # Combined formats don't need +bestaudio
+                logging.info(f"[FORMAT] Found {len(avc1_combined)} combined AVC1 formats")
+            else:
+                avc1_formats = []
+        
         if avc1_formats:
             # Sort by height (resolution) descending
             avc1_formats.sort(key=lambda f: f.get('height', 0) or 0, reverse=True)
@@ -2544,20 +2621,25 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             target_height = int(resolution)
             valid_avc1 = [f for f in avc1_formats if (f.get('height', 0) or 0) <= target_height]
             
+            # If no formats at or below target resolution, use best available
+            if not valid_avc1:
+                valid_avc1 = avc1_formats
+                logging.info(f"[FORMAT] No AVC1 at {resolution}p, using best available")
+            
             if valid_avc1:
                 # Use specific format IDs that we KNOW exist
                 format_ids = [f.get('format_id') for f in valid_avc1[:3] if f.get('format_id')]
                 if format_ids:
-                    # Build format string using actual format IDs + best audio
-                    actual_format = '/'.join([f"{fid}+bestaudio[ext=m4a]/{fid}+bestaudio" for fid in format_ids])
-                    ydl_opts['format'] = actual_format
-                    logging.info(f"Using verified AVC1 format IDs: {format_ids}")
-            else:
-                # No AVC1 at requested resolution, use best available AVC1
-                best_avc1 = avc1_formats[0].get('format_id')
-                if best_avc1:
-                    ydl_opts['format'] = f"{best_avc1}+bestaudio[ext=m4a]/{best_avc1}+bestaudio"
-                    logging.info(f"No AVC1 at {resolution}p, using best available: {best_avc1}")
+                    if use_hls_formats:
+                        # HLS/Combined formats already include audio - use directly without +bestaudio
+                        actual_format = '/'.join(format_ids)
+                        ydl_opts['format'] = actual_format
+                        logging.info(f"[FORMAT] Using HLS/combined format IDs (audio included): {format_ids}")
+                    else:
+                        # DASH formats need audio merged
+                        actual_format = '/'.join([f"{fid}+bestaudio[ext=m4a]/{fid}+bestaudio" for fid in format_ids])
+                        ydl_opts['format'] = actual_format
+                        logging.info(f"[FORMAT] Using DASH AVC1 format IDs with audio merge: {format_ids}")
         else:
             # No AVC1 formats found - this is a real error
             logging.error(f"No AVC1 formats available! Available codecs: {set(f.get('vcodec', 'none') for f in video_formats)}")

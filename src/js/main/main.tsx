@@ -310,7 +310,7 @@ const Main = () => {
     // Handle diagnostic messages from server
     socket.on('diagnostic', (data: any) => {
       console.warn('Diagnostic:', data);
-      const type = data.type === 'error' ? 'error' : 'warning';
+      const type: 'error' | 'info' = data.type === 'error' ? 'error' : 'info';
       showNotification(`⚠️ ${data.message || 'Diagnostic issue'}`, type);
     });
 
