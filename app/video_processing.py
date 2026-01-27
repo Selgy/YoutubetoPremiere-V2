@@ -602,6 +602,9 @@ def log_youtube_formats(info_dict, resolution, selected_format_id=None):
             
             if has_video and has_audio:
                 combined_formats.append(format_info)
+                # Also check combined formats for AVC1
+                if vcodec and ('avc1' in vcodec.lower() or 'h264' in vcodec.lower() or '264' in vcodec):
+                    avc1_formats.append(format_info)
             elif has_video:
                 video_formats.append(format_info)
                 if vcodec and ('avc1' in vcodec.lower() or 'h264' in vcodec.lower() or '264' in vcodec):
@@ -3041,10 +3044,22 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
         logging.info(f"Using preferred audio language for audio download: {preferred_language}")
         
         # Configure format selector based on language preference
+        # IMPORTANT: Prefer DASH formats (m4a, webm) over HLS to avoid "empty file" errors
+        # HLS audio streams can return empty segments when YouTube blocks them
         if preferred_language != 'original':
-            audio_format = f'bestaudio[language~="{preferred_language}"]/bestaudio/best'
+            # Priority: DASH m4a > DASH webm > any audio with language > any bestaudio > best
+            audio_format = (
+                f'bestaudio[ext=m4a][language~="{preferred_language}"]/'
+                f'bestaudio[ext=webm][language~="{preferred_language}"]/'
+                f'bestaudio[language~="{preferred_language}"]/'
+                f'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best'
+            )
         else:
-            audio_format = 'bestaudio/best'
+            # Priority: DASH m4a > DASH webm > any bestaudio > best
+            # This avoids HLS streams which can fail with "empty file" error
+            audio_format = 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best'
+        
+        logging.info(f"[AUDIO] Using format selector: {audio_format[:80]}...")
         
         # Progress throttling variables for audio
         last_progress_time_audio = [0]  # Use list to make it mutable in nested function
@@ -3247,8 +3262,41 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                         logging.info('[CANCEL] Audio download successfully cancelled before download')
                         return None
                     
-                    # Download using the already extracted info
-                    ydl_download.process_ie_result(info, download=True)
+                    # Download using the already extracted info with retry on "empty file" error
+                    try:
+                        ydl_download.process_ie_result(info, download=True)
+                    except Exception as download_error:
+                        error_str = str(download_error)
+                        
+                        # Retry with different format if we get "empty file" error (HLS issue)
+                        if 'empty' in error_str.lower() or 'downloaded file is empty' in error_str.lower():
+                            logging.warning(f"[AUDIO] First download attempt failed with empty file, retrying with fallback format...")
+                            
+                            # Clean up any partial files
+                            temp_pattern_cleanup = os.path.join(download_path, f"temp_{sanitized_title}*")
+                            for temp_file in glob.glob(temp_pattern_cleanup):
+                                try:
+                                    os.remove(temp_file)
+                                except:
+                                    pass
+                            
+                            # Try with explicit non-HLS format (DASH only)
+                            fallback_format = 'bestaudio[protocol=https]/bestaudio[protocol=http]/bestaudio'
+                            logging.info(f"[AUDIO] Retrying with DASH-only format: {fallback_format}")
+                            
+                            # Create new options with fallback format
+                            fallback_opts = ydl_opts.copy()
+                            fallback_opts['format'] = fallback_format
+                            
+                            with yt_dlp.YoutubeDL(fallback_opts) as ydl_fallback:
+                                # Re-extract info to get fresh URLs
+                                fresh_info = ydl_fallback.extract_info(video_url, download=False)
+                                if fresh_info:
+                                    ydl_fallback.process_ie_result(fresh_info, download=True)
+                                else:
+                                    raise download_error  # Re-raise original error
+                        else:
+                            raise download_error  # Re-raise non-empty-file errors
                     
                     # IMPORTANT: Wait for post-processing to complete
                     # yt-dlp's process_ie_result is synchronous and should wait,
