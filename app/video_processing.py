@@ -3309,25 +3309,26 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                                     except:
                                         pass
                             
-                            # FALLBACK 2: Try with Android player client (often has different formats)
+                            # FALLBACK 2: Try with web client explicitly (excludes android_sdkless)
                             if not fallback_success:
-                                logging.info("[AUDIO] Fallback 2: Trying with Android player client...")
+                                logging.info("[AUDIO] Fallback 2: Trying with web client (excluding android_sdkless)...")
                                 try:
-                                    fallback_opts_android = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
-                                    if 'cookiefile' in fallback_opts_android:
-                                        del fallback_opts_android['cookiefile']
-                                    fallback_opts_android['format'] = 'bestaudio/best'
-                                    fallback_opts_android['extractor_args'] = {'youtube': {'player_client': ['android']}}
-                                    fallback_opts_android['outtmpl'] = os.path.join(download_path, f'temp_{sanitized_title}')
-                                    fallback_opts_android['postprocessors'] = ydl_opts.get('postprocessors', [])
-                                    fallback_opts_android['progress_hooks'] = [progress_hook]
+                                    fallback_opts_web = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
+                                    if 'cookiefile' in fallback_opts_web:
+                                        del fallback_opts_web['cookiefile']
+                                    fallback_opts_web['format'] = 'bestaudio/best'
+                                    # Use web client explicitly, exclude broken android_sdkless
+                                    fallback_opts_web['extractor_args'] = {'youtube': {'player_client': ['web', '-android_sdkless']}}
+                                    fallback_opts_web['outtmpl'] = os.path.join(download_path, f'temp_{sanitized_title}')
+                                    fallback_opts_web['postprocessors'] = ydl_opts.get('postprocessors', [])
+                                    fallback_opts_web['progress_hooks'] = [progress_hook]
                                     
-                                    with yt_dlp.YoutubeDL(fallback_opts_android) as ydl_android:
-                                        fresh_info = ydl_android.extract_info(video_url, download=False)
+                                    with yt_dlp.YoutubeDL(fallback_opts_web) as ydl_web:
+                                        fresh_info = ydl_web.extract_info(video_url, download=False)
                                         if fresh_info:
-                                            ydl_android.process_ie_result(fresh_info, download=True)
+                                            ydl_web.process_ie_result(fresh_info, download=True)
                                             fallback_success = True
-                                            logging.info("[AUDIO] Fallback 2 SUCCESS: Downloaded with Android client")
+                                            logging.info("[AUDIO] Fallback 2 SUCCESS: Downloaded with web client")
                                 except Exception as e2:
                                     logging.warning(f"[AUDIO] Fallback 2 failed: {str(e2)[:100]}")
                                     # Clean up partial files
@@ -3337,15 +3338,16 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                                         except:
                                             pass
                             
-                            # FALLBACK 3: Try with iOS player client
+                            # FALLBACK 3: Try with iOS player client (m3u8 formats)
                             if not fallback_success:
                                 logging.info("[AUDIO] Fallback 3: Trying with iOS player client...")
                                 try:
                                     fallback_opts_ios = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
                                     if 'cookiefile' in fallback_opts_ios:
                                         del fallback_opts_ios['cookiefile']
-                                    fallback_opts_ios['format'] = 'bestaudio/best'
-                                    fallback_opts_ios['extractor_args'] = {'youtube': {'player_client': ['ios']}}
+                                    # iOS client with m3u8 formats as recommended by yt-dlp maintainers
+                                    fallback_opts_ios['format'] = 'bestaudio[protocol=m3u8_native]/bestaudio/best'
+                                    fallback_opts_ios['extractor_args'] = {'youtube': {'player_client': ['ios', '-android_sdkless'], 'formats': ['missing_pot']}}
                                     fallback_opts_ios['outtmpl'] = os.path.join(download_path, f'temp_{sanitized_title}')
                                     fallback_opts_ios['postprocessors'] = ydl_opts.get('postprocessors', [])
                                     fallback_opts_ios['progress_hooks'] = [progress_hook]
@@ -3808,19 +3810,24 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
             
             if deno_working:
                 logging.info("[OK] External JavaScript runtime enabled (EJS challenge solver should be pre-downloaded)")
-                logging.info("[OK] Using yt-dlp's default player client logic for maximum format availability")
+                # CRITICAL FIX (2026-01-29): YouTube broke android_sdkless client
+                # See: https://github.com/yt-dlp/yt-dlp/issues/15712
+                # We must exclude android_sdkless to avoid 403 errors and empty file downloads
+                base_options['extractor_args'] = {'youtube': {'player_client': ['default', '-android_sdkless']}}
+                logging.info("[OK] Using default player clients EXCLUDING android_sdkless (YouTube broke it)")
             else:
                 logging.warning("[WARNING] Deno exists but may not work properly. Trying alternative clients...")
                 # If Deno doesn't work, try using web client which doesn't require JS runtime
-                base_options['extractor_args'] = {'youtube': {'player_client': ['web', 'mweb']}}
-                logging.info("[FALLBACK] Using web/mweb player clients (no Deno required)")
+                # Also exclude android_sdkless which is broken
+                base_options['extractor_args'] = {'youtube': {'player_client': ['web', 'mweb', '-android_sdkless']}}
+                logging.info("[FALLBACK] Using web/mweb player clients (no Deno required, excluding android_sdkless)")
         else:
             logging.warning("[WARNING] Deno runtime not found in PATH. YouTube format availability may be limited.")
             logging.warning("  Install Deno with: .\\scripts\\install-deno.ps1")
             logging.warning("  Then restart the application or run: .\\scripts\\add-deno-to-path.ps1")
-            # Use web client as fallback
-            base_options['extractor_args'] = {'youtube': {'player_client': ['web', 'mweb']}}
-            logging.info("[FALLBACK] Using web/mweb player clients (no Deno required)")
+            # Use web client as fallback, exclude broken android_sdkless
+            base_options['extractor_args'] = {'youtube': {'player_client': ['web', 'mweb', '-android_sdkless']}}
+            logging.info("[FALLBACK] Using web/mweb player clients (no Deno, excluding android_sdkless)")
     except Exception as e:
         logging.warning(f"Error checking for Deno runtime: {e}")
         # Use web client as fallback
