@@ -3270,7 +3270,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                         
                         # Retry with different format if we get "empty file" error (HLS issue)
                         if 'empty' in error_str.lower() or 'downloaded file is empty' in error_str.lower():
-                            logging.warning(f"[AUDIO] First download attempt failed with empty file, retrying with fallback format...")
+                            logging.warning(f"[AUDIO] First download attempt failed with empty file, trying fallback methods...")
                             
                             # Clean up any partial files
                             temp_pattern_cleanup = os.path.join(download_path, f"temp_{sanitized_title}*")
@@ -3280,21 +3280,89 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                                 except:
                                     pass
                             
-                            # Try with explicit non-HLS format (DASH only)
-                            fallback_format = 'bestaudio[protocol=https]/bestaudio[protocol=http]/bestaudio'
-                            logging.info(f"[AUDIO] Retrying with DASH-only format: {fallback_format}")
+                            # Try multiple fallback strategies
+                            fallback_success = False
                             
-                            # Create new options with fallback format
-                            fallback_opts = ydl_opts.copy()
-                            fallback_opts['format'] = fallback_format
+                            # FALLBACK 1: Try WITHOUT cookies (YouTube sometimes serves different formats)
+                            logging.info("[AUDIO] Fallback 1: Trying WITHOUT cookies...")
+                            try:
+                                fallback_opts_nocookie = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
+                                if 'cookiefile' in fallback_opts_nocookie:
+                                    del fallback_opts_nocookie['cookiefile']
+                                fallback_opts_nocookie['format'] = 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best'
+                                fallback_opts_nocookie['outtmpl'] = os.path.join(download_path, f'temp_{sanitized_title}')
+                                fallback_opts_nocookie['postprocessors'] = ydl_opts.get('postprocessors', [])
+                                fallback_opts_nocookie['progress_hooks'] = [progress_hook]
+                                
+                                with yt_dlp.YoutubeDL(fallback_opts_nocookie) as ydl_nocookie:
+                                    fresh_info = ydl_nocookie.extract_info(video_url, download=False)
+                                    if fresh_info:
+                                        ydl_nocookie.process_ie_result(fresh_info, download=True)
+                                        fallback_success = True
+                                        logging.info("[AUDIO] Fallback 1 SUCCESS: Downloaded without cookies")
+                            except Exception as e1:
+                                logging.warning(f"[AUDIO] Fallback 1 failed: {str(e1)[:100]}")
+                                # Clean up partial files
+                                for temp_file in glob.glob(temp_pattern_cleanup):
+                                    try:
+                                        os.remove(temp_file)
+                                    except:
+                                        pass
                             
-                            with yt_dlp.YoutubeDL(fallback_opts) as ydl_fallback:
-                                # Re-extract info to get fresh URLs
-                                fresh_info = ydl_fallback.extract_info(video_url, download=False)
-                                if fresh_info:
-                                    ydl_fallback.process_ie_result(fresh_info, download=True)
-                                else:
-                                    raise download_error  # Re-raise original error
+                            # FALLBACK 2: Try with Android player client (often has different formats)
+                            if not fallback_success:
+                                logging.info("[AUDIO] Fallback 2: Trying with Android player client...")
+                                try:
+                                    fallback_opts_android = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
+                                    if 'cookiefile' in fallback_opts_android:
+                                        del fallback_opts_android['cookiefile']
+                                    fallback_opts_android['format'] = 'bestaudio/best'
+                                    fallback_opts_android['extractor_args'] = {'youtube': {'player_client': ['android']}}
+                                    fallback_opts_android['outtmpl'] = os.path.join(download_path, f'temp_{sanitized_title}')
+                                    fallback_opts_android['postprocessors'] = ydl_opts.get('postprocessors', [])
+                                    fallback_opts_android['progress_hooks'] = [progress_hook]
+                                    
+                                    with yt_dlp.YoutubeDL(fallback_opts_android) as ydl_android:
+                                        fresh_info = ydl_android.extract_info(video_url, download=False)
+                                        if fresh_info:
+                                            ydl_android.process_ie_result(fresh_info, download=True)
+                                            fallback_success = True
+                                            logging.info("[AUDIO] Fallback 2 SUCCESS: Downloaded with Android client")
+                                except Exception as e2:
+                                    logging.warning(f"[AUDIO] Fallback 2 failed: {str(e2)[:100]}")
+                                    # Clean up partial files
+                                    for temp_file in glob.glob(temp_pattern_cleanup):
+                                        try:
+                                            os.remove(temp_file)
+                                        except:
+                                            pass
+                            
+                            # FALLBACK 3: Try with iOS player client
+                            if not fallback_success:
+                                logging.info("[AUDIO] Fallback 3: Trying with iOS player client...")
+                                try:
+                                    fallback_opts_ios = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
+                                    if 'cookiefile' in fallback_opts_ios:
+                                        del fallback_opts_ios['cookiefile']
+                                    fallback_opts_ios['format'] = 'bestaudio/best'
+                                    fallback_opts_ios['extractor_args'] = {'youtube': {'player_client': ['ios']}}
+                                    fallback_opts_ios['outtmpl'] = os.path.join(download_path, f'temp_{sanitized_title}')
+                                    fallback_opts_ios['postprocessors'] = ydl_opts.get('postprocessors', [])
+                                    fallback_opts_ios['progress_hooks'] = [progress_hook]
+                                    
+                                    with yt_dlp.YoutubeDL(fallback_opts_ios) as ydl_ios:
+                                        fresh_info = ydl_ios.extract_info(video_url, download=False)
+                                        if fresh_info:
+                                            ydl_ios.process_ie_result(fresh_info, download=True)
+                                            fallback_success = True
+                                            logging.info("[AUDIO] Fallback 3 SUCCESS: Downloaded with iOS client")
+                                except Exception as e3:
+                                    logging.warning(f"[AUDIO] Fallback 3 failed: {str(e3)[:100]}")
+                            
+                            if not fallback_success:
+                                # All fallbacks failed
+                                logging.error("[AUDIO] All fallback methods failed. YouTube may be blocking this request.")
+                                raise download_error
                         else:
                             raise download_error  # Re-raise non-empty-file errors
                     
