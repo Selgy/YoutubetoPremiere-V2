@@ -40,7 +40,9 @@ declare global {
 // Helper function to normalize file paths
 const normalizePath = (path: string) => {
   var f = new File(path);
-  return f.fsName.replace(/\\\\/g, '\\');
+  // Use fsName which automatically converts to OS-appropriate path format
+  // No need to replace anything - fsName already handles platform differences
+  return f.fsName;
 };
 
 // Helper function to check if file exists
@@ -134,8 +136,9 @@ export const importVideoToSource = (videoPath: string) => {
     }
     
     // Wait briefly to ensure the items are updated in the project
+    // Reduced from 2000ms to 500ms to prevent Mac crashes
     //@ts-ignore - ExtendScript global
-    $.sleep(2000);
+    $.sleep(500);
     
     // Get the node IDs after import
     var afterNodeIds = nodeIdsGetter(rootItem);
@@ -205,8 +208,9 @@ export const importVideoToSource = (videoPath: string) => {
       }
       
       // Wait for source monitor to be ready
+      // Reduced from 2000ms to 300ms to prevent Mac crashes
       //@ts-ignore - ExtendScript global
-      $.sleep(2000);
+      $.sleep(300);
       
       // Use the documented method app.sourceMonitor.openProjectItem()
       //@ts-ignore - ExtendScript globals
