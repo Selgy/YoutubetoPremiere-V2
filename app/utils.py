@@ -75,14 +75,36 @@ def load_settings():
     # Migration: Check for old settings file in wrong location (Windows only)
     if sys.platform == 'win32':
         old_settings_path = os.path.join(os.path.expanduser('~/.config'), 'YoutubetoPremiere', 'settings.json')
-        if os.path.exists(old_settings_path) and not os.path.exists(settings_path):
-            # Migrate old settings to new location
-            try:
-                import shutil
-                shutil.copy2(old_settings_path, settings_path)
-                logging.info(f"Migrated settings from {old_settings_path} to {settings_path}")
-            except Exception as e:
-                logging.warning(f"Could not migrate old settings: {e}")
+        should_migrate = False
+        
+        # Migrate if old file exists and either:
+        # 1. New file doesn't exist yet, OR
+        # 2. New file exists but has no license key (empty migration)
+        if os.path.exists(old_settings_path):
+            if not os.path.exists(settings_path):
+                should_migrate = True
+            else:
+                # Check if current settings has no license
+                try:
+                    with open(settings_path, 'r') as f:
+                        current_settings = json.load(f)
+                        if not current_settings.get('licenseKey'):
+                            # Check if old settings has a license
+                            with open(old_settings_path, 'r') as old_f:
+                                old_settings = json.load(old_f)
+                                if old_settings.get('licenseKey'):
+                                    should_migrate = True
+                                    logging.info("Found license in old settings, will migrate")
+                except Exception as e:
+                    logging.debug(f"Could not check settings for migration: {e}")
+            
+            if should_migrate:
+                try:
+                    import shutil
+                    shutil.copy2(old_settings_path, settings_path)
+                    logging.info(f"Migrated settings from {old_settings_path} to {settings_path}")
+                except Exception as e:
+                    logging.warning(f"Could not migrate old settings: {e}")
 
     if os.path.exists(settings_path):
         with open(settings_path, 'r') as f:
