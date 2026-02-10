@@ -298,11 +298,60 @@ export async function setupVideoImportHandler(csInterface) {
                 }
                 return success;
             } catch (error) {
-                console.error('Import failed:', error);
+                console.error('Import error caught:', error);
+                
+                // On Mac, check if this is a false error (file actually imported)
+                // This can happen if ExtendScript succeeds but CEP Bridge times out
+                const isMac = navigator.platform.indexOf('Mac') > -1;
+                if (isMac) {
+                    console.log('Mac: Checking if file was actually imported despite error...');
+                    // Give Premiere a moment to finish the import
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    
+                    // Try to verify if the file exists in the project
+                    try {
+                        const verifyScript = `
+                            (function() {
+                                if (!app.project || !app.project.rootItem) return false;
+                                var normalizedPath = "${videoPath.replace(/\\/g, '\\\\')}";
+                                var file = new File(normalizedPath);
+                                var fsPath = file.fsName;
+                                
+                                // Check if any item in the project matches this path
+                                for (var i = 0; i < app.project.rootItem.children.numItems; i++) {
+                                    try {
+                                        var item = app.project.rootItem.children[i];
+                                        if (item.getMediaPath && item.getMediaPath() === fsPath) {
+                                            return true;
+                                        }
+                                    } catch(e) {}
+                                }
+                                return false;
+                            })()
+                        `;
+                        
+                        const isImported = await evalES(verifyScript, true);
+                        if (isImported === 'true' || isImported === true) {
+                            console.log('Mac: File was successfully imported despite error! Treating as success.');
+                            if (socket && socket.connected) {
+                                socket.emit('import_complete', {
+                                    success: true,
+                                    path: videoPath,
+                                    note: 'Mac: Import succeeded despite timing error'
+                                });
+                            }
+                            return true;
+                        }
+                    } catch(verifyError) {
+                        console.error('Mac: Could not verify import:', verifyError);
+                    }
+                }
+                
+                // If we get here, it's a real error
                 if (socket && socket.connected) {
                     socket.emit('import_complete', {
                         success: false,
-                        error: error.message,
+                        error: error.message || String(error),
                         path: videoPath
                     });
                 }
