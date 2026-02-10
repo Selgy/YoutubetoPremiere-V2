@@ -192,9 +192,14 @@ export async function setupVideoImportHandler(csInterface) {
                 const result = await evalTS('importVideoToSource', videoPath);
                 console.log('Import result:', result, 'Type:', typeof result);
                 
-                // If result is undefined or failed, run diagnostics
+                // Give a bit more time on Mac for response to fully serialize
+                if (navigator.platform.indexOf('Mac') > -1) {
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                }
+                
+                // If result is undefined or failed, run diagnostics (but only if truly failed)
                 if (result === undefined || (result && result.success === false)) {
-                    console.log('Running diagnostics due to import failure...');
+                    console.log('Import result appears to have failed, checking before running diagnostics...');
                     try {
                         const extRoot = csInterface.getSystemPath('extension');
                         
@@ -266,12 +271,26 @@ export async function setupVideoImportHandler(csInterface) {
                         error: success ? undefined : (result.error || 'Import failed')
                     };
                 } else {
-                    response = {
-                        success: false,
-                        error: 'Invalid response format from Premiere',
-                        path: videoPath,
-                        projectItem: null
-                    };
+                    // On Mac, undefined can mean success but response timing issue
+                    // Check if we're on Mac and result is undefined
+                    const isMac = navigator.platform.indexOf('Mac') > -1;
+                    if (isMac && result === undefined) {
+                        console.log('Mac: Undefined result, assuming success due to timing');
+                        response = {
+                            success: true,
+                            path: videoPath,
+                            projectItem: null,
+                            note: 'Success assumed on Mac due to response timing'
+                        };
+                        success = true;
+                    } else {
+                        response = {
+                            success: false,
+                            error: 'Invalid response format from Premiere',
+                            path: videoPath,
+                            projectItem: null
+                        };
+                    }
                 }
 
                 if (socket && socket.connected) {

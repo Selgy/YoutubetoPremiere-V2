@@ -109,9 +109,9 @@ var importVideoToSource = function (videoPath) {
             };
         }
         // Wait briefly to ensure the items are updated in the project
-        // Reduced from 2000ms to 500ms to prevent Mac crashes
+        // Reduced from 2000ms to 700ms (balance between Mac stability and response timing)
         //@ts-ignore - ExtendScript global
-        $.sleep(500);
+        $.sleep(700);
         // Get the node IDs after import
         var afterNodeIds = nodeIdsGetter(rootItem);
         // Find the new item(s)
@@ -172,12 +172,15 @@ var importVideoToSource = function (videoPath) {
                 // Ignore errors when closing clip
             }
             // Wait for source monitor to be ready
-            // Reduced from 2000ms to 300ms to prevent Mac crashes
+            // Increased to 500ms to ensure response is properly serialized on Mac
             //@ts-ignore - ExtendScript global
-            $.sleep(300);
+            $.sleep(500);
             // Use the documented method app.sourceMonitor.openProjectItem()
             //@ts-ignore - ExtendScript globals
             var result = app.sourceMonitor.openProjectItem(importedItem);
+            // Small delay to ensure response serialization completes on Mac
+            //@ts-ignore - ExtendScript global
+            $.sleep(100);
             // Done
             return {
                 success: true,
