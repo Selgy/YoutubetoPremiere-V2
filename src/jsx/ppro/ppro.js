@@ -109,9 +109,9 @@ var importVideoToSource = function (videoPath) {
             };
         }
         // Wait briefly to ensure the items are updated in the project
-        // Reduced from 2000ms to 700ms (balance between Mac stability and response timing)
+        // Keep short to avoid blocking Mac main thread (watchdog triggers crash dialogs above ~1s)
         //@ts-ignore - ExtendScript global
-        $.sleep(700);
+        $.sleep(300);
         // Get the node IDs after import
         var afterNodeIds = nodeIdsGetter(rootItem);
         // Find the new item(s)
@@ -163,24 +163,13 @@ var importVideoToSource = function (videoPath) {
                     sourceMonitorError: "Source monitor not available"
                 };
             }
-            // First make sure the current clip is closed
-            try {
-                //@ts-ignore - ExtendScript globals
-                app.sourceMonitor.closeAllClips();
-            }
-            catch (e) {
-                // Ignore errors when closing clip
-            }
             // Wait for source monitor to be ready
-            // Increased to 500ms to ensure response is properly serialized on Mac
+            // Short sleep - Mac CEP bridge 200ms grace period in JS handles response timing
             //@ts-ignore - ExtendScript global
-            $.sleep(500);
+            $.sleep(200);
             // Use the documented method app.sourceMonitor.openProjectItem()
             //@ts-ignore - ExtendScript globals
             var result = app.sourceMonitor.openProjectItem(importedItem);
-            // Small delay to ensure response serialization completes on Mac
-            //@ts-ignore - ExtendScript global
-            $.sleep(100);
             // Done
             return {
                 success: true,
