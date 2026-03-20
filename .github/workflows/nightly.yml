@@ -21,16 +21,16 @@ jobs:
     needs: [windows-build]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.13.5'
           architecture: 'arm64'
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v4.4.0
         with:
           node-version: '20'
           cache: 'yarn'
@@ -285,7 +285,7 @@ jobs:
           xcrun notarytool submit "YouTubetoPremiere-macOS-nightly.pkg" --keychain-profile "notarytool-profile" --wait
 
       - name: Upload macOS Build Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: macos-nightly-build
           path: |
@@ -296,29 +296,29 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.13.5'
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v4.4.0
         with:
           node-version: '20'
           cache: 'yarn'
 
       - name: Cache FFmpeg
         id: cache-ffmpeg
-        uses: actions/cache@v4
+        uses: actions/cache@v4.2.3
         with:
           path: ffmpeg.exe
           key: ${{ runner.os }}-ffmpeg-6.1-v1
 
       - name: Cache NSIS
         id: cache-nsis
-        uses: actions/cache@v4
+        uses: actions/cache@v4.2.3
         with:
           path: C:\Program Files (x86)\NSIS
           key: ${{ runner.os }}-nsis-3.10.0-v1
@@ -488,7 +488,7 @@ jobs:
         shell: powershell
 
       - name: Upload Windows Build Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: windows-nightly-build
           path: |
@@ -499,16 +499,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
       - name: Download macOS artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.3.0
         with:
           name: macos-nightly-build
           path: ./artifacts/macos
 
       - name: Download Windows artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.3.0
         with:
           name: windows-nightly-build
           path: ./artifacts/windows
