@@ -197,37 +197,12 @@ export async function setupVideoImportHandler(csInterface) {
                     await new Promise(resolve => setTimeout(resolve, 200));
                 }
                 
-                // If result is undefined or failed, run diagnostics (but only if truly failed)
-                if (result === undefined || (result && result.success === false)) {
-                    console.log('Import result appears to have failed, checking before running diagnostics...');
-                    try {
-                        const extRoot = csInterface.getSystemPath('extension');
-                        
-                        // Load diagnostic scripts
-                        await evalFile(`${extRoot}/js/settings/diagnostics.jsx`);
-                        await evalFile(`${extRoot}/js/settings/import-test.jsx`);
-                        
-                        // Test the specific file that failed
-                        console.log('Running detailed import test for:', videoPath);
-                        const testResult = await evalES(`$._ext.testImportFile("${videoPath.replace(/\\/g, '\\\\')}")`, true);
-                        console.log('Detailed import test result:');
-                        console.log('- Type:', typeof testResult);
-                        console.log('- Raw:', testResult);
-                        try {
-                            const parsed = typeof testResult === 'string' ? JSON.parse(testResult) : testResult;
-                            console.log('- Parsed:', parsed);
-                            if (parsed && typeof parsed === 'object') {
-                                Object.keys(parsed).forEach(key => {
-                                    console.log(`  ${key}:`, parsed[key]);
-                                });
-                            }
-                        } catch(e) {
-                            console.log('- Parse error:', e.message);
-                        }
-                        
-                    } catch(diagError) {
-                        console.error('Diagnostic script failed:', diagError);
-                    }
+                // On Mac, undefined result is a known timing issue (CEP bridge serialization)
+                // Do NOT run diagnostics in this case - diagnostic files don't exist and
+                // calling $.evalFile() on missing files triggers Adobe crash report dialogs
+                const isMacPlatform = navigator.platform.indexOf('Mac') > -1;
+                if (result === undefined && isMacPlatform) {
+                    console.log('Mac: undefined result detected, skipping diagnostics (timing issue, handled below)');
                 }
 
                 let response;
