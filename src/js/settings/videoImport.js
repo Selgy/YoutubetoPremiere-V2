@@ -173,7 +173,7 @@ export async function setupVideoImportHandler(csInterface) {
             }
         });
 
-        const importVideo = async (videoPath) => {
+        const importVideo = async (videoPath, binPath = '') => {
             try {
                 if (importInProgress) {
                     console.log('Import already in progress, waiting...');
@@ -189,11 +189,12 @@ export async function setupVideoImportHandler(csInterface) {
                 lastImportedPath = videoPath;
                 console.log(`Starting import for: ${videoPath}`);
 
-                const savedSettings = JSON.parse(localStorage.getItem('settings') || '{}');
-                const binPath = savedSettings.premiereBin || '';
-                console.log(`Import target bin: "${binPath || '(root)'}"`);
+                // binPath comes from server event (data.bin) - most reliable source
+                // Falls back to localStorage if not provided
+                const effectiveBin = binPath || JSON.parse(localStorage.getItem('settings') || '{}').premiereBin || '';
+                console.log(`Import target bin: "${effectiveBin || '(root)'}"`);
 
-                const result = await evalTS('importVideoToSource', videoPath, binPath);
+                const result = await evalTS('importVideoToSource', videoPath, effectiveBin);
                 console.log('Import result:', result, 'Type:', typeof result);
                 
                 // Give a bit more time on Mac for response to fully serialize
@@ -353,7 +354,7 @@ export async function setupVideoImportHandler(csInterface) {
                 }
 
                 console.log('Starting import for file:', normalizedPath);
-                const result = await importVideo(normalizedPath);
+                const result = await importVideo(normalizedPath, data.bin || '');
                 console.log('Import result:', result);
             } catch (error) {
                 console.error('Error during import:', error);

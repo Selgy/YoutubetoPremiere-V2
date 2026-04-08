@@ -1555,7 +1555,7 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             )
             
             if result and os.path.exists(result):
-                socketio.emit('import_video', {'path': result})
+                socketio.emit('import_video', {'path': result, 'bin': settings.get('premiereBin', '')})
                 logging.info("Import signal sent to Premiere Pro extension via SocketIO")
                 return {"success": True, "path": result}
             else:
@@ -1587,7 +1587,7 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             
             if result and result.get("success") and result.get("path") and os.path.exists(result["path"]):
                 # Emit SocketIO event for Premiere extension
-                socketio.emit('import_video', {'path': result["path"]})
+                socketio.emit('import_video', {'path': result["path"], 'bin': settings.get('premiereBin', '')})
                 logging.info("Import signal sent to Premiere Pro extension via SocketIO")
                 return {"success": True, "path": result["path"]}
             else:
@@ -2103,21 +2103,21 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                 # Emit events
                 socketio.emit('complete', {'type': 'clip', 'message': 'Clip téléchargé avec succès'})
                 socketio.emit('download-complete', {'url': video_url, 'path': video_file_path})
-                socketio.emit('import_video', {'path': video_file_path})
+                socketio.emit('import_video', {'path': video_file_path, 'bin': settings.get('premiereBin', '')})
                 logging.info("[CLIP-COMPLETE] Import signal sent to Premiere Pro extension via SocketIO")
                 return {"success": True, "path": video_file_path}
             except subprocess.TimeoutExpired as e:
                 logging.error(f"[CLIP-METADATA] FFmpeg timeout after {e.timeout}s")
                 # Continue anyway, as the clip itself is fine
                 socketio.emit('download-complete', {'url': video_url, 'path': video_file_path})
-                socketio.emit('import_video', {'path': video_file_path})
+                socketio.emit('import_video', {'path': video_file_path, 'bin': settings.get('premiereBin', '')})
                 logging.info("[CLIP-COMPLETE] Import signal sent (without metadata due to timeout)")
                 return {"success": True, "path": video_file_path}
             except subprocess.CalledProcessError as e:
                 logging.error(f"[CLIP-METADATA] Error adding metadata: {e.stderr}")
                 # Continue anyway, as the clip itself is fine
                 socketio.emit('download-complete', {'url': video_url, 'path': video_file_path})
-                socketio.emit('import_video', {'path': video_file_path})
+                socketio.emit('import_video', {'path': video_file_path, 'bin': settings.get('premiereBin', '')})
                 logging.info("[CLIP-COMPLETE] Import signal sent (without metadata due to error)")
                 return {"success": True, "path": video_file_path}
         else:
@@ -2855,7 +2855,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 os.replace(f'{actual_file}_with_metadata.mp4', actual_file)
                 
                 logging.info(f"[COMPLETE] Video downloaded and processed: {actual_file}")
-                socketio.emit('import_video', {'path': actual_file})
+                socketio.emit('import_video', {'path': actual_file, 'bin': settings.get('premiereBin', '')})
                 # Emit both formats to ensure compatibility
                 socketio.emit('download-complete', {'url': video_url, 'path': actual_file})  # Hyphenated format for Chrome extension
                 logging.info("Import signal sent to Premiere Pro extension via SocketIO")
@@ -2865,7 +2865,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 logging.error(f"[METADATA] FFmpeg metadata TIMEOUT after {e.timeout}s")
                 # Still return the file even if metadata failed
                 logging.info(f"[METADATA] Returning file without metadata due to timeout: {actual_file}")
-                socketio.emit('import_video', {'path': actual_file})
+                socketio.emit('import_video', {'path': actual_file, 'bin': settings.get('premiereBin', '')})
                 socketio.emit('download-complete', {'url': video_url, 'path': actual_file})
                 logging.info("Import signal sent to Premiere Pro extension via SocketIO")
                 return actual_file
@@ -2874,7 +2874,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 logging.error(f"[METADATA] FFmpeg stderr: {e.stderr if hasattr(e, 'stderr') else 'No stderr'}")
                 # Still return the file even if metadata failed
                 logging.info(f"[METADATA] Returning file without metadata: {actual_file}")
-                socketio.emit('import_video', {'path': actual_file})
+                socketio.emit('import_video', {'path': actual_file, 'bin': settings.get('premiereBin', '')})
                 socketio.emit('download-complete', {'url': video_url, 'path': actual_file})
                 logging.info("Import signal sent to Premiere Pro extension via SocketIO")
                 return actual_file
@@ -2930,7 +2930,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                             test_path = os.path.splitext(final_path)[0] + '.' + ext
                             if os.path.exists(test_path):
                                 logging.info(f"Found fallback downloaded file: {test_path}")
-                                socketio.emit('import_video', {'path': test_path})
+                                socketio.emit('import_video', {'path': test_path, 'bin': settings.get('premiereBin', '')})
                                 socketio.emit('download-complete', {'url': video_url, 'path': test_path})
                                 logging.info("Import signal sent to Premiere Pro extension via SocketIO")
                                 return test_path
@@ -3497,7 +3497,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
 
                 # Emit both completion events before returning
                 if socketio:
-                    socketio.emit('import_video', {'path': output_path})
+                    socketio.emit('import_video', {'path': output_path, 'bin': settings.get('premiereBin', '')})
                     # Emit both formats to ensure compatibility
                     socketio.emit('download-complete', {'url': video_url, 'path': output_path})  # Hyphenated format for Chrome extension
                     logging.info("Import signal sent to Premiere Pro extension via SocketIO")
