@@ -189,7 +189,11 @@ export async function setupVideoImportHandler(csInterface) {
                 lastImportedPath = videoPath;
                 console.log(`Starting import for: ${videoPath}`);
 
-                const result = await evalTS('importVideoToSource', videoPath);
+                const savedSettings = JSON.parse(localStorage.getItem('settings') || '{}');
+                const binPath = savedSettings.premiereBin || '';
+                console.log(`Import target bin: "${binPath || '(root)'}"`);
+
+                const result = await evalTS('importVideoToSource', videoPath, binPath);
                 console.log('Import result:', result, 'Type:', typeof result);
                 
                 // Give a bit more time on Mac for response to fully serialize

@@ -92,6 +92,7 @@ const Main = () => {
     notificationVolume: 30,
     notificationSound: 'notification_sound',
     licenseKey: '',
+    premiereBin: '',
   });
 
   const [lastPaths, setLastPaths] = useState<string[]>([]);
@@ -744,6 +745,7 @@ const Main = () => {
                   <option value="30">-30 sec</option>
                   <option value="60">-1 min</option>
                   <option value="120">-2 min</option>
+                  <option value="900">-15 min</option>
                 </select>
               </div>
               
@@ -763,8 +765,31 @@ const Main = () => {
                   <option value="30">+30 sec</option>
                   <option value="60">+1 min</option>
                   <option value="120">+2 min</option>
+                  <option value="900">+15 min</option>
                 </select>
               </div>
+            </div>
+          </div>
+
+          {/* Premiere Bin Settings */}
+          <div className="p-4 sm:p-6 rounded-xl backdrop-blur-20 border border-white border-opacity-10"
+               style={{
+                 background: 'linear-gradient(135deg, rgba(46, 47, 119, 0.3) 0%, rgba(30, 32, 87, 0.3) 100%)',
+                 boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)'
+               }}>
+            <div className="flex items-center gap-2 mb-4">
+              <span className="material-symbols-outlined text-blue-400">folder</span>
+              <label className="text-white font-medium">Premiere Bin:</label>
+            </div>
+            <div>
+              <label className="text-sm text-gray-300 mb-2 block">Import into subfolder (e.g. <span className="text-blue-300">Youtube</span> or <span className="text-blue-300">Youtube/CLIP</span>)</label>
+              <input
+                type="text"
+                value={settings.premiereBin}
+                onChange={(e) => saveSettings({ ...settings, premiereBin: e.target.value })}
+                placeholder="Leave empty for root bin"
+                className="input-base"
+              />
             </div>
           </div>
         </div>

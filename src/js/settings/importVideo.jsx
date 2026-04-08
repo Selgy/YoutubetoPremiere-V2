@@ -64,9 +64,34 @@
     safeDebug("Initializing importVideoToSource function");
 
     // Main function to import a file and open it in the Source Monitor
-    $._ext.importVideoToSource = function(videoPath) {
+    // Find an existing bin by name or create it under parentItem
+    $._ext.findOrCreateBin = function(parentItem, binName) {
+        for (var i = 0; i < parentItem.children.numItems; i++) {
+            var child = parentItem.children[i];
+            if (child.type === 2 && child.name === binName) {
+                return child;
+            }
+        }
+        return parentItem.createBin(binName);
+    };
+
+    // Navigate/create nested bin path like "Youtube/CLIP" under rootItem
+    $._ext.getTargetBin = function(rootItem, binPath) {
+        if (!binPath || binPath.trim() === '') return rootItem;
+        var parts = binPath.split('/');
+        var current = rootItem;
+        for (var i = 0; i < parts.length; i++) {
+            var part = parts[i].trim();
+            if (part !== '') {
+                current = $._ext.findOrCreateBin(current, part);
+            }
+        }
+        return current;
+    };
+
+    $._ext.importVideoToSource = function(videoPath, binPath) {
         try {
-            safeDebug("Starting import for: " + videoPath);
+            safeDebug("Starting import for: " + videoPath + " | bin: " + (binPath || '(root)'));
 
             // Verify Premiere Pro environment
             if (typeof app === 'undefined') {
@@ -101,15 +126,19 @@
             var rootItem = project.rootItem;
             safeDebug("Project found");
 
-            // Get the node IDs before import
-            var beforeNodeIds = $._ext.getAllNodeIds(rootItem);
+            // Resolve target bin (creates subfolders if needed)
+            var targetBin = $._ext.getTargetBin(rootItem, binPath || '');
+            safeDebug("Target bin: " + targetBin.name);
+
+            // Get the node IDs before import (from target bin)
+            var beforeNodeIds = $._ext.getAllNodeIds(targetBin);
             safeDebug("Before import: " + beforeNodeIds.length + " items");
 
-            // Import the file
+            // Import the file into target bin
             safeDebug("Importing file...");
-            var importedFiles = project.importFiles([normalizedPath], 
+            var importedFiles = project.importFiles([normalizedPath],
                 false,             // suppressUI
-                rootItem,          // parentBin
+                targetBin,         // parentBin
                 false              // importAsNumberedStills
             );
             
@@ -127,24 +156,24 @@
             
             // Wait briefly to ensure the items are updated in the project
             $.sleep(200);
-            
-            // Get the node IDs after import
-            var afterNodeIds = $._ext.getAllNodeIds(rootItem);
+
+            // Get the node IDs after import (from target bin)
+            var afterNodeIds = $._ext.getAllNodeIds(targetBin);
             safeDebug("After import: " + afterNodeIds.length + " items");
-            
-            // Find the new item(s)
+
+            // Find the new item(s) in the target bin
             var newItems = [];
             var newItemIds = [];
-            
-            for (var i = 0; i < rootItem.children.numItems; i++) {
-                var item = rootItem.children[i];
+
+            for (var i = 0; i < targetBin.children.numItems; i++) {
+                var item = targetBin.children[i];
                 var found = false;
-                
+
                 // Skip bins
                 if (item.type === 2) { // BIN type
                     continue;
                 }
-                
+
                 // Check if the item's nodeId is in the before list
                 for (var j = 0; j < beforeNodeIds.length; j++) {
                     if (item.nodeId === beforeNodeIds[j]) {
@@ -152,7 +181,7 @@
                         break;
                     }
                 }
-                
+
                 // If not found in the before list, it's new
                 if (!found) {
                     newItems.push(item);
