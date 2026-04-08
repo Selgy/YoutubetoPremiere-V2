@@ -1716,37 +1716,35 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             if not cookies_file:
                 browser_cookies = try_extract_cookies_from_browser()
         
-        # Get sanitized title for the output file with authentication
+        # Get sanitized title for the output file
+        # Try without cookies first - format availability is more consistent and we only need the title
         sanitized_title = ''
-        try:
-            # Use comprehensive headers and auth for title extraction
-            title_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
-            title_ydl_opts['quiet'] = True
-            title_ydl_opts['skip_download'] = True
-            
-            # CRITICAL: Remove ANY options that could trigger format validation
-            format_related_keys = ['format', 'format_sort', 'format_sort_force']
-            for key in format_related_keys:
-                if key in title_ydl_opts:
-                    del title_ydl_opts[key]
-            
-            # Add browser cookies if that's what we're using
-            if browser_cookies:
-                title_ydl_opts['cookiesfrombrowser'] = browser_cookies
-                logging.info(f"Using cookies from browser for title extraction: {browser_cookies[0]}")
-            
-            with yt_dlp.YoutubeDL(title_ydl_opts) as ydl:
-                video_info = ydl.extract_info(video_url, download=False)
-                if video_info:
-                    sanitized_title = sanitize_youtube_title(video_info.get('title', 'video'))
-                    logging.info(f"Successfully extracted title for clip: {sanitized_title}")
-                    # Log format analysis for debugging
-                    log_youtube_formats(video_info, resolution)
-                else:
-                    sanitized_title = 'clip_' + str(int(time.time()))
-        except Exception as e:
-            logging.error(f"Error extracting video info for clip naming: {str(e)}")
+        def _build_title_opts(with_cookies):
+            opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file if with_cookies else None, user_agent=user_agent)
+            opts['quiet'] = True
+            opts['skip_download'] = True
+            opts['format'] = 'best'  # Force simple format to avoid "format not available" errors
+            for key in ['format_sort', 'format_sort_force']:
+                opts.pop(key, None)
+            if with_cookies and browser_cookies:
+                opts['cookiesfrombrowser'] = browser_cookies
+            return opts
+
+        for use_cookies in (False, True):
+            try:
+                with yt_dlp.YoutubeDL(_build_title_opts(use_cookies)) as ydl:
+                    video_info = ydl.extract_info(video_url, download=False)
+                    if video_info and video_info.get('title'):
+                        sanitized_title = sanitize_youtube_title(video_info['title'])
+                        logging.info(f"Successfully extracted title for clip (cookies={use_cookies}): {sanitized_title}")
+                        log_youtube_formats(video_info, resolution)
+                        break
+            except Exception as e:
+                logging.warning(f"Title extraction failed (cookies={use_cookies}): {str(e)[:120]}")
+
+        if not sanitized_title:
             sanitized_title = 'clip_' + str(int(time.time()))
+            logging.error("Could not extract video title, using timestamp fallback")
             
         # Get unique filename - always numbered: VideoTitle_clip1.mp4, _clip2.mp4, etc.
         counter = 1
