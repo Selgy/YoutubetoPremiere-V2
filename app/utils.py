@@ -166,7 +166,7 @@ def save_settings(settings):
             try:
                 with open(settings_path, 'r') as f:
                     existing_settings = json.load(f)
-            except:
+            except Exception:
                 pass
         
         # Create a copy of settings without the internal fields
@@ -305,7 +305,7 @@ def import_video_to_premiere(video_path):
             if os.path.exists(file):
                 try:
                     os.remove(file)
-                except:
+                except OSError:
                     pass
 
         # Prepare the path for ExtendScript - handle Windows paths correctly
@@ -387,7 +387,7 @@ def import_video_to_premiere(video_path):
         try:
             os.remove(script_path)
             os.remove(result_path)
-        except:
+        except OSError:
             pass
 
         if result and result.startswith("true"):

@@ -296,7 +296,7 @@ def find_ffmpeg():
                         if test_result.returncode == 0 and 'ffmpeg version' in test_result.stdout:
                             logger.info(f"Found working ffmpeg in PATH: {ffmpeg_path}")
                             return ffmpeg_path
-                    except:
+                    except Exception:
                         logger.warning(f"Found ffmpeg in PATH but it doesn't work: {ffmpeg_path}")
                 
                 # If 'which' fails or ffmpeg doesn't work, try 'whereis'
@@ -312,7 +312,7 @@ def find_ffmpeg():
                                 if test_result.returncode == 0 and 'ffmpeg version' in test_result.stdout:
                                     logger.info(f"Found working ffmpeg via whereis: {part}")
                                     return part
-                            except:
+                            except Exception:
                                 continue
                 
                 # If still not found, try common homebrew paths on macOS
@@ -331,22 +331,22 @@ def find_ffmpeg():
                             for match in matches:
                                 if os.path.exists(match) and os.access(match, os.X_OK):
                                     try:
-                                        test_result = subprocess.run([match, '-version'], 
+                                        test_result = subprocess.run([match, '-version'],
                                                                    capture_output=True, text=True, timeout=5)
                                         if test_result.returncode == 0 and 'ffmpeg version' in test_result.stdout:
                                             logger.info(f"Found working ffmpeg in Homebrew: {match}")
                                             return match
-                                    except:
+                                    except Exception:
                                         continue
                         else:
                             if os.path.exists(pattern) and os.access(pattern, os.X_OK):
                                 try:
-                                    test_result = subprocess.run([pattern, '-version'], 
+                                    test_result = subprocess.run([pattern, '-version'],
                                                                capture_output=True, text=True, timeout=5)
                                     if test_result.returncode == 0 and 'ffmpeg version' in test_result.stdout:
                                         logger.info(f"Found working ffmpeg in Homebrew: {pattern}")
                                         return pattern
-                                except:
+                                except Exception:
                                     continue
                                     
             except Exception as e:

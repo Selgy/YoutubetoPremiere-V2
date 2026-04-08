@@ -269,7 +269,7 @@ def run_pre_download_diagnostics(download_path, ffmpeg_path, socketio=None):
                         try:
                             os.remove(temp_file)
                             logging.info(f"[DIAGNOSTIC] Cleaned up old temp file: {temp_file}")
-                        except:
+                        except OSError:
                             pass
     except Exception as e:
         logging.debug(f"[DIAGNOSTIC] Could not check for locked files: {e}")
@@ -1260,9 +1260,9 @@ def get_ffmpeg_path():
             if which_result.returncode == 0 and which_result.stdout.strip():
                 possible_locations.append(os.path.dirname(which_result.stdout.strip()))
                 logging.info(f"Found ffmpeg via 'which' at: {which_result.stdout.strip()}")
-        except:
+        except Exception:
             pass
-    
+
     # Filter out empty paths and remove duplicates while preserving order
     possible_locations = list(dict.fromkeys(filter(None, possible_locations)))
     
@@ -1748,8 +1748,11 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             logging.error(f"Error extracting video info for clip naming: {str(e)}")
             sanitized_title = 'clip_' + str(int(time.time()))
             
-        # Get unique filename
-        unique_filename = get_unique_filename(download_path, sanitized_title + '_clip', 'mp4')
+        # Get unique filename - always numbered: VideoTitle_clip1.mp4, _clip2.mp4, etc.
+        counter = 1
+        while os.path.exists(os.path.join(download_path, f"{sanitized_title}_clip{counter}.mp4")):
+            counter += 1
+        unique_filename = f"{sanitized_title}_clip{counter}.mp4"
         video_file_path = os.path.join(download_path, unique_filename)
         logging.info(f"Setting output path to: {video_file_path}")
 
@@ -1844,7 +1847,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                     if clean_str.replace('.', '').isdigit():
                         try:
                             percentage_num = int(float(clean_str))
-                        except:
+                        except (ValueError, TypeError):
                             pass
                     
                     # Only log every 10% or if value increased significantly
@@ -3244,7 +3247,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                 for temp_file in glob.glob(temp_pattern):
                     try:
                         os.remove(temp_file)
-                    except:
+                    except OSError:
                         pass
 
                 # Set output template after getting info
@@ -3277,7 +3280,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                             for temp_file in glob.glob(temp_pattern_cleanup):
                                 try:
                                     os.remove(temp_file)
-                                except:
+                                except OSError:
                                     pass
                             
                             # Try multiple fallback strategies
@@ -3306,7 +3309,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                                 for temp_file in glob.glob(temp_pattern_cleanup):
                                     try:
                                         os.remove(temp_file)
-                                    except:
+                                    except OSError:
                                         pass
                             
                             # FALLBACK 2: Try with web client explicitly
@@ -3334,7 +3337,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                                     for temp_file in glob.glob(temp_pattern_cleanup):
                                         try:
                                             os.remove(temp_file)
-                                        except:
+                                        except OSError:
                                             pass
                             
                             # FALLBACK 3: Try with iOS player client (m3u8 formats)
@@ -3453,26 +3456,26 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                     # Clean up and rename
                     try:
                         os.remove(downloaded_file)
-                    except:
+                    except OSError:
                         pass
 
                     try:
                         os.rename(temp_output, output_path)
-                    except:
+                    except OSError:
                         # If rename fails, try copy and delete
                         import shutil
                         shutil.copy2(temp_output, output_path)
                         try:
                             os.remove(temp_output)
-                        except:
+                        except OSError:
                             pass
-                            
+
                 except subprocess.TimeoutExpired as e:
                     logging.error(f'[AUDIO-METADATA] FFmpeg timeout after {e.timeout}s')
                     # Use original file without metadata
                     try:
                         os.rename(downloaded_file, output_path)
-                    except:
+                    except OSError:
                         import shutil
                         shutil.copy2(downloaded_file, output_path)
                 except subprocess.CalledProcessError as e:
@@ -3480,7 +3483,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                     # Use original file without metadata
                     try:
                         os.rename(downloaded_file, output_path)
-                    except:
+                    except OSError:
                         import shutil
                         shutil.copy2(downloaded_file, output_path)
 

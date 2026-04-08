@@ -32,7 +32,9 @@
     // Helper function to normalize file paths
     $._ext.normalizePath = function(path) {
         var f = new File(path);
-        return f.fsName.replace(/\\\\/g, '\\');
+        // Use fsName which automatically converts to OS-appropriate path format
+        // No need to replace anything - fsName already handles platform differences
+        return f.fsName;
     };
 
     // Helper function to check if file exists

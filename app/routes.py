@@ -61,7 +61,7 @@ def register_routes(app, socketio, settings):
             if domain_match:
                 domain = domain_match.group(1)
                 return any(domain.endswith(yt_domain) for yt_domain in youtube_domains)
-        except:
+        except Exception:
             pass
             
         return False
@@ -131,7 +131,7 @@ def register_routes(app, socketio, settings):
                     is_newer = False
                     try:
                         is_newer = version_tuple(latest_version) > version_tuple(current_version)
-                    except:
+                    except Exception:
                         is_newer = latest_version != current_version
                     
                     # Generate download URLs based on OS (using latest links)
@@ -308,7 +308,7 @@ def register_routes(app, socketio, settings):
                     try:
                         socketio.emit('download-failed', {'message': error_message})
                         socketio.emit('percentage', {'percentage': 'Erreur'})
-                    except:
+                    except Exception:
                         logging.error("Could not emit error to client")
             
             # Start download in background thread
@@ -447,7 +447,7 @@ def register_routes(app, socketio, settings):
                     try:
                         socketio.emit('download-failed', {'message': error_message})
                         socketio.emit('percentage', {'percentage': 'Erreur'})
-                    except:
+                    except Exception:
                         logging.error("Could not emit error to client")
             
             # Start download in background thread
@@ -721,10 +721,10 @@ def register_routes(app, socketio, settings):
     @socketio.on('project_path_response')
     def handle_project_path_response(data):
         try:
-            project_path = data.get('path')
-            if project_path:
+            project_path = os.path.normpath(data.get('path', ''))
+            if project_path and project_path != '.':
                 logging.info(f"Received project path from Premiere: {project_path}")
-                
+
                 # Create a download folder next to the project
                 download_path = os.path.join(os.path.dirname(project_path), 'YoutubeToPremiere_download')
                 try:
