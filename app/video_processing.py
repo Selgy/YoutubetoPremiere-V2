@@ -2025,7 +2025,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                         
         except Exception as e:
                 error_message = f"Error downloading clip: {str(e)}"
-                
+
                 # Check if this is a cancellation exception
                 if 'cancelled' in str(e).lower():
                     logging.info("Clip download cancelled by user")
@@ -2033,34 +2033,56 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                     cleanup_partial_video_files(video_file_path)
                     logging.info('[CANCEL] Clip download successfully cancelled - cleanup completed')
                     return {"error": "Download cancelled by user"}
-                
-                # Log detailed context for debugging
-                log_download_context(e, {
-                    'function': 'download_and_process_clip',
-                    'video_url': video_url,
-                    'resolution': resolution,
-                    'clip_start': clip_start,
-                    'clip_end': clip_end,
-                    'video_file_path': video_file_path,
-                    'ffmpeg_path': ffmpeg_path
-                })
-                
-                logging.error(error_message)
-                logging.error(f"Exception type: {type(e).__name__}")
-                
-                # Check for Windows-specific stdout/stderr issues
-                if "[Errno 22]" in str(e) or "Invalid argument" in str(e) or "BrokenPipeError" in str(type(e)):
-                    error_message = "Clip download failed due to Windows output stream issue. This has been fixed in the latest version. Please try again."
-                    logging.error("Windows stdout/stderr pipe error detected during clip download - fix has been applied")
-                # Check if error is related to ffmpeg
-                elif 'ffmpeg' in str(e).lower() or 'executable' in str(e).lower():
-                    logging.error(f"FFmpeg-related error detected. Current ffmpeg path: {ffmpeg_path}")
-                    # Suggest potential solutions
-                    solutions = "Try restarting the application or using a different clip download approach."
-                    error_message += f" This appears to be related to ffmpeg. {solutions}"
-                
-                socketio.emit('download-failed', {'message': error_message})
-                return {"error": error_message}
+
+                # Windows file lock recovery: if yt-dlp failed to rename .part -> final,
+                # the file was fully downloaded — wait for Defender to release and rename manually.
+                recovered = False
+                if 'WinError 32' in str(e) or 'utilisé par un autre processus' in str(e) or 'being used by another process' in str(e):
+                    part_file = video_file_path + '.part'
+                    if os.path.exists(part_file) and not os.path.exists(video_file_path):
+                        logging.warning(f"[WinError 32] File locked after download, retrying rename: {part_file}")
+                        import time as _time
+                        for attempt in range(10):
+                            _time.sleep(2)
+                            try:
+                                os.rename(part_file, video_file_path)
+                                logging.info(f"[WinError 32] Rename succeeded on attempt {attempt + 1}: {video_file_path}")
+                                break
+                            except OSError:
+                                logging.warning(f"[WinError 32] Rename attempt {attempt + 1} failed, retrying...")
+                        else:
+                            logging.error(f"[WinError 32] All rename attempts failed for: {part_file}")
+                    if os.path.exists(video_file_path):
+                        logging.info(f"[WinError 32] Recovery succeeded, continuing post-processing")
+                        recovered = True
+
+                if not recovered:
+                    # Log detailed context for debugging
+                    log_download_context(e, {
+                        'function': 'download_and_process_clip',
+                        'video_url': video_url,
+                        'resolution': resolution,
+                        'clip_start': clip_start,
+                        'clip_end': clip_end,
+                        'video_file_path': video_file_path,
+                        'ffmpeg_path': ffmpeg_path
+                    })
+
+                    logging.error(error_message)
+                    logging.error(f"Exception type: {type(e).__name__}")
+
+                    # Check for Windows-specific stdout/stderr issues
+                    if "[Errno 22]" in str(e) or "Invalid argument" in str(e) or "BrokenPipeError" in str(type(e)):
+                        error_message = "Clip download failed due to Windows output stream issue. This has been fixed in the latest version. Please try again."
+                        logging.error("Windows stdout/stderr pipe error detected during clip download - fix has been applied")
+                    # Check if error is related to ffmpeg
+                    elif 'ffmpeg' in str(e).lower() or 'executable' in str(e).lower():
+                        logging.error(f"FFmpeg-related error detected. Current ffmpeg path: {ffmpeg_path}")
+                        solutions = "Try restarting the application or using a different clip download approach."
+                        error_message += f" This appears to be related to ffmpeg. {solutions}"
+
+                    socketio.emit('download-failed', {'message': error_message})
+                    return {"error": error_message}
         
         # Cleanup after download
         try:
@@ -3713,7 +3735,8 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
         'retry_sleep': lambda n: min(5 * (n + 1), 30),  # Exponential backoff with max 30s
         'socket_timeout': 60,  # Increase socket timeout
         'fragment_retries': 10,  # Retry fragment downloads
-        'file_access_retries': 5,  # Retry file access operations
+        'file_access_retries': 15,  # Retry file access operations (Windows Defender needs time)
+        'retry_sleep_functions': {'file_access': lambda n: 2.0},  # 2s between rename retries (Windows file lock)
         'ignoreerrors': False,  # Don't ignore errors during extraction
         'extract_flat': False,  # Don't use flat extraction
         'playlistend': 1,  # Only download first video if URL is accidentally a playlist
