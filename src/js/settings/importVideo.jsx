@@ -75,13 +75,16 @@
         return parentItem.createBin(binName);
     };
 
+    // ExtendScript (ES3) does not have String.prototype.trim - polyfill it
+    var trimStr = function(s) { return s.replace(/^\s+|\s+$/g, ''); };
+
     // Navigate/create nested bin path like "Youtube/CLIP" under rootItem
     $._ext.getTargetBin = function(rootItem, binPath) {
-        if (!binPath || binPath.trim() === '') return rootItem;
+        if (!binPath || trimStr(binPath) === '') return rootItem;
         var parts = binPath.split('/');
         var current = rootItem;
         for (var i = 0; i < parts.length; i++) {
-            var part = parts[i].trim();
+            var part = trimStr(parts[i]);
             if (part !== '') {
                 current = $._ext.findOrCreateBin(current, part);
             }
