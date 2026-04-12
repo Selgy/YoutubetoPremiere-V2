@@ -1972,7 +1972,6 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         ydl_opts.update({
             'format': format_str,
             'outtmpl': video_file_path,
-            'force_keyframes_at_cuts': True,
             'download_ranges': lambda info_dict, ydl: [{'start_time': clip_start, 'end_time': clip_end}],  # Function that returns ranges as dicts
             'no_part': True,
             'progress_hooks': [progress_hook],
