@@ -19,5 +19,5 @@ API_TIMEOUT = 10
 LICENSE_CACHE_DURATION = 3600  # 1 heure
 
 # Version de l'application
-APP_VERSION = "3.0.28"
+APP_VERSION = "3.0.30"
 
