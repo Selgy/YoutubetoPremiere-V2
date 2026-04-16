@@ -711,7 +711,7 @@ styleSheet.textContent = `
         white-space: nowrap !important;
         background: rgba(0, 0, 0, 0.2) !important;
         backdrop-filter: blur(10px) !important;
-        border-radius: 18px !important;
+        border-radius: 9999px !important;
         overflow: hidden !important;
         padding: 4px 0px 4px 4px !important;
         border: 1px solid rgba(255, 255, 255, 0.1) !important;
@@ -746,7 +746,7 @@ styleSheet.textContent = `
         width: 90px;
         padding: 0 12px;
         margin: 0 2px;
-        border-radius: 18px;
+        border-radius: 9999px;
         font-size: 14px;
         font-weight: 500;
         line-height: 1;
