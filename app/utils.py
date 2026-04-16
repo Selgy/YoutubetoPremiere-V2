@@ -211,22 +211,32 @@ def monitor_premiere_and_shutdown():
 
 def get_default_download_path(socketio=None):
     try:
-        # First try to get path from Premiere Pro project if socketio is available
+        # Check if the Premiere panel already pushed a project path on connect.
+        # routes.py stores it in settings['downloadPath'] via save_download_path()
+        # whenever it receives a project_path_response event.
+        cached_settings = load_settings()
+        cached_dl_path = cached_settings.get('downloadPath', '')
+        if cached_dl_path and os.path.isdir(os.path.dirname(cached_dl_path) or cached_dl_path):
+            logging.info(f"Using project-related download path: {cached_dl_path}")
+            os.makedirs(cached_dl_path, exist_ok=True)
+            return cached_dl_path
+
+        # Fallback: ask Premiere panel via socket round-trip (5s timeout)
         if socketio:
             # Create an event to wait for the response
             response_event = threading.Event()
             project_path_response = {'path': None}
-            
+
             def on_project_path_response(data):
                 project_path_response['path'] = data.get('path')
                 response_event.set()
-            
+
             # Register temporary handler
             socketio.on_event('project_path_response', on_project_path_response)
-            
+
             # Request the path
             socketio.emit('request_project_path')
-            
+
             # Wait for response with timeout
             if response_event.wait(timeout=5):
                 project_path = project_path_response['path']

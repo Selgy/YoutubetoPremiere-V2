@@ -125,7 +125,17 @@ export async function setupVideoImportHandler(csInterface) {
                 clearInterval(reconnectInterval);
                 reconnectInterval = null;
             }
-            
+
+            // Proactively push the current project path so the server
+            // never has to do a round-trip request (which can time out).
+            const pathScript = `app.project ? app.project.path : ""`;
+            csInterface.evalScript(pathScript, (result) => {
+                if (result && result !== 'undefined' && result !== '') {
+                    console.log('📁 Pushing project path to server:', result);
+                    socket.emit('project_path_response', { path: result });
+                }
+            });
+
             // Test connectivity every 30 seconds
             const healthCheck = setInterval(() => {
                 if (socket.connected) {
