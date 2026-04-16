@@ -1264,17 +1264,25 @@ function initializeSocket() {
         socket.on('percentage', (data) => {
             // Check extension validity before processing
             if (!validateExtensionContext()) return;
-            
+
             // Check if this is a timecode message (contains ':' and text) or a percentage
             const percentageText = data.percentage || '';
             const isTimecode = percentageText.includes(':') || percentageText.includes('Clip:');
-            
+
+            // Skip non-numeric, non-timecode strings (e.g. 'Erreur' sent by server on failure)
+            // These come just before a download-failed event which resets the buttons properly.
+            const percentageNum = parseFloat(percentageText.replace('%', '').replace(',', '.').trim());
+            if (!isTimecode && isNaN(percentageNum)) {
+                console.log('⚠️ [PERCENTAGE] Ignoring non-numeric percentage value:', percentageText);
+                return;
+            }
+
             let targetType;
-            
+
             if (isTimecode) {
                 // For timecode messages, this is ALWAYS for the clip button
                 targetType = 'clip';
-                
+
                 updateProgressSafely({
                     message: percentageText,
                     type: targetType
@@ -1288,19 +1296,15 @@ function initializeSocket() {
                         break;
                     }
                 }
-                
+
                 targetType = activeButtonType || data.type || 'full';
-                
+
                 // Only show percentage for non-clip imports
                 if (targetType !== 'clip') {
                 // Convert percentage and show as progress
                 // Remove % and convert to integer to avoid commas or decimals
-                let percentage = percentageText.replace('%', '').replace(',', '.').trim();
-                const percentageNum = parseFloat(percentage);
-                if (!isNaN(percentageNum)) {
-                    percentage = Math.round(percentageNum).toString();
-                }
-                
+                let percentage = Math.round(percentageNum).toString();
+
                 updateProgressSafely({
                     progress: percentage,
                     type: targetType
@@ -1989,41 +1993,61 @@ function showNotification(message, type = 'info', duration = 5000) {
 
 function sendURL(importType, additionalData = {}) {
     const buttonType = importType === 'full' ? 'premiere' : importType;
-    
+
+    // Show spinner immediately on click so the user gets instant visual feedback,
+    // even before the server/license checks complete (which can take 1-3 seconds).
+    const buttonEl = document.getElementById(
+        buttonType === 'premiere' ? 'send-to-premiere-button' :
+        buttonType === 'clip' ? 'clip-button' : 'audio-button'
+    );
+    if (buttonEl && !buttonEl.classList.contains('importing') && !buttonEl.classList.contains('loading')) {
+        buttonEl.classList.add('loading');
+    }
+
+    // If the server was last seen as unavailable, force a fresh check now
+    // (the 30s cache can mask a server that just started).
+    if (!serverAvailable) {
+        lastServerCheck = 0;
+    }
+
     // Check server availability first
     checkServerAvailability().then(isAvailable => {
         if (!isAvailable) {
+            // Remove optimistic spinner since server is confirmed down
+            if (buttonEl) buttonEl.classList.remove('loading');
             // Simply show that server is required
             showServerRequiredMessage(buttonType);
             return;
         }
-        
+
         // Check if this button type is in cancellation cooldown
         if (buttonStates[buttonType].cancelCooldown) {
+            if (buttonEl) buttonEl.classList.remove('loading');
             console.log('🚫 [COOLDOWN] import blocked - cancellation cooldown active for:', buttonType);
             showNotification('Veuillez patienter quelques secondes après l\'annulation avant de relancer.', 'warning', 3000);
             return;
         }
-        
+
         // Check if any import is in progress
         if (isAnyimportInProgress()) {
+            if (buttonEl) buttonEl.classList.remove('loading');
             // Find which type is importing
             const importingType = Object.keys(buttonStates).find(type => buttonStates[type].isimporting);
-            const importingName = importingType === 'premiere' ? 'Vidéo' : 
+            const importingName = importingType === 'premiere' ? 'Vidéo' :
                                    importingType === 'clip' ? 'Clip' : 'Audio';
             console.log('🚫 [BLOCK] import blocked - another import is in progress:', importingType);
             showNotification(`Un téléchargement ${importingName} est déjà en cours. Veuillez patienter.`, 'warning', 3000);
             return;
         }
-        
+
         // Reset all button states first
         Object.keys(buttonStates).forEach(type => {
             buttonStates[type].isimporting = false;
         });
-        
+
         proceedWithImport();
     });
-    
+
     function proceedWithImport() {
     const button = document.getElementById(
         buttonType === 'premiere' ? 'send-to-premiere-button' :
@@ -2065,6 +2089,7 @@ function sendURL(importType, additionalData = {}) {
         .then(response => {
             const data = response.data || {};
             if (!data.isValid) {
+                button.classList.remove('loading');
                 button.classList.add('failure');
                 enableAllButtons(); // Re-enable all buttons on license failure
                 showNotification('Clé de licence invalide ou manquante. Veuillez entrer une clé de licence valide dans les paramètres.', 'error');
