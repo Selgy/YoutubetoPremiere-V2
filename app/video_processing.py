@@ -2353,6 +2353,21 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             
         logging.info(f"Using download path: {download_path}")
 
+        # Normalize path: strip trailing spaces from each path component.
+        # Windows allows directory names like "MK1 " (with trailing space) but yt-dlp's
+        # internal path handling (outtmpl templating) silently fails on such paths.
+        def normalize_path_components(p):
+            drive, tail = os.path.splitdrive(p)
+            parts = tail.replace('\\', '/').split('/')
+            normalized = '/'.join(part.rstrip() for part in parts)
+            result = drive + normalized.replace('/', os.sep)
+            return result
+
+        original_download_path = download_path
+        download_path = normalize_path_components(download_path)
+        if download_path != original_download_path:
+            logging.info(f"[PATH-FIX] Normalized download path (stripped trailing spaces from components): '{original_download_path}' -> '{download_path}'")
+
         # Ensure the path exists
         try:
             os.makedirs(download_path, exist_ok=True)
@@ -2684,7 +2699,16 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 
                 # Download with verified AVC1 format
                 logging.info(f"Starting download with verified AVC1 format: {ydl_opts.get('format', 'default')[:200]}...")
-                ydl.download([video_url])
+                # FIX-SABR: If we already have a pre-extracted info dict (from no-cookies fallback),
+                # reuse it directly instead of calling ydl.download([url]) which would re-extract
+                # and trigger SABR again (even with ios client, YouTube may return SABR on retry).
+                # process_ie_result reuses the HTTPS URLs already fetched during extraction.
+                # See: https://github.com/yt-dlp/yt-dlp/issues/12482
+                if not use_cookies_for_download and info is not None:
+                    logging.info("[FIX-SABR] Using pre-extracted info dict to avoid SABR re-extraction (process_ie_result)")
+                    ydl.process_ie_result(info.copy(), download=True)
+                else:
+                    ydl.download([video_url])
         except Exception as e:
             error_message = f"Error during video download: {str(e)}"
             logging.error(error_message)
@@ -3832,8 +3856,13 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
             
             if deno_working:
                 logging.info("[OK] External JavaScript runtime enabled (EJS challenge solver ready)")
-                # yt-dlp 2026.01.29+ has proper default player clients, no need to override
-                logging.info("[OK] Using yt-dlp default player clients (fixed in yt-dlp 2026.01.29)")
+                # web_safari (default client since yt-dlp 2026.01.29) is now SABR-only - it no longer
+                # provides HTTPS adaptive formats (video OR audio). This causes silent download failures
+                # because bestaudio[ext=m4a] (format 140) becomes unavailable.
+                # Fix: force ios+android_vr which still provide full HTTPS DASH formats.
+                # See: https://github.com/yt-dlp/yt-dlp/issues/12482
+                base_options['extractor_args'] = {'youtube': {'player_client': ['ios', 'android_vr']}}
+                logging.info("[FIX-SABR] Using ios+android_vr clients (web_safari is SABR-only, see yt-dlp#12482)")
             else:
                 logging.warning("[WARNING] Deno exists but may not work properly. Trying alternative clients...")
                 # If Deno doesn't work, try using web client which doesn't require JS runtime
