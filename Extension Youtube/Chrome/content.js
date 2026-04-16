@@ -1314,14 +1314,27 @@ function initializeSocket() {
             }
         });
 
-        socket.on('complete', (data) => {
+        // Dedup: ignore duplicate completion events within 2 seconds.
+        // The server can emit 'complete' AND 'import_complete' for the same
+        // download, which would call handleimportComplete twice.
+        let lastImportCompleteMs = 0;
+        function handleImportCompleteDedup(data) {
             if (!validateExtensionContext()) return;
+            const now = Date.now();
+            if (now - lastImportCompleteMs < 2000) {
+                console.log('⚠️ [DEDUP] Ignoring duplicate import complete event');
+                return;
+            }
+            lastImportCompleteMs = now;
             handleimportComplete(data);
+        }
+
+        socket.on('complete', (data) => {
+            handleImportCompleteDedup(data);
         });
 
         socket.on('import-complete', (data) => {
-            if (!validateExtensionContext()) return;
-            handleimportComplete(data);
+            handleImportCompleteDedup(data);
         });
 
         // Add listener for import_complete as well
@@ -1329,7 +1342,7 @@ function initializeSocket() {
             if (!validateExtensionContext()) return;
             if (data.success) {
                 // Don't assume type 'full' - let handleimportComplete determine from path or use generic handling
-                handleimportComplete({success: true, path: data.path});
+                handleImportCompleteDedup({success: true, path: data.path});
             }
         });
 

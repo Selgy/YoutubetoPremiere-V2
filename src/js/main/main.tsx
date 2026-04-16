@@ -225,6 +225,9 @@ const Main = () => {
     if (!serverIP || serverIP === '') return;
 
     console.log('Attempting to connect to WebSocket server at:', serverIP);
+    // NOTE: client_type is 'panel' (not 'premiere') so this socket does not
+    // interfere with emit_to_client_type('premiere') calls. The actual import
+    // socket that receives import_video events is in videoImport.js.
     const socket = io(`http://${serverIP}:17845`, {
       transports: ['polling', 'websocket'],
       reconnectionAttempts: 5,
@@ -235,7 +238,7 @@ const Main = () => {
       upgrade: true,
       rememberUpgrade: false,
       autoConnect: true,
-      query: { client_type: 'premiere' }
+      query: { client_type: 'panel' }
     });
 
     let retryCount = 0;

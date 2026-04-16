@@ -17,6 +17,7 @@ import subprocess
 
 # Global variable to track current download for cancellation
 current_download = {'process': None, 'ydl': None, 'cancel_callback': None}
+current_download_lock = threading.Lock()
 
 # License validation cache to avoid repeated API calls
 license_cache = {'key': None, 'is_valid': False, 'timestamp': 0}
@@ -27,8 +28,10 @@ def get_current_download():
 
 def reset_current_download():
     """Reset the current download structure"""
-    global current_download
-    current_download = {'process': None, 'ydl': None, 'cancel_callback': None}
+    with current_download_lock:
+        current_download['process'] = None
+        current_download['ydl'] = None
+        current_download['cancel_callback'] = None
 
 def register_routes(app, socketio, settings):
     connected_clients = set()
@@ -312,9 +315,15 @@ def register_routes(app, socketio, settings):
                         logging.error("Could not emit error to client")
             
             # Start download in background thread
-            download_thread = threading.Thread(target=process_legacy_download_async, daemon=True)
-            download_thread.start()
-            
+            try:
+                download_thread = threading.Thread(target=process_legacy_download_async, daemon=True)
+                download_thread.start()
+            except RuntimeError as thread_err:
+                error_message = f"Could not start download thread: {str(thread_err)}"
+                logging.error(error_message)
+                socketio.emit('download-failed', {'message': error_message})
+                return jsonify({'error': error_message}), 500
+
             # Return immediately with 202 Accepted status
             return jsonify({'success': True, 'message': 'Download started'}), 202
         except Exception as e:
@@ -451,12 +460,18 @@ def register_routes(app, socketio, settings):
                         logging.error("Could not emit error to client")
             
             # Start download in background thread
-            download_thread = threading.Thread(target=process_download_async, daemon=True)
-            download_thread.start()
-            
+            try:
+                download_thread = threading.Thread(target=process_download_async, daemon=True)
+                download_thread.start()
+            except RuntimeError as thread_err:
+                error_message = f"Could not start download thread: {str(thread_err)}"
+                logging.error(error_message)
+                socketio.emit('download-failed', {'message': error_message})
+                return jsonify({'error': error_message}), 500
+
             # Return immediately with 202 Accepted status
             return jsonify({'success': True, 'message': 'Download started'}), 202
-            
+
         except Exception as e:
             error_message = f"Error handling video URL: {str(e)}"
             logging.error(error_message, exc_info=True)

@@ -610,15 +610,6 @@ def emit_to_client_type(event, data, client_type=None):
                 # Log progress and percentage events at INFO level for debugging
                 if event in ['progress', 'percentage']:
                     app_logger.info(f'[SENT] {event} to {client_type} client (SID: {sid[:8]}...): {data}')
-                    
-                    # Also send legacy format for old scripts compatibility
-                    if event == 'progress' and 'progress' in data:
-                        try:
-                            legacy_data = {'percentage': str(data['progress']) + '%'}
-                            socketio.emit('percentage', legacy_data, room=sid)
-                            app_logger.info(f'[SENT] legacy percentage to {client_type} client: {legacy_data}')
-                        except Exception as legacy_error:
-                            app_logger.warning(f'Could not send legacy percentage: {legacy_error}')
                             
                 elif event != 'connection_status': # Don't log frequent connection status updates
                     app_logger.debug(f'Emitting {event} to {client_type} client')
@@ -693,10 +684,10 @@ def handle_download_complete():
 
 @socketio.on('import_complete')
 def handle_import_complete(data):
-    """Handle import completion events"""
+    """Handle import completion events from CEP Premiere panel."""
     success = data.get('success', False)
     path = data.get('path', '')
-    
+
     if success:
         logging.info(f'Successfully imported video: {path}')
         # Play notification sound
@@ -704,15 +695,15 @@ def handle_import_complete(data):
         volume = settings.get('notificationVolume', 30) / 100
         sound_type = settings.get('notificationSound', 'default')
         play_notification_sound(volume=volume, sound_type=sound_type)
-        
-        # Forward the complete event to all clients
-        socketio.emit('import_complete', data)
+        # NOTE: do NOT re-broadcast import_complete to all clients here.
+        # video_processing.py already emits 'complete' to Chrome when the download
+        # finishes. Re-broadcasting would call handleImportComplete() a second time.
     else:
         error = data.get('error', 'Unknown error')
         logging.error(f'Failed to import video: {path}. Error: {error}')
-        # Forward the error to all clients
         socketio.emit('import_failed', {'path': path, 'error': error})
 
+@socketio.on('cancel-import')  # alias emitted by Chrome extension
 @socketio.on('cancel-download')
 def handle_cancel_download(data):
     """Handle download cancellation requests from Chrome extension"""
