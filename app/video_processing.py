@@ -1887,47 +1887,41 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                 logging.info('[FINISHED] Clip download finished')
                 # No percentage emission for clips - animation will stop when complete
 
-        # CRITICAL FIX: First extract video info with fallback chain (same as download_video)
-        # This determines if we need to download without cookies
-        use_cookies_for_download = True  # Default: use cookies
+        # Extract video info: try WITHOUT cookies first (clips work better without them),
+        # fall back to WITH cookies only if the no-cookie attempt fails.
+        use_cookies_for_download = False  # Default: no cookies for clips
         video_info = None
         video_formats = []
-        
-        # Try extraction with cookies first
-        logging.info("Extracting video info for clip with cookies...")
+
+        logging.info("Extracting video info for clip WITHOUT cookies (preferred)...")
         try:
-            extract_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
-            extract_opts['skip_download'] = True
-            extract_opts['format'] = 'best/worst'  # Permissive format for extraction
-            if browser_cookies:
-                extract_opts['cookiesfrombrowser'] = browser_cookies
-            
-            with yt_dlp.YoutubeDL(extract_opts) as ydl_extract:
-                video_info = ydl_extract.extract_info(video_url, download=False)
+            no_cookie_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
+            no_cookie_opts['skip_download'] = True
+            no_cookie_opts.pop('cookiefile', None)
+
+            with yt_dlp.YoutubeDL(no_cookie_opts) as ydl_nocookie:
+                video_info = ydl_nocookie.extract_info(video_url, download=False)
                 if video_info:
                     video_formats = [f for f in video_info.get('formats', []) if f.get('vcodec') != 'none']
-                    logging.info(f"Successfully extracted clip video info with cookies: {len(video_formats)} video formats")
-        except Exception as extract_error:
-            error_str = str(extract_error)
-            logging.warning(f"Clip extraction with cookies failed: {error_str[:100]}")
-            
-            # Try without cookies
-            if "Requested format is not available" in error_str or "Sign in" in error_str:
-                logging.info("Trying clip extraction WITHOUT cookies...")
-                try:
-                    no_cookie_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
-                    no_cookie_opts['skip_download'] = True
-                    if 'cookiefile' in no_cookie_opts:
-                        del no_cookie_opts['cookiefile']
-                    
-                    with yt_dlp.YoutubeDL(no_cookie_opts) as ydl_nocookie:
-                        video_info = ydl_nocookie.extract_info(video_url, download=False)
-                        if video_info:
-                            video_formats = [f for f in video_info.get('formats', []) if f.get('vcodec') != 'none']
-                            use_cookies_for_download = False
-                            logging.info(f"Successfully extracted clip video info WITHOUT cookies: {len(video_formats)} video formats")
-                except Exception as nocookie_error:
-                    logging.error(f"Clip extraction without cookies also failed: {str(nocookie_error)[:100]}")
+                    logging.info(f"Successfully extracted clip video info WITHOUT cookies: {len(video_formats)} video formats")
+        except Exception as nocookie_error:
+            logging.warning(f"Clip extraction without cookies failed: {str(nocookie_error)[:100]}")
+            logging.info("Retrying clip extraction WITH cookies...")
+            try:
+                extract_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
+                extract_opts['skip_download'] = True
+                extract_opts['format'] = 'best/worst'
+                if browser_cookies:
+                    extract_opts['cookiesfrombrowser'] = browser_cookies
+
+                with yt_dlp.YoutubeDL(extract_opts) as ydl_extract:
+                    video_info = ydl_extract.extract_info(video_url, download=False)
+                    if video_info:
+                        video_formats = [f for f in video_info.get('formats', []) if f.get('vcodec') != 'none']
+                        use_cookies_for_download = True
+                        logging.info(f"Successfully extracted clip video info WITH cookies: {len(video_formats)} video formats")
+            except Exception as cookie_error:
+                logging.error(f"Clip extraction with cookies also failed: {str(cookie_error)[:100]}")
         
         # Build format string based on available AVC1 formats
         # Detect format types: HLS (m3u8, already combined) vs DASH (https, video-only)
