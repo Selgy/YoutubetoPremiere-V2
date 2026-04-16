@@ -3197,46 +3197,39 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
             if not cookies_file:
                 browser_cookies = try_extract_cookies_from_browser()
         
-        # CRITICAL FIX: First extract video info with fallback chain (same as download_video)
-        # This determines if we need to download without cookies
-        use_cookies_for_download = True  # Default: use cookies
+        # Extract audio info: try WITHOUT cookies first (works better without them),
+        # fall back to WITH cookies only if the no-cookie attempt fails.
+        use_cookies_for_download = False  # Default: no cookies
         info = None
-        
-        # Try extraction with cookies first
-        logging.info("Extracting audio info with cookies...")
+
+        logging.info("Extracting audio info WITHOUT cookies (preferred)...")
         try:
-            extract_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
-            extract_opts['skip_download'] = True
-            extract_opts['format'] = 'bestaudio/best'  # Audio format for extraction
-            if browser_cookies:
-                extract_opts['cookiesfrombrowser'] = browser_cookies
-            
-            with yt_dlp.YoutubeDL(extract_opts) as ydl_extract:
-                info = ydl_extract.extract_info(video_url, download=False)
+            no_cookie_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
+            no_cookie_opts['skip_download'] = True
+            no_cookie_opts['format'] = 'bestaudio/best'
+            no_cookie_opts.pop('cookiefile', None)
+
+            with yt_dlp.YoutubeDL(no_cookie_opts) as ydl_nocookie:
+                info = ydl_nocookie.extract_info(video_url, download=False)
                 if info:
-                    logging.info(f"Successfully extracted audio info with cookies: {info.get('title', 'Unknown')}")
-        except Exception as extract_error:
-            error_str = str(extract_error)
-            logging.warning(f"Audio extraction with cookies failed: {error_str[:100]}")
-            
-            # Try without cookies
-            if "Requested format is not available" in error_str or "Sign in" in error_str:
-                logging.info("Trying audio extraction WITHOUT cookies...")
-                try:
-                    no_cookie_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
-                    no_cookie_opts['skip_download'] = True
-                    no_cookie_opts['format'] = 'bestaudio/best'
-                    if 'cookiefile' in no_cookie_opts:
-                        del no_cookie_opts['cookiefile']
-                    
-                    with yt_dlp.YoutubeDL(no_cookie_opts) as ydl_nocookie:
-                        info = ydl_nocookie.extract_info(video_url, download=False)
-                        if info:
-                            use_cookies_for_download = False
-                            logging.info(f"Successfully extracted audio info WITHOUT cookies: {info.get('title', 'Unknown')}")
-                except Exception as nocookie_error:
-                    logging.error(f"Audio extraction without cookies also failed: {str(nocookie_error)[:100]}")
-                    raise extract_error  # Re-raise original error
+                    logging.info(f"Successfully extracted audio info WITHOUT cookies: {info.get('title', 'Unknown')}")
+        except Exception as nocookie_error:
+            logging.warning(f"Audio extraction without cookies failed: {str(nocookie_error)[:100]}")
+            logging.info("Retrying audio extraction WITH cookies...")
+            try:
+                extract_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
+                extract_opts['skip_download'] = True
+                extract_opts['format'] = 'bestaudio/best'
+                if browser_cookies:
+                    extract_opts['cookiesfrombrowser'] = browser_cookies
+
+                with yt_dlp.YoutubeDL(extract_opts) as ydl_extract:
+                    info = ydl_extract.extract_info(video_url, download=False)
+                    if info:
+                        use_cookies_for_download = True
+                        logging.info(f"Successfully extracted audio info WITH cookies: {info.get('title', 'Unknown')}")
+            except Exception as cookie_error:
+                logging.error(f"Audio extraction with cookies also failed: {str(cookie_error)[:100]}")
         
         if not info:
             error_msg = "Could not extract video information for audio download"
