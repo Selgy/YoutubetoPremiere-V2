@@ -591,6 +591,12 @@ def emit_to_client_type(event, data, client_type=None):
         
         if connected_clients_count == 0:
             app_logger.warning(f'[WARN] No {client_type} clients connected to send {event} event!')
+            # For critical UI events, fall back to broadcast so the client gets
+            # the event even if it briefly reconnected with a new SID.
+            critical_events = {'complete', 'download-failed', 'import_failed', 'download-complete', 'download-cancelled'}
+            if event in critical_events:
+                app_logger.info(f'[FALLBACK] Broadcasting {event} to all clients (no {client_type} registered)')
+                socketio.emit(event, data)
             return
             
         app_logger.info(f'[INFO] Found {connected_clients_count} {client_type} clients connected')
