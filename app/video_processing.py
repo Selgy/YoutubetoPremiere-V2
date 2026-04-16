@@ -10,6 +10,18 @@ import time
 import requests
 import hashlib
 
+def normalize_path_components(p):
+    """Strip trailing spaces from each path component.
+
+    Windows allows directory names like 'MK1 ' (with trailing space) but yt-dlp's
+    internal path handling (outtmpl templating) silently fails on such paths.
+    """
+    drive, tail = os.path.splitdrive(p)
+    parts = tail.replace('\\', '/').split('/')
+    normalized = '/'.join(part.rstrip() for part in parts)
+    return drive + normalized.replace('/', os.sep)
+
+
 # FFmpeg verification cache
 _ffmpeg_verified = False
 _ffmpeg_path_cached = None
@@ -1677,6 +1689,19 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         socketio.emit('download-failed', {'message': error_msg})
         return {"error": error_msg}
 
+    # After makedirs, try to resolve the canonical path.
+    # On Windows, directories with trailing spaces (e.g. "MK1 ") may be accessible
+    # to yt-dlp/ffmpeg but not to Python's os.path.exists (Win32 strips trailing spaces).
+    # Using Path.resolve() after makedirs gives us the real filesystem path.
+    try:
+        import pathlib
+        resolved_dl_path = str(pathlib.Path(download_path).resolve())
+        if resolved_dl_path and resolved_dl_path != download_path:
+            logging.info(f"[PATH-FIX] Resolved clip download path: '{download_path}' -> '{resolved_dl_path}'")
+            download_path = resolved_dl_path
+    except Exception:
+        pass
+
     # Run pre-download diagnostics
     diag = run_pre_download_diagnostics(download_path, ffmpeg_path, socketio)
     if not diag['success']:
@@ -2098,6 +2123,24 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         except Exception as cleanup_error:
             logging.debug(f"Error during cleanup: {cleanup_error}")
 
+        # If file not found at expected path, try to locate it via glob.
+        # On Windows, directories with trailing spaces or special chars (e.g. "MK1 " / "MK1#")
+        # may cause os.path.exists() to return False even though yt-dlp wrote the file there.
+        if not os.path.exists(video_file_path):
+            try:
+                import glob as _glob
+                # Search: go up 3 levels (past YoutubeToPremiere_download / 8_SAVE / MK1x)
+                # and look for the filename in any sibling directory subtree
+                three_up = os.path.dirname(os.path.dirname(os.path.dirname(download_path)))
+                if os.path.exists(three_up):
+                    pattern = os.path.join(three_up, '**', unique_filename)
+                    matches = _glob.glob(pattern, recursive=True)
+                    if matches:
+                        video_file_path = matches[0]
+                        logging.info(f"[PATH-FIX] Clip found at resolved path: {video_file_path}")
+            except Exception as _ge:
+                logging.debug(f"[PATH-FIX] Glob fallback error: {_ge}")
+
         # Add metadata to the video file if it exists
         if os.path.exists(video_file_path):
             logging.info(f"[CLIP-COMPLETE] Clip downloaded successfully: {video_file_path}")
@@ -2356,13 +2399,6 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         # Normalize path: strip trailing spaces from each path component.
         # Windows allows directory names like "MK1 " (with trailing space) but yt-dlp's
         # internal path handling (outtmpl templating) silently fails on such paths.
-        def normalize_path_components(p):
-            drive, tail = os.path.splitdrive(p)
-            parts = tail.replace('\\', '/').split('/')
-            normalized = '/'.join(part.rstrip() for part in parts)
-            result = drive + normalized.replace('/', os.sep)
-            return result
-
         original_download_path = download_path
         download_path = normalize_path_components(download_path)
         if download_path != original_download_path:
