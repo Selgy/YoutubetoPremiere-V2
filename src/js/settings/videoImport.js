@@ -161,12 +161,13 @@ export async function setupVideoImportHandler(csInterface) {
             console.error('- Reason:', reason || 'unknown');
             console.error('- Time:', new Date().toISOString());
             console.error('- Socket ID was:', socket.id);
-            
+
             pendingImports.clear();
             importedPaths.clear();
-            
-            // Attempt to reconnect if not already trying
-            if (!reconnectInterval) {
+
+            // 'io client disconnect' means WE closed the socket (e.g. at the top of
+            // connectSocket). Don't schedule a reconnect — connectSocket already handles it.
+            if (!reconnectInterval && reason !== 'io client disconnect') {
                 reconnectAttempts++;
                 console.log(`🔄 Attempting to reconnect... (${reconnectAttempts})`);
                 setTimeout(connectSocket, 5000);

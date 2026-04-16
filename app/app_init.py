@@ -392,15 +392,11 @@ def create_app():
         cors_allowed_origins="*",
         async_mode='threading',
         ping_timeout=60,
-        ping_interval=25000,
+        ping_interval=25,   # seconds (was 25000 — that was 6h9min, killing heartbeat)
         max_http_buffer_size=1e8,
         allow_upgrades=True,
-        transports=['polling', 'websocket'],  # Start with polling as default
+        transports=['polling', 'websocket'],
         always_connect=True,
-        reconnection=True,
-        reconnection_attempts=-1,  # Use -1 for unlimited reconnection attempts
-        reconnection_delay=1000,
-        reconnection_delay_max=5000,
         logger=True,
         engineio_logger=True,
         cors_credentials=True
