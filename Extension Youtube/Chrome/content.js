@@ -712,6 +712,7 @@ styleSheet.textContent = `
         background: rgba(0, 0, 0, 0.2) !important;
         backdrop-filter: blur(10px) !important;
         border-radius: 18px !important;
+        overflow: hidden !important;
         padding: 4px 0px 4px 4px !important;
         border: 1px solid rgba(255, 255, 255, 0.1) !important;
         transition: padding 0.3s ease !important;
