@@ -155,10 +155,11 @@
                 };
             }
             
-            safeDebug("File imported successfully, waiting for project update...");
-            
-            // Wait briefly to ensure the items are updated in the project
-            $.sleep(200);
+            safeDebug("File imported successfully, getting project update...");
+
+            // NOTE: No $.sleep() here. importFiles() is synchronous in ExtendScript —
+            // the project is already updated when it returns. $.sleep() blocks Premiere Pro's
+            // main thread and triggers Mac OS watchdog crash report dialogs.
 
             // Get the node IDs after import (from target bin)
             var afterNodeIds = $._ext.getAllNodeIds(targetBin);
@@ -229,10 +230,10 @@
                     };
                 }
                 
-                
-                // Wait for source monitor to be ready
-                $.sleep(200);
-                
+                // No $.sleep() before openProjectItem() — it blocks Premiere Pro's main
+                // thread on Mac and causes OS watchdog crash reports. importFiles() is
+                // synchronous so the item is already available when we reach this point.
+
                 // Use the documented method app.sourceMonitor.openProjectItem()
                 safeDebug("Opening project item in source monitor...");
                 var result = app.sourceMonitor.openProjectItem(importedItem);

@@ -108,10 +108,9 @@ var importVideoToSource = function (videoPath) {
                 path: videoPath
             };
         }
-        // Wait briefly to ensure the items are updated in the project
-        // Keep short to avoid blocking Mac main thread (watchdog triggers crash dialogs above ~1s)
-        //@ts-ignore - ExtendScript global
-        $.sleep(300);
+        // NOTE: No $.sleep() here. importFiles() is synchronous in ExtendScript —
+        // the project is already updated when it returns. $.sleep() blocks Premiere Pro's
+        // main thread and triggers Mac OS watchdog crash report dialogs.
         // Get the node IDs after import
         var afterNodeIds = nodeIdsGetter(rootItem);
         // Find the new item(s)
@@ -163,10 +162,9 @@ var importVideoToSource = function (videoPath) {
                     sourceMonitorError: "Source monitor not available"
                 };
             }
-            // Wait for source monitor to be ready
-            // Short sleep - Mac CEP bridge 200ms grace period in JS handles response timing
-            //@ts-ignore - ExtendScript global
-            $.sleep(200);
+            // No $.sleep() before openProjectItem() — it blocks Premiere Pro's main
+            // thread on Mac and causes OS watchdog crash reports. importFiles() is
+            // synchronous so the item is already available when we reach this point.
             // Use the documented method app.sourceMonitor.openProjectItem()
             //@ts-ignore - ExtendScript globals
             var result = app.sourceMonitor.openProjectItem(importedItem);
