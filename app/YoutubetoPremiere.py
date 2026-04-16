@@ -695,13 +695,13 @@ def handle_import_complete(data):
         volume = settings.get('notificationVolume', 30) / 100
         sound_type = settings.get('notificationSound', 'default')
         play_notification_sound(volume=volume, sound_type=sound_type)
-        # NOTE: do NOT re-broadcast import_complete to all clients here.
-        # video_processing.py already emits 'complete' to Chrome when the download
-        # finishes. Re-broadcasting would call handleImportComplete() a second time.
+        # Forward 'complete' ONLY to Chrome clients (not broadcast to all, which
+        # would loop back to CEP and re-trigger imports).
+        emit_to_client_type('complete', {'success': True, 'path': path}, 'chrome')
     else:
         error = data.get('error', 'Unknown error')
         logging.error(f'Failed to import video: {path}. Error: {error}')
-        socketio.emit('import_failed', {'path': path, 'error': error})
+        emit_to_client_type('import_failed', {'path': path, 'error': error}, 'chrome')
 
 @socketio.on('cancel-import')  # alias emitted by Chrome extension
 @socketio.on('cancel-download')
