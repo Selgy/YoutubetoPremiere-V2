@@ -2450,114 +2450,98 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     logging.info(f"Cleaned URL from {video_url} to {video_url_cleaned}")
                     video_url = video_url_cleaned
         
-        # Configure initial yt-dlp options with robust settings including auth
-        # For info extraction, use simple 'best' format to avoid complex format validation
-        initial_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
-        initial_ydl_opts['skip_download'] = True  # Only extract metadata, don't download yet
-        
         # Track which method succeeded for download phase
         use_cookies_for_download = True  # Default: use cookies
         use_android_player = False  # Default: don't force Android player
-        
-        # Add browser cookies if available (fallback when no cookies file)
-        if browser_cookies:
-            initial_ydl_opts['cookiesfrombrowser'] = browser_cookies
-            logging.info(f"Using cookies from browser for info extraction: {browser_cookies[0]}")
-        
-        # Extract video info first with authentication
-        # CRITICAL FIX: Use ultra-permissive format for info extraction only
-        # The actual AVC1 format will be used during download
-        # This prevents "Requested format is not available" errors that occur
-        # when yt-dlp validates complex format strings during info extraction
-        # (which can fail differently based on region/account/network)
-        initial_ydl_opts['format'] = 'best/worst'  # Ultra-permissive: any format works for metadata
-        
-        logging.info("Extracting video information with permissive format (AVC1 will be used for download)...")
+
+        # FIX: Try WITHOUT cookies FIRST — public videos are faster and more reliable
+        # without cookies. Fall back to cookies only for age-restricted / private content.
+        info = None
+        logging.info("Extracting video info without cookies first (public videos)...")
         try:
-            with yt_dlp.YoutubeDL(initial_ydl_opts) as ydl:
-                info = ydl.extract_info(video_url, download=False)
-                if not info:
-                    raise Exception("Could not extract video information")
-                logging.info("Successfully extracted video information")
-        except Exception as info_error:
-            error_str = str(info_error)
-            # Check for cookie-related errors and retry without cookies
-            if "invalid Netscape format cookies file" in error_str or "CookieLoadError" in error_str or "failed to load cookies" in error_str:
-                logging.warning("Cookie format error during info extraction. Retrying without cookies...")
-                try:
-                    # Retry info extraction without cookies but with comprehensive headers
-                    fallback_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
-                    fallback_ydl_opts['skip_download'] = True
-                    fallback_ydl_opts['format'] = 'best/worst'  # Ultra-permissive
-                    
-                    with yt_dlp.YoutubeDL(fallback_ydl_opts) as ydl_fallback:
-                        info = ydl_fallback.extract_info(video_url, download=False)
-                        if not info:
-                            raise Exception("Could not extract video information")
-                        logging.info("Successfully extracted video info without cookies")
-                except Exception as fallback_info_error:
-                    logging.error(f"Fallback info extraction also failed: {str(fallback_info_error)}")
-                    raise Exception(f"Info extraction failed with and without cookies: {str(fallback_info_error)}")
-            # Check for format-related errors and retry with even more permissive format
-            elif "Requested format is not available" in error_str:
-                logging.warning("Format validation failed. Retrying with no format specification...")
-                try:
-                    # Remove format entirely - let yt-dlp use its default
-                    if 'format' in initial_ydl_opts:
-                        del initial_ydl_opts['format']
-                    
-                    with yt_dlp.YoutubeDL(initial_ydl_opts) as ydl_retry:
-                        info = ydl_retry.extract_info(video_url, download=False)
-                        if not info:
-                            raise Exception("Could not extract video information")
-                        logging.info("Successfully extracted video info with default format")
-                except Exception as retry_error:
-                    logging.error(f"Retry without format also failed: {str(retry_error)}")
-                    
-                    # THIRD LEVEL FALLBACK: Try Android player client
-                    # Android player works without login for most videos
-                    logging.warning("Trying fallback with Android player client...")
+            no_cookie_first_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
+            no_cookie_first_opts['skip_download'] = True
+            with yt_dlp.YoutubeDL(no_cookie_first_opts) as ydl_first:
+                info = ydl_first.extract_info(video_url, download=False)
+                if info:
+                    logging.info("Successfully extracted video info without cookies")
+                    use_cookies_for_download = False
+                else:
+                    info = None
+        except Exception as no_cookie_first_err:
+            logging.info(f"No-cookie extraction failed: {str(no_cookie_first_err)[:120]} — retrying with cookies")
+
+        # FALLBACK: cookies needed (age-restricted / member-only / private content)
+        if not info:
+            initial_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
+            initial_ydl_opts['skip_download'] = True
+            if browser_cookies:
+                initial_ydl_opts['cookiesfrombrowser'] = browser_cookies
+                logging.info(f"Using cookies from browser for info extraction: {browser_cookies[0]}")
+            initial_ydl_opts['format'] = 'best/worst'  # Ultra-permissive: any format works for metadata
+
+            logging.info("Extracting video information with authentication...")
+            try:
+                with yt_dlp.YoutubeDL(initial_ydl_opts) as ydl:
+                    info = ydl.extract_info(video_url, download=False)
+                    if not info:
+                        raise Exception("Could not extract video information")
+                    logging.info("Successfully extracted video information with cookies")
+            except Exception as info_error:
+                error_str = str(info_error)
+                # Check for cookie-related errors and retry without cookies
+                if "invalid Netscape format cookies file" in error_str or "CookieLoadError" in error_str or "failed to load cookies" in error_str:
+                    logging.warning("Cookie format error during info extraction. Retrying without cookies...")
                     try:
-                        android_fallback_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
-                        android_fallback_opts['skip_download'] = True
-                        android_fallback_opts['extractor_args'] = {'youtube': {'player_client': ['android']}}
-                        if 'format' in android_fallback_opts:
-                            del android_fallback_opts['format']
-                        
-                        logging.info("Using Android player client as fallback...")
-                        with yt_dlp.YoutubeDL(android_fallback_opts) as ydl_android:
-                            info = ydl_android.extract_info(video_url, download=False)
+                        fallback_ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
+                        fallback_ydl_opts['skip_download'] = True
+                        fallback_ydl_opts['format'] = 'best/worst'
+
+                        with yt_dlp.YoutubeDL(fallback_ydl_opts) as ydl_fallback:
+                            info = ydl_fallback.extract_info(video_url, download=False)
                             if not info:
-                                raise Exception("Could not extract video information with Android client")
-                            logging.info("Successfully extracted video info with Android player client fallback")
-                            use_android_player = True  # Remember to use Android player for download
-                    except Exception as android_fallback_error:
-                        logging.error(f"Android player client fallback also failed: {str(android_fallback_error)}")
-                        
-                        # FOURTH LEVEL FALLBACK: Try without cookies
-                        # Sometimes cookies cause issues with YouTube's bot detection
-                        logging.warning("Trying fallback WITHOUT cookies...")
+                                raise Exception("Could not extract video information")
+                            logging.info("Successfully extracted video info without cookies")
+                    except Exception as fallback_info_error:
+                        logging.error(f"Fallback info extraction also failed: {str(fallback_info_error)}")
+                        raise Exception(f"Info extraction failed with and without cookies: {str(fallback_info_error)}")
+                # Check for format-related errors and retry with even more permissive format
+                elif "Requested format is not available" in error_str:
+                    logging.warning("Format validation failed. Retrying with no format specification...")
+                    try:
+                        if 'format' in initial_ydl_opts:
+                            del initial_ydl_opts['format']
+
+                        with yt_dlp.YoutubeDL(initial_ydl_opts) as ydl_retry:
+                            info = ydl_retry.extract_info(video_url, download=False)
+                            if not info:
+                                raise Exception("Could not extract video information")
+                            logging.info("Successfully extracted video info with default format")
+                    except Exception as retry_error:
+                        logging.error(f"Retry without format also failed: {str(retry_error)}")
+
+                        # Try Android player client as last resort
+                        logging.warning("Trying fallback with Android player client...")
                         try:
-                            no_cookie_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
-                            no_cookie_opts['skip_download'] = True
-                            if 'format' in no_cookie_opts:
-                                del no_cookie_opts['format']
-                            if 'cookiefile' in no_cookie_opts:
-                                del no_cookie_opts['cookiefile']
-                            
-                            logging.info("Retrying extraction without cookies...")
-                            with yt_dlp.YoutubeDL(no_cookie_opts) as ydl_nocookie:
-                                info = ydl_nocookie.extract_info(video_url, download=False)
+                            android_fallback_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
+                            android_fallback_opts['skip_download'] = True
+                            android_fallback_opts['extractor_args'] = {'youtube': {'player_client': ['android']}}
+                            if 'format' in android_fallback_opts:
+                                del android_fallback_opts['format']
+
+                            logging.info("Using Android player client as fallback...")
+                            with yt_dlp.YoutubeDL(android_fallback_opts) as ydl_android:
+                                info = ydl_android.extract_info(video_url, download=False)
                                 if not info:
-                                    raise Exception("Could not extract video information without cookies")
-                                logging.info("Successfully extracted video info without cookies")
-                                use_cookies_for_download = False  # Remember to NOT use cookies for download
-                        except Exception as nocookie_error:
-                            logging.error(f"Fallback without cookies also failed: {str(nocookie_error)}")
-                            raise info_error  # Raise original error
-            else:
-                # Re-raise the original error if it's not cookie/format-related
-                raise info_error
+                                    raise Exception("Could not extract video information with Android client")
+                                logging.info("Successfully extracted video info with Android player client fallback")
+                                use_android_player = True
+                        except Exception as android_fallback_error:
+                            logging.error(f"Android player client fallback also failed: {str(android_fallback_error)}")
+                            raise info_error  # All fallbacks exhausted
+                else:
+                    # Re-raise the original error if it's not cookie/format-related
+                    raise info_error
         
         # Log detailed format analysis for debugging
         log_youtube_formats(info, resolution)
@@ -2933,8 +2917,9 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 socketio.emit('import_video', {'path': actual_file, 'bin': settings.get('premiereBin', '')})
                 # Emit both formats to ensure compatibility
                 socketio.emit('download-complete', {'url': video_url, 'path': actual_file})  # Hyphenated format for Chrome extension
+                socketio.emit('complete', {'type': 'full', 'success': True, 'path': actual_file})  # Direct reset for Chrome button
                 logging.info("Import signal sent to Premiere Pro extension via SocketIO")
-                
+
                 return actual_file
             except subprocess.TimeoutExpired as e:
                 logging.error(f"[METADATA] FFmpeg metadata TIMEOUT after {e.timeout}s")
@@ -2942,6 +2927,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 logging.info(f"[METADATA] Returning file without metadata due to timeout: {actual_file}")
                 socketio.emit('import_video', {'path': actual_file, 'bin': settings.get('premiereBin', '')})
                 socketio.emit('download-complete', {'url': video_url, 'path': actual_file})
+                socketio.emit('complete', {'type': 'full', 'success': True, 'path': actual_file})  # Direct reset for Chrome button
                 logging.info("Import signal sent to Premiere Pro extension via SocketIO")
                 return actual_file
             except subprocess.CalledProcessError as e:
@@ -2951,6 +2937,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 logging.info(f"[METADATA] Returning file without metadata: {actual_file}")
                 socketio.emit('import_video', {'path': actual_file, 'bin': settings.get('premiereBin', '')})
                 socketio.emit('download-complete', {'url': video_url, 'path': actual_file})
+                socketio.emit('complete', {'type': 'full', 'success': True, 'path': actual_file})  # Direct reset for Chrome button
                 logging.info("Import signal sent to Premiere Pro extension via SocketIO")
                 return actual_file
         else:

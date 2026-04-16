@@ -33,13 +33,14 @@ def reset_current_download():
         current_download['ydl'] = None
         current_download['cancel_callback'] = None
 
-def register_routes(app, socketio, settings):
+def register_routes(app, socketio, settings, emit_fn=None):
     connected_clients = set()
-    
-    # Import emit_to_client_type from the main module
-    # We need to get this from the calling context since it's defined in YoutubetoPremiere.py
-    from YoutubetoPremiere import emit_to_client_type
-    
+
+    # Use the emit_fn passed from YoutubetoPremiere to avoid a circular import.
+    # (Previously this did `from YoutubetoPremiere import emit_to_client_type` which
+    # re-executed all of YoutubetoPremiere's module-level code a second time.)
+    emit_to_client_type = emit_fn
+
     # Set the emit function for video_processing to use
     set_emit_function(emit_to_client_type)
     

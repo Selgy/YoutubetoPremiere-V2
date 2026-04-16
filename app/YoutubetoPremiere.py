@@ -830,7 +830,7 @@ def run_server():
             settings_for_logging['licenseKey'] = "****"
     
     logging.info('Settings loaded: %s', settings_for_logging)
-    register_routes(app, socketio, settings)
+    register_routes(app, socketio, settings, emit_to_client_type)
 
     # Start periodic cleanup task
     cleanup_thread = periodic_cleanup()

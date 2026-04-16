@@ -20,6 +20,9 @@ import time
 _settings_cache = None
 _settings_cache_time = 0
 
+# FFmpeg path cache — resolved once per process lifetime (never changes at runtime)
+_ffmpeg_path_cache = None
+
 def load_settings():
     global _settings_cache, _settings_cache_time
     
@@ -124,10 +127,13 @@ def load_settings():
     _settings_cache = settings.copy()
     _settings_cache_time = now
     
-    # Set up FFmpeg using the init module function
+    # Set up FFmpeg — resolve path only once per process (expensive PATH scan)
+    global _ffmpeg_path_cache
     try:
-        from app_init import find_ffmpeg as init_find_ffmpeg
-        settings['ffmpeg_path'] = init_find_ffmpeg()
+        if _ffmpeg_path_cache is None:
+            from app_init import find_ffmpeg as init_find_ffmpeg
+            _ffmpeg_path_cache = init_find_ffmpeg()
+        settings['ffmpeg_path'] = _ffmpeg_path_cache
         if settings['ffmpeg_path']:
             # Add ffmpeg directory to PATH - only if not already present
             ffmpeg_dir = os.path.dirname(settings['ffmpeg_path'])
