@@ -2,7 +2,7 @@
 // Modern button design with icons and improved animations - Original Colors
 
 // Debug: Version check
-console.log('YTP: Content script loaded - Version 3.0.22 with Enhanced Cookie Extraction & Debug');
+console.log('YTP: Content script loaded - Version 3.0.31 with Enhanced Cookie Extraction & Debug');
 
 // Server availability state
 let serverAvailable = false;
@@ -3355,6 +3355,7 @@ async function enhancedAuthCheck() {
         return false;
     }
 } 
+
 
 
 
