@@ -955,6 +955,16 @@ const Main = () => {
               </div>
             </div>
             
+            {/* Close Premiere warning — shown only before install starts */}
+            {installStatus === 'idle' && (
+              <div className="mt-4 flex items-start gap-2 px-3 py-2 rounded-lg bg-yellow-500 bg-opacity-15 border border-yellow-500 border-opacity-30">
+                <span className="material-symbols-outlined text-yellow-400 text-base mt-0.5">warning</span>
+                <p className="text-xs text-yellow-300">
+                  Close Premiere Pro before installing to avoid file conflicts.
+                </p>
+              </div>
+            )}
+
             {/* Progress bar — shown during download/install */}
             {(installStatus === 'downloading' || installStatus === 'launching') && (
               <div className="mt-4">
