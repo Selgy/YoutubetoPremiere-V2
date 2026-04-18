@@ -16,9 +16,32 @@ permissions:
   actions: read
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.release_info.outputs.TAG_NAME }}
+      release_name: ${{ steps.release_info.outputs.RELEASE_NAME }}
+      short_sha: ${{ steps.release_info.outputs.SHORT_SHA }}
+    steps:
+      - name: Generate release info
+        id: release_info
+        run: |
+          RELEASE_DATE=$(date +'%Y%m%d-%H%M%S')
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          if [ -n "${{ github.event.inputs.release_name }}" ]; then
+            RELEASE_NAME="${{ github.event.inputs.release_name }}"
+            TAG_NAME="nightly-${{ github.event.inputs.release_name }}"
+          else
+            RELEASE_NAME="Nightly Build $RELEASE_DATE"
+            TAG_NAME="nightly-$RELEASE_DATE-$SHORT_SHA"
+          fi
+          echo "RELEASE_NAME=$RELEASE_NAME" >> $GITHUB_OUTPUT
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_OUTPUT
+
   mac-build-apple-silicon:
     runs-on: macos-14
-    needs: [windows-build]
+    needs: [windows-build, setup]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4.2.2
@@ -291,9 +314,22 @@ jobs:
           path: |
             YouTubetoPremiere-macOS-nightly.pkg
 
+      - name: Upload to GitHub Pre-Release (macOS)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.setup.outputs.tag_name }}
+          name: "🌙 ${{ needs.setup.outputs.release_name }}"
+          draft: false
+          prerelease: true
+          files: |
+            YouTubetoPremiere-macOS-nightly.pkg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   windows-build:
     runs-on: windows-latest
     timeout-minutes: 20
+    needs: [setup]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4.2.2
@@ -494,73 +530,33 @@ jobs:
           path: |
             YouTubetoPremiere-Setup-nightly.exe
 
-  release:
-    needs: [mac-build-apple-silicon, windows-build]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4.2.2
-
-      - name: Download macOS artifacts
-        uses: actions/download-artifact@v4.3.0
-        with:
-          name: macos-nightly-build
-          path: ./artifacts/macos
-
-      - name: Download Windows artifacts
-        uses: actions/download-artifact@v4.3.0
-        with:
-          name: windows-nightly-build
-          path: ./artifacts/windows
-
-      - name: Generate release info
-        id: release_info
-        run: |
-          # Get current date/time for release name
-          RELEASE_DATE=$(date +'%Y%m%d-%H%M%S')
-          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-          
-          # Use custom name if provided, otherwise generate one
-          if [ -n "${{ github.event.inputs.release_name }}" ]; then
-            RELEASE_NAME="${{ github.event.inputs.release_name }}"
-            TAG_NAME="nightly-${{ github.event.inputs.release_name }}"
-          else
-            RELEASE_NAME="Nightly Build $RELEASE_DATE"
-            TAG_NAME="nightly-$RELEASE_DATE-$SHORT_SHA"
-          fi
-          
-          echo "RELEASE_NAME=$RELEASE_NAME" >> $GITHUB_OUTPUT
-          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
-          echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_OUTPUT
-
-      - name: Create Pre-Release
+      - name: Upload to GitHub Pre-Release (Windows)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.release_info.outputs.TAG_NAME }}
-          name: "🌙 ${{ steps.release_info.outputs.RELEASE_NAME }}"
+          tag_name: ${{ needs.setup.outputs.tag_name }}
+          name: "🌙 ${{ needs.setup.outputs.release_name }}"
           draft: false
           prerelease: true
           body: |
             ## 🌙 Nightly Build - Test Version
-            
+
             **⚠️ Cette version est une pré-release pour tests uniquement.**
-            
+
             ### 📋 Informations
-            - **Commit:** `${{ steps.release_info.outputs.SHORT_SHA }}`
+            - **Commit:** `${{ needs.setup.outputs.short_sha }}`
             - **Branch:** `${{ github.ref_name }}`
             - **Date:** `${{ github.event.head_commit.timestamp || 'Manual trigger' }}`
-            
+
             ### 📥 Téléchargements
             - **Windows:** `YouTubetoPremiere-Setup-nightly.exe`
             - **macOS:** `YouTubetoPremiere-macOS-nightly.pkg`
-            
+
             ### ⚠️ Avertissement
             Cette version peut contenir des bugs. Utilisez-la uniquement pour tester les nouvelles fonctionnalités avant la release officielle.
-            
+
             ---
             *Auto-generated nightly build from commit ${{ github.sha }}*
           files: |
-            ./artifacts/macos/YouTubetoPremiere-macOS-nightly.pkg
-            ./artifacts/windows/YouTubetoPremiere-Setup-nightly.exe
+            YouTubetoPremiere-Setup-nightly.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
