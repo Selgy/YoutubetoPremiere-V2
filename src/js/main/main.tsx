@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import './main.scss';
 import Settings from './Settings';
 import io from 'socket.io-client';
