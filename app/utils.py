@@ -164,6 +164,7 @@ def load_settings():
     return settings
 
 def save_settings(settings):
+    global _settings_cache, _settings_cache_time
     settings_path = settings.get('SETTINGS_FILE')
     if settings_path:
         # Load existing settings first
@@ -174,17 +175,21 @@ def save_settings(settings):
                     existing_settings = json.load(f)
             except Exception:
                 pass
-        
+
         # Create a copy of settings without the internal fields
         settings_to_save = settings.copy()
         settings_to_save.pop('SETTINGS_FILE', None)
         settings_to_save.pop('ffmpeg_path', None)
-        
+
         # Update existing settings with new values
         existing_settings.update(settings_to_save)
-        
+
         with open(settings_path, 'w') as f:
             json.dump(existing_settings, f, indent=4)
+
+        # Invalidate cache so the next load_settings() picks up the new values immediately
+        _settings_cache = None
+        _settings_cache_time = 0
         return True
     return False
 

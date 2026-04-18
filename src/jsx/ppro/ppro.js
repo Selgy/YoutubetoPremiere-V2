@@ -53,7 +53,8 @@ var getAllNodeIds = function (container) {
     return ids;
 };
 // Main function to import a file and open it in the Source Monitor
-var importVideoToSource = function (videoPath) {
+var importVideoToSource = function (videoPath, binPath) {
+    if (binPath === void 0) { binPath = ''; }
     try {
         // Verify Premiere Pro environment
         //@ts-ignore - ExtendScript globals
@@ -75,7 +76,7 @@ var importVideoToSource = function (videoPath) {
         // Use the functions from $._ext if available, otherwise fallback to local functions
         //@ts-ignore - ExtendScript globals
         var pathNormalizer = (typeof $._ext !== 'undefined' && $._ext.normalizePath) ? $._ext.normalizePath : normalizePath;
-        //@ts-ignore - ExtendScript globals  
+        //@ts-ignore - ExtendScript globals
         var existsChecker = (typeof $._ext !== 'undefined' && $._ext.fileExists) ? $._ext.fileExists : fileExists;
         // Normalize the path and check if file exists
         var normalizedPath = pathNormalizer(videoPath);
@@ -90,14 +91,42 @@ var importVideoToSource = function (videoPath) {
         //@ts-ignore - ExtendScript globals
         var project = app.project;
         var rootItem = project.rootItem;
+        // Resolve target bin — supports nested paths like "Youtube/CLIP"
+        var targetBin = rootItem;
+        if (binPath && binPath.trim()) {
+            var parts = binPath.split('/');
+            var currentBin = rootItem;
+            for (var p = 0; p < parts.length; p++) {
+                var part = parts[p].trim();
+                if (!part) continue;
+                var foundBin = null;
+                for (var c = 0; c < currentBin.children.numItems; c++) {
+                    var child = currentBin.children[c];
+                    if (child.type === 2 && child.name === part) { // 2 = BIN
+                        foundBin = child;
+                        break;
+                    }
+                }
+                if (foundBin) {
+                    currentBin = foundBin;
+                } else {
+                    try {
+                        currentBin = currentBin.createBin(part);
+                    } catch(binErr) {
+                        break; // fall back to current level
+                    }
+                }
+            }
+            targetBin = currentBin;
+        }
         // Use the getAllNodeIds function from $._ext if available, otherwise fallback to local function
         //@ts-ignore - ExtendScript globals
         var nodeIdsGetter = (typeof $._ext !== 'undefined' && $._ext.getAllNodeIds) ? $._ext.getAllNodeIds : getAllNodeIds;
-        // Get the node IDs before import
-        var beforeNodeIds = nodeIdsGetter(rootItem);
-        // Import the file
+        // Get the node IDs before import (in targetBin)
+        var beforeNodeIds = nodeIdsGetter(targetBin);
+        // Import the file into the target bin
         var importedFiles = project.importFiles([normalizedPath], false, // suppressUI
-        rootItem, // parentBin
+        targetBin, // parentBin — root or named bin
         false // importAsNumberedStills
         );
         // Check if the import actually returned a valid item
@@ -111,12 +140,12 @@ var importVideoToSource = function (videoPath) {
         // NOTE: No $.sleep() here. importFiles() is synchronous in ExtendScript —
         // the project is already updated when it returns. $.sleep() blocks Premiere Pro's
         // main thread and triggers Mac OS watchdog crash report dialogs.
-        // Get the node IDs after import
-        var afterNodeIds = nodeIdsGetter(rootItem);
+        // Get the node IDs after import (in targetBin)
+        var afterNodeIds = nodeIdsGetter(targetBin);
         // Find the new item(s)
         var newItems = [];
-        for (var i = 0; i < rootItem.children.numItems; i++) {
-            var item = rootItem.children[i];
+        for (var i = 0; i < targetBin.children.numItems; i++) {
+            var item = targetBin.children[i];
             var found = false;
             // Skip bins
             if (item.type === 2) { // BIN type

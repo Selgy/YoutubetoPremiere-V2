@@ -191,13 +191,15 @@ export async function setupVideoImportHandler(csInterface) {
                     return;
                 }
 
-                if (lastImportedPath === videoPath) {
-                    console.log(`Skipping duplicate import request for: ${videoPath}`);
+                // Include binPath in the dedup key so changing the bin allows re-import
+                const importKey = `${videoPath}::${binPath}`;
+                if (lastImportedPath === importKey) {
+                    console.log(`Skipping duplicate import request for: ${videoPath} (bin: ${binPath || 'root'})`);
                     return;
                 }
 
                 importInProgress = true;
-                lastImportedPath = videoPath;
+                lastImportedPath = importKey;
                 console.log(`Starting import for: ${videoPath}`);
 
                 // binPath comes from server event (data.bin) - most reliable source
