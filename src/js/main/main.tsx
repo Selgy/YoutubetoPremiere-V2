@@ -219,9 +219,14 @@ const Main = () => {
   }, [serverIP]);
 
   useEffect(() => {
-    if (serverIP && serverIP !== '' && serverIP !== 'localhost') {
-      checkForUpdates();
-    }
+    if (!serverIP || serverIP === '') return;
+
+    // Check once at startup
+    checkForUpdates();
+
+    // Re-check every 4 hours in case the panel stays open for a long time
+    const updateInterval = setInterval(checkForUpdates, 4 * 60 * 60 * 1000);
+    return () => clearInterval(updateInterval);
   }, [serverIP]);
 
   useEffect(() => {
