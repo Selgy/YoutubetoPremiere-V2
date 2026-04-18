@@ -817,16 +817,20 @@ def register_routes(app, socketio, settings, emit_fn=None):
                     os.makedirs(auto_path, exist_ok=True)
                     logging.info(f"Created auto download folder: {auto_path}")
 
-                    # Only save the auto-derived path if the user has NOT manually set one.
-                    # If downloadPath is already set, respect the user's choice and do not overwrite it.
+                    # Only preserve the path if the user explicitly set a CUSTOM one.
+                    # A path ending with 'YoutubeToPremiere_download' was auto-generated
+                    # by us on a previous connect — treat it the same as empty so it
+                    # always follows the current project.
                     current_settings = load_settings()
                     user_path = current_settings.get('downloadPath', '').strip()
-                    if not user_path:
+                    is_auto_path = not user_path or user_path.replace('\\', '/').endswith('YoutubeToPremiere_download')
+
+                    if is_auto_path:
                         save_download_path(auto_path)
-                        logging.info(f"No manual download path set — auto-saving project folder: {auto_path}")
+                        logging.info(f"Auto-updating download folder to match current project: {auto_path}")
                         effective_path = auto_path
                     else:
-                        logging.info(f"Manual download path already set ({user_path}) — skipping auto-override")
+                        logging.info(f"Custom download path set ({user_path}) — keeping it")
                         effective_path = user_path
 
                     socketio.emit('project_path_result', {'success': True, 'path': effective_path})
