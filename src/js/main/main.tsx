@@ -721,6 +721,7 @@ const Main = () => {
                 onChange={handleDownloadPathChange}
                 placeholder="Leave empty to use default project folder"
                 className="input-base flex-1 min-w-0"
+                style={{ direction: settings.downloadPath ? 'rtl' : 'ltr', textAlign: 'left', unicodeBidi: 'plaintext' }}
               />
               <button
                 onClick={handleFolderSelect}
