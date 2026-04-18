@@ -83,6 +83,10 @@ const getLocalIP = async () => {
 };
 
 const Main = () => {
+  // Guard: ensure the licence check (and its loading screen) only runs once,
+  // even if serverIP changes multiple times during startup (localhost → 127.0.0.1 → localhost).
+  const licenseCheckDone = useRef(false);
+
   const [settings, setSettings] = useState({
     resolution: '1080',
     downloadPath: '',
@@ -181,6 +185,12 @@ const Main = () => {
 
   useEffect(() => {
     const checkLicenseAndStart = async () => {
+      // Skip if already running or completed — serverIP can change multiple
+      // times at startup (localhost → 127.0.0.1 → localhost) and each change
+      // would re-trigger this effect, causing the loading screen to flash.
+      if (licenseCheckDone.current) return;
+      licenseCheckDone.current = true;
+
       setIsLoading(true);
       try {
         const controller = new AbortController();
@@ -215,13 +225,13 @@ const Main = () => {
     }
   }, [serverIP]);
 
+  const updateCheckStarted = useRef(false);
   useEffect(() => {
-    if (!serverIP || serverIP === '') return;
+    if (!serverIP || serverIP === '' || updateCheckStarted.current) return;
+    updateCheckStarted.current = true;
 
-    // Check once at startup
+    // Check once at startup, then every 4 hours
     checkForUpdates();
-
-    // Re-check every 4 hours in case the panel stays open for a long time
     const updateInterval = setInterval(checkForUpdates, 4 * 60 * 60 * 1000);
     return () => clearInterval(updateInterval);
   }, [serverIP]);
