@@ -741,14 +741,25 @@ def register_routes(app, socketio, settings, emit_fn=None):
             if project_path and project_path != '.':
                 logging.info(f"Received project path from Premiere: {project_path}")
 
-                # Create a download folder next to the project
-                download_path = os.path.join(os.path.dirname(project_path), 'YoutubeToPremiere_download')
+                # Auto-derive a download folder next to the project
+                auto_path = os.path.join(os.path.dirname(project_path), 'YoutubeToPremiere_download')
                 try:
-                    os.makedirs(download_path, exist_ok=True)
-                    logging.info(f"Created download folder: {download_path}")
-                    # Store the path in settings for future use
-                    save_download_path(download_path)
-                    socketio.emit('project_path_result', {'success': True, 'path': download_path})
+                    os.makedirs(auto_path, exist_ok=True)
+                    logging.info(f"Created auto download folder: {auto_path}")
+
+                    # Only save the auto-derived path if the user has NOT manually set one.
+                    # If downloadPath is already set, respect the user's choice and do not overwrite it.
+                    current_settings = load_settings()
+                    user_path = current_settings.get('downloadPath', '').strip()
+                    if not user_path:
+                        save_download_path(auto_path)
+                        logging.info(f"No manual download path set — auto-saving project folder: {auto_path}")
+                        effective_path = auto_path
+                    else:
+                        logging.info(f"Manual download path already set ({user_path}) — skipping auto-override")
+                        effective_path = user_path
+
+                    socketio.emit('project_path_result', {'success': True, 'path': effective_path})
                 except Exception as e:
                     logging.error(f"Error creating download folder: {str(e)}")
                     socketio.emit('project_path_result', {'error': f"Could not create download folder: {str(e)}"})
