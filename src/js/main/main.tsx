@@ -106,7 +106,10 @@ const Main = () => {
   const [updateInfo, setUpdateInfo] = useState<any>(null);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const currentVersion = '3.0.28';
+  const [currentVersion, setCurrentVersion] = useState('');
+  const [installStatus, setInstallStatus] = useState<'idle'|'downloading'|'launching'|'done'|'error'>('idle');
+  const [installProgress, setInstallProgress] = useState(0);
+  const [installProgressLabel, setInstallProgressLabel] = useState('');
   const [currentPage, setCurrentPage] = useState('main');
   const [serverIP, setServerIP] = useState('localhost');
   const [isCEPEnvironment, setIsCEPEnvironment] = useState(false);
@@ -326,6 +329,27 @@ const Main = () => {
       console.error('Import failed:', data);
     });
 
+    socket.on('update_progress', (data: any) => {
+      if (data.status === 'downloading') {
+        setInstallStatus('downloading');
+        setInstallProgress(data.progress ?? 0);
+        if (data.total_mb) {
+          setInstallProgressLabel(`${data.downloaded_mb} / ${data.total_mb} MB`);
+        } else {
+          setInstallProgressLabel(`${data.progress ?? 0}%`);
+        }
+      } else if (data.status === 'launching') {
+        setInstallStatus('launching');
+        setInstallProgressLabel('Launching installer...');
+      } else if (data.status === 'done') {
+        setInstallStatus('done');
+        setInstallProgressLabel('Installer launched — follow the prompts.');
+      } else if (data.status === 'error') {
+        setInstallStatus('error');
+        setInstallProgressLabel(data.error || 'Install failed');
+      }
+    });
+
     // Force initial connection
     socket.connect();
 
@@ -336,17 +360,19 @@ const Main = () => {
 
   const checkForUpdates = async () => {
     if (isCheckingUpdates) return;
-    
+
     setIsCheckingUpdates(true);
     try {
       const response = await fetch(`http://${serverIP}:17845/check-updates`);
       const data = await response.json();
-      
+
       if (data.success) {
         setUpdateInfo(data);
         setLatestVersion(data.latest_version);
         setUpdateAvailable(data.has_update);
-        
+        // Always sync the displayed version from the backend (single source of truth)
+        if (data.current_version) setCurrentVersion(data.current_version);
+
         // Show modal if update available
         if (data.has_update) {
           setShowUpdateModal(true);
@@ -361,8 +387,35 @@ const Main = () => {
     }
   };
 
+  const handleInstallUpdate = async () => {
+    if (!updateInfo?.download_url) return;
+    setInstallStatus('downloading');
+    setInstallProgress(0);
+    setInstallProgressLabel('Starting download...');
+
+    // Listen for progress via Socket.IO (handled in useEffect below)
+    try {
+      const response = await fetch(`http://${serverIP}:17845/install-update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ download_url: updateInfo.download_url }),
+      });
+      const data = await response.json();
+      if (!data.success) {
+        setInstallStatus('error');
+        setInstallProgressLabel(data.error || 'Download failed');
+      }
+    } catch (err) {
+      setInstallStatus('error');
+      setInstallProgressLabel('Connection error');
+    }
+  };
+
   const handleDownloadUpdate = () => {
     if (updateAvailable && updateInfo) {
+      setInstallStatus('idle');
+      setInstallProgress(0);
+      setInstallProgressLabel('');
       setShowUpdateModal(true);
     } else if (updateInfo?.download_url) {
       openLinkInBrowser(updateInfo.download_url);
@@ -897,24 +950,70 @@ const Main = () => {
               </div>
             </div>
             
+            {/* Progress bar — shown during download/install */}
+            {(installStatus === 'downloading' || installStatus === 'launching') && (
+              <div className="mt-4">
+                <div className="flex justify-between text-xs text-gray-400 mb-1">
+                  <span>{installStatus === 'launching' ? 'Launching installer...' : 'Downloading...'}</span>
+                  <span>{installProgressLabel}</span>
+                </div>
+                <div className="w-full bg-white bg-opacity-10 rounded-full h-2 overflow-hidden">
+                  <div
+                    className="h-2 rounded-full bg-green-400 transition-all duration-300"
+                    style={{ width: `${installStatus === 'launching' ? 100 : installProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {installStatus === 'done' && (
+              <p className="mt-4 text-sm text-green-400 flex items-center gap-1">
+                <span className="material-symbols-outlined text-sm">check_circle</span>
+                {installProgressLabel}
+              </p>
+            )}
+
+            {installStatus === 'error' && (
+              <p className="mt-4 text-sm text-red-400 flex items-center gap-1">
+                <span className="material-symbols-outlined text-sm">error</span>
+                {installProgressLabel}
+              </p>
+            )}
+
             <div className="flex space-x-3 mt-6">
               <button
-                onClick={() => setShowUpdateModal(false)}
+                onClick={() => { setShowUpdateModal(false); setInstallStatus('idle'); }}
                 className="flex-1 px-4 py-2 rounded-lg transition-colors font-medium backdrop-blur-10 border border-white border-opacity-20 text-white hover:bg-white hover:bg-opacity-10"
+                disabled={installStatus === 'downloading' || installStatus === 'launching'}
               >
                 Later
               </button>
               <button
-                onClick={() => {
-                  if (updateInfo?.download_url) {
-                    openLinkInBrowser(updateInfo.download_url);
-                  }
-                  setShowUpdateModal(false);
-                }}
-                className="flex-1 btn flex items-center justify-center gap-2"
+                onClick={handleInstallUpdate}
+                disabled={installStatus === 'downloading' || installStatus === 'launching' || installStatus === 'done'}
+                className="flex-1 btn flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <span className="material-symbols-outlined">download</span>
-                Download
+                {installStatus === 'downloading' ? (
+                  <>
+                    <span className="material-symbols-outlined animate-spin text-sm">refresh</span>
+                    <span>{installProgress}%</span>
+                  </>
+                ) : installStatus === 'launching' ? (
+                  <>
+                    <span className="material-symbols-outlined text-sm">rocket_launch</span>
+                    <span>Launching...</span>
+                  </>
+                ) : installStatus === 'done' ? (
+                  <>
+                    <span className="material-symbols-outlined text-sm">check_circle</span>
+                    <span>Done</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="material-symbols-outlined text-sm">download</span>
+                    <span>Install</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

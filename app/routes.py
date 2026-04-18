@@ -195,6 +195,76 @@ def register_routes(app, socketio, settings, emit_fn=None):
                 'error': str(e)
             }), 500
 
+    @app.route('/install-update', methods=['POST'])
+    def install_update():
+        """Download the latest installer and launch it (Windows: silent NSIS, Mac: open PKG)"""
+        import tempfile
+        import threading
+
+        try:
+            data = request.json or {}
+            download_url = data.get('download_url', '').strip()
+            if not download_url:
+                return jsonify({'success': False, 'error': 'No download URL provided'}), 400
+
+            system = platform.system().lower()
+            filename = 'YouTubetoPremiere-Setup.exe' if system == 'windows' else 'YouTubetoPremiere-macOS.pkg'
+
+            def _download_and_install():
+                try:
+                    tmp_dir = tempfile.mkdtemp(prefix='ytpp_update_')
+                    installer_path = os.path.join(tmp_dir, filename)
+
+                    logging.info(f"[Update] Downloading installer from {download_url}")
+                    socketio.emit('update_progress', {'status': 'downloading', 'progress': 0})
+
+                    r = requests.get(download_url, stream=True, timeout=300)
+                    r.raise_for_status()
+                    total = int(r.headers.get('content-length', 0))
+                    downloaded = 0
+
+                    with open(installer_path, 'wb') as f:
+                        for chunk in r.iter_content(chunk_size=65536):
+                            if chunk:
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                                if total:
+                                    pct = int(downloaded / total * 100)
+                                    socketio.emit('update_progress', {
+                                        'status': 'downloading',
+                                        'progress': pct,
+                                        'downloaded_mb': round(downloaded / 1048576, 1),
+                                        'total_mb': round(total / 1048576, 1)
+                                    })
+
+                    logging.info(f"[Update] Download complete: {installer_path}")
+                    socketio.emit('update_progress', {'status': 'launching', 'progress': 100})
+
+                    if system == 'windows':
+                        # NSIS silent install — runs in background, replaces files, restarts are handled by installer
+                        subprocess.Popen([installer_path, '/S'], close_fds=True)
+                    elif system == 'darwin':
+                        # `open` hands the PKG to Installer.app — macOS shows its standard install UI
+                        os.chmod(installer_path, 0o755)
+                        subprocess.Popen(['open', installer_path], close_fds=True)
+                    else:
+                        socketio.emit('update_progress', {'status': 'error', 'error': f'Unsupported OS: {system}'})
+                        return
+
+                    socketio.emit('update_progress', {'status': 'done'})
+
+                except Exception as e:
+                    logging.error(f"[Update] Install failed: {e}")
+                    socketio.emit('update_progress', {'status': 'error', 'error': str(e)})
+
+            t = threading.Thread(target=_download_and_install, daemon=True)
+            t.start()
+            return jsonify({'success': True, 'message': 'Download started'})
+
+        except Exception as e:
+            logging.error(f"[Update] Unexpected error: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
     @app.route('/settings', methods=['GET', 'POST'])
     def handle_settings():
         if request.method == 'GET':
