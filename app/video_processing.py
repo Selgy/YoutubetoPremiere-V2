@@ -2588,24 +2588,25 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                                     shorts_candidates.append(video_url)  # Also retry original URL with web client
 
                                     for shorts_url_attempt in shorts_candidates:
-                                        for web_client in (['web'], ['mweb'], ['web', 'mweb']):
+                                        for web_client in (['web'], ['mweb'], ['web', 'mweb'], ['web_safari'], ['tv'], ['android']):
                                             try:
                                                 logging.warning(f"Trying Shorts fallback: url={shorts_url_attempt} client={web_client}")
                                                 shorts_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
                                                 shorts_opts['skip_download'] = True
-                                                shorts_opts.pop('format', None)
-                                                # Override to web client — ios/android_vr don't serve Shorts formats
+                                                # Force 'best' — simpler selector that works when bestvideo*+bestaudio doesn't
+                                                shorts_opts['format'] = 'best/bestvideo+bestaudio/bestvideo*+bestaudio'
+                                                # Override to target client — ios/android_vr don't serve Shorts formats
                                                 shorts_opts['extractor_args'] = {'youtube': {'player_client': web_client}}
                                                 with yt_dlp.YoutubeDL(shorts_opts) as ydl_shorts:
                                                     info = ydl_shorts.extract_info(shorts_url_attempt, download=False)
                                                     if info and info.get('formats'):
-                                                        logging.info(f"Shorts web-client fallback succeeded with client={web_client} url={shorts_url_attempt}")
+                                                        logging.info(f"Shorts fallback succeeded: client={web_client} url={shorts_url_attempt}")
                                                         video_url = shorts_url_attempt
                                                         shorts_succeeded = True
                                                         use_web_client_for_shorts = web_client
                                                         break
                                             except Exception as shorts_err:
-                                                logging.error(f"Shorts web-client attempt failed (client={web_client}): {str(shorts_err)[:120]}")
+                                                logging.error(f"Shorts attempt failed (client={web_client}): {str(shorts_err)[:120]}")
                                         if shorts_succeeded:
                                             break
 
