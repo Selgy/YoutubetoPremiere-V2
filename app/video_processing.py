@@ -2538,7 +2538,30 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                                 use_android_player = True
                         except Exception as android_fallback_error:
                             logging.error(f"Android player client fallback also failed: {str(android_fallback_error)}")
-                            raise info_error  # All fallbacks exhausted
+
+                            # LAST RESORT: completely unconstrained — no format filter, no player hint
+                            logging.warning("Trying last-resort extraction with no format/player constraints...")
+                            try:
+                                last_resort_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
+                                last_resort_opts['skip_download'] = True
+                                # Remove all format constraints so yt-dlp picks whatever it can find
+                                last_resort_opts.pop('format', None)
+                                last_resort_opts['ignoreerrors'] = True
+
+                                with yt_dlp.YoutubeDL(last_resort_opts) as ydl_last:
+                                    info = ydl_last.extract_info(video_url, download=False)
+                                    if info:
+                                        logging.info("Last-resort extraction succeeded")
+                                    else:
+                                        raise Exception("Last-resort extraction returned no info")
+                            except Exception as last_resort_error:
+                                logging.error(f"Last-resort extraction also failed: {str(last_resort_error)}")
+                                # Give the user a meaningful message instead of a raw yt-dlp error
+                                raise Exception(
+                                    "This video is not downloadable. It may be a YouTube Premium exclusive, "
+                                    "a members-only video, or geo-restricted content that cannot be accessed "
+                                    "with your account."
+                                )
                 else:
                     # Re-raise the original error if it's not cookie/format-related
                     raise info_error
