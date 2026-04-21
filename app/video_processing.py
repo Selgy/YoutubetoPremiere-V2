@@ -1728,10 +1728,19 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         
         current_download['cancel_callback'] = cancel_callback
                 
+        # Normalize youtu.be short links → youtube.com/watch?v=ID
+        from urllib.parse import urlparse as _urlparse_clip, parse_qs as _parse_qs_clip
+        _parsed_clip = _urlparse_clip(video_url)
+        if 'youtu.be' in _parsed_clip.netloc and _parsed_clip.path:
+            _vid_id_clip = _parsed_clip.path.lstrip('/')
+            if _vid_id_clip:
+                video_url = f"https://www.youtube.com/watch?v={_vid_id_clip}"
+                logging.info(f"[CLIP] Normalized youtu.be URL to: {video_url}")
+
         # Prepare authentication first
         cookies_file = None
         browser_cookies = None
-        
+
         if cookies:
             cookies_file = create_cookies_file(cookies)
             if not cookies_file:
@@ -1740,7 +1749,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             cookies_file = get_youtube_cookies_file()
             if not cookies_file:
                 browser_cookies = try_extract_cookies_from_browser()
-        
+
         # Get sanitized title for the output file
         # Try without cookies first - format availability is more consistent and we only need the title
         sanitized_title = ''
@@ -2426,15 +2435,24 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         # Clean the video URL to remove playlist parameters that can trigger format validation
         # YouTube URLs with &list= parameters can cause yt-dlp to validate formats even with noplaylist=True
         from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
-        
+
         parsed_url = urlparse(video_url)
+
+        # Normalize youtu.be short links → youtube.com/watch?v=ID (same as download_audio)
+        if 'youtu.be' in parsed_url.netloc and parsed_url.path:
+            video_id_short = parsed_url.path.lstrip('/')
+            if video_id_short:
+                video_url = f"https://www.youtube.com/watch?v={video_id_short}"
+                logging.info(f"Normalized youtu.be URL to: {video_url}")
+                parsed_url = urlparse(video_url)
+
         if parsed_url.query:
             params = parse_qs(parsed_url.query)
             # Keep only the 'v' parameter (video ID) and remove playlist-related parameters
             cleaned_params = {}
             if 'v' in params:
                 cleaned_params['v'] = params['v']
-            
+
             # Rebuild URL with cleaned parameters
             if cleaned_params:
                 cleaned_query = urlencode(cleaned_params, doseq=True)
@@ -2556,12 +2574,37 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                                         raise Exception("Last-resort extraction returned no info")
                             except Exception as last_resort_error:
                                 logging.error(f"Last-resort extraction also failed: {str(last_resort_error)}")
-                                # Give the user a meaningful message instead of a raw yt-dlp error
-                                raise Exception(
-                                    "This video is not downloadable. It may be a YouTube Premium exclusive, "
-                                    "a members-only video, or geo-restricted content that cannot be accessed "
-                                    "with your account."
-                                )
+
+                                # SHORTS FALLBACK: try youtube.com/shorts/ID URL
+                                # Some Shorts are only accessible via the /shorts/ path
+                                shorts_succeeded = False
+                                if 'youtube.com' in video_url and 'v=' in video_url:
+                                    try:
+                                        _vid_id = parse_qs(urlparse(video_url).query).get('v', [''])[0]
+                                        if _vid_id:
+                                            shorts_url = f"https://www.youtube.com/shorts/{_vid_id}"
+                                            logging.warning(f"Trying YouTube Shorts URL as final fallback: {shorts_url}")
+                                            shorts_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
+                                            shorts_opts['skip_download'] = True
+                                            shorts_opts.pop('format', None)
+                                            with yt_dlp.YoutubeDL(shorts_opts) as ydl_shorts:
+                                                info = ydl_shorts.extract_info(shorts_url, download=False)
+                                                if info:
+                                                    logging.info("YouTube Shorts URL fallback succeeded — using Shorts URL for download")
+                                                    video_url = shorts_url
+                                                    shorts_succeeded = True
+                                                else:
+                                                    raise Exception("Shorts extraction returned no info")
+                                    except Exception as shorts_error:
+                                        logging.error(f"Shorts URL fallback also failed: {str(shorts_error)}")
+
+                                if not shorts_succeeded:
+                                    # Give the user a meaningful message instead of a raw yt-dlp error
+                                    raise Exception(
+                                        "This video is not downloadable. It may be a YouTube Premium exclusive, "
+                                        "a members-only video, or geo-restricted content that cannot be accessed "
+                                        "with your account."
+                                    )
                 else:
                     # Re-raise the original error if it's not cookie/format-related
                     raise info_error
