@@ -2471,6 +2471,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         # Track which method succeeded for download phase
         use_cookies_for_download = True  # Default: use cookies
         use_android_player = False  # Default: don't force Android player
+        use_web_client_for_shorts = None  # Set to list of clients if Shorts web-client fallback succeeded
 
         # FIX: Try WITHOUT cookies FIRST — public videos are faster and more reliable
         # without cookies. Fall back to cookies only for age-restricted / private content.
@@ -2575,28 +2576,38 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                             except Exception as last_resort_error:
                                 logging.error(f"Last-resort extraction also failed: {str(last_resort_error)}")
 
-                                # SHORTS FALLBACK: try youtube.com/shorts/ID URL
-                                # Some Shorts are only accessible via the /shorts/ path
+                                # SHORTS FALLBACK: try youtube.com/shorts/ID URL with web client
+                                # ios+android_vr clients don't serve Shorts formats correctly.
+                                # The web client handles Shorts differently and may return usable formats.
                                 shorts_succeeded = False
                                 if 'youtube.com' in video_url and 'v=' in video_url:
-                                    try:
-                                        _vid_id = parse_qs(urlparse(video_url).query).get('v', [''])[0]
-                                        if _vid_id:
-                                            shorts_url = f"https://www.youtube.com/shorts/{_vid_id}"
-                                            logging.warning(f"Trying YouTube Shorts URL as final fallback: {shorts_url}")
-                                            shorts_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
-                                            shorts_opts['skip_download'] = True
-                                            shorts_opts.pop('format', None)
-                                            with yt_dlp.YoutubeDL(shorts_opts) as ydl_shorts:
-                                                info = ydl_shorts.extract_info(shorts_url, download=False)
-                                                if info:
-                                                    logging.info("YouTube Shorts URL fallback succeeded — using Shorts URL for download")
-                                                    video_url = shorts_url
-                                                    shorts_succeeded = True
-                                                else:
-                                                    raise Exception("Shorts extraction returned no info")
-                                    except Exception as shorts_error:
-                                        logging.error(f"Shorts URL fallback also failed: {str(shorts_error)}")
+                                    _vid_id = parse_qs(urlparse(video_url).query).get('v', [''])[0]
+                                    shorts_candidates = []
+                                    if _vid_id:
+                                        shorts_candidates.append(f"https://www.youtube.com/shorts/{_vid_id}")
+                                    shorts_candidates.append(video_url)  # Also retry original URL with web client
+
+                                    for shorts_url_attempt in shorts_candidates:
+                                        for web_client in (['web'], ['mweb'], ['web', 'mweb']):
+                                            try:
+                                                logging.warning(f"Trying Shorts fallback: url={shorts_url_attempt} client={web_client}")
+                                                shorts_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
+                                                shorts_opts['skip_download'] = True
+                                                shorts_opts.pop('format', None)
+                                                # Override to web client — ios/android_vr don't serve Shorts formats
+                                                shorts_opts['extractor_args'] = {'youtube': {'player_client': web_client}}
+                                                with yt_dlp.YoutubeDL(shorts_opts) as ydl_shorts:
+                                                    info = ydl_shorts.extract_info(shorts_url_attempt, download=False)
+                                                    if info and info.get('formats'):
+                                                        logging.info(f"Shorts web-client fallback succeeded with client={web_client} url={shorts_url_attempt}")
+                                                        video_url = shorts_url_attempt
+                                                        shorts_succeeded = True
+                                                        use_web_client_for_shorts = web_client
+                                                        break
+                                            except Exception as shorts_err:
+                                                logging.error(f"Shorts web-client attempt failed (client={web_client}): {str(shorts_err)[:120]}")
+                                        if shorts_succeeded:
+                                            break
 
                                 if not shorts_succeeded:
                                     # Give the user a meaningful message instead of a raw yt-dlp error
@@ -2655,6 +2666,10 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         if use_android_player:
             ydl_opts['extractor_args'] = {'youtube': {'player_client': ['android']}}
             logging.info("Download will use Android player client (same as extraction)")
+        # If Shorts web-client fallback worked, use the same web client for download
+        elif use_web_client_for_shorts:
+            ydl_opts['extractor_args'] = {'youtube': {'player_client': use_web_client_for_shorts}}
+            logging.info(f"Download will use web client for Shorts (same as extraction): {use_web_client_for_shorts}")
         
         ydl_opts.update({
             'format': format_string,
