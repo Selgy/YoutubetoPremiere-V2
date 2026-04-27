@@ -1128,17 +1128,34 @@ def validate_cookies_file(cookies_file):
         return False
 
 def get_youtube_cookies_file():
-    """Get the path to the YouTube cookies file if it exists"""
+    """Get the path to the YouTube cookies file if it exists.
+    Looks for both the canonical 'youtube_cookies.txt' and timestamped
+    'youtube_cookies_<ts>.txt' files created by create_cookies_file().
+    Returns the most recently modified valid file."""
     try:
         cookies_dir = os.path.join(os.environ.get('TEMP', tempfile.gettempdir()), 'YoutubetoPremiere')
+
+        # 1. Check for the canonical (non-timestamped) file first
         cookies_file = os.path.join(cookies_dir, 'youtube_cookies.txt')
-        
         if os.path.exists(cookies_file) and os.path.getsize(cookies_file) > 0:
             logging.info(f"Found YouTube cookies file: {cookies_file}")
             return cookies_file
-        else:
-            logging.info("No YouTube cookies file found")
-            return None
+
+        # 2. Check for timestamped files created by create_cookies_file()
+        if os.path.isdir(cookies_dir):
+            timestamped = [
+                os.path.join(cookies_dir, f)
+                for f in os.listdir(cookies_dir)
+                if f.startswith('youtube_cookies_') and f.endswith('.txt')
+            ]
+            valid = [p for p in timestamped if os.path.getsize(p) > 0]
+            if valid:
+                latest = max(valid, key=os.path.getmtime)
+                logging.info(f"Found timestamped YouTube cookies file: {latest}")
+                return latest
+
+        logging.info("No YouTube cookies file found")
+        return None
     except Exception as e:
         logging.error(f"Error checking for YouTube cookies file: {e}")
         return None
@@ -2524,8 +2541,17 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     except Exception as fallback_info_error:
                         logging.error(f"Fallback info extraction also failed: {str(fallback_info_error)}")
                         raise Exception(f"Info extraction failed with and without cookies: {str(fallback_info_error)}")
-                # Check for format-related errors and retry with even more permissive format
-                elif "Requested format is not available" in error_str:
+                # Check for format/availability errors and trigger the full fallback chain
+                # "This video is not available" occurs when android_vr/ios clients can't serve a Short
+                # "Requested format is not available" is the classic DASH format issue
+                # "DRM protected" triggers when YouTube runs DRM experiment on tv client (#12563)
+                # "Sign in to confirm" means the client requires auth but none was provided
+                elif any(s in error_str for s in (
+                    "Requested format is not available",
+                    "This video is not available",
+                    "DRM protected",
+                    "Sign in to confirm",
+                )):
                     logging.warning("Format validation failed. Retrying with no format specification...")
                     try:
                         if 'format' in initial_ydl_opts:
@@ -2608,8 +2634,19 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                                         shorts_candidates.append(f"https://www.youtube.com/shorts/{_vid_id}")
                                     shorts_candidates.append(video_url)  # Also retry original URL with web client
 
+                                    # Client priority: tv_downgraded (full DASH with cookies, avoids DRM
+                                    # experiment), android (360p combined without cookies, always works),
+                                    # then web/mweb as last resorts.
+                                    _shorts_clients = (
+                                        ['tv_downgraded'],  # Best: full 1080p with cookies (avoids #12563)
+                                        ['android'],        # Reliable 360p fallback (no PO-token needed)
+                                        ['mweb'],
+                                        ['web'],
+                                        ['web_safari'],
+                                        ['web', 'mweb'],
+                                    )
                                     for shorts_url_attempt in shorts_candidates:
-                                        for web_client in (['tv'], ['web'], ['mweb'], ['web_safari'], ['android'], ['web', 'mweb']):
+                                        for web_client in _shorts_clients:
                                             try:
                                                 logging.warning(f"Trying Shorts fallback: url={shorts_url_attempt} client={web_client}")
                                                 shorts_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
@@ -2618,6 +2655,10 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                                                 shorts_opts['format'] = 'best/bestvideo+bestaudio/bestvideo*+bestaudio'
                                                 # Override to target client — ios/android_vr don't serve Shorts formats
                                                 shorts_opts['extractor_args'] = {'youtube': {'player_client': web_client}}
+                                                # Add Node.js runtime so tv_downgraded can solve n-challenges
+                                                import shutil as _shutil
+                                                if _shutil.which('node') or _shutil.which('nodejs'):
+                                                    shorts_opts.setdefault('js_runtimes', {'node': {}})
                                                 with yt_dlp.YoutubeDL(shorts_opts) as ydl_shorts:
                                                     info = ydl_shorts.extract_info(shorts_url_attempt, download=False)
                                                     if info and info.get('formats'):
@@ -2692,6 +2733,11 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         elif use_web_client_for_shorts:
             ydl_opts['extractor_args'] = {'youtube': {'player_client': use_web_client_for_shorts}}
             logging.info(f"Download will use web client for Shorts (same as extraction): {use_web_client_for_shorts}")
+            # Carry Node.js runtime into download phase so n-challenges can be solved
+            import shutil as _shutil_dl
+            if _shutil_dl.which('node') or _shutil_dl.which('nodejs'):
+                ydl_opts.setdefault('js_runtimes', {'node': {}})
+                logging.info("Download: Node.js JS runtime enabled for n-challenge solving")
         
         ydl_opts.update({
             'format': format_string,
@@ -3852,6 +3898,38 @@ def get_ffmpeg_location_for_ydl(ffmpeg_path):
             # Relative path - return as-is and let yt-dlp handle it
             return ffmpeg_path
 
+def _setup_nodejs_fallback(base_options, cookies_file=None):
+    """Configure yt-dlp options to use Node.js as JS runtime when Deno is unavailable.
+
+    Strategy:
+    - If Node.js is available: add js_runtimes={'node': {}} so yt-dlp can solve
+      n-challenges.  Use 'tv_downgraded' when cookies are present (avoids the
+      YouTube DRM experiment that affects the plain 'tv' client — yt-dlp#12563)
+      and falls back to 'android' without cookies (provides combined format 18 =
+      360 p, the only format that survives without a PO token).
+    - If Node.js is not available either: use 'android' directly — still provides
+      at least 360p (format 18) without any JS runtime.
+    """
+    import shutil
+    node_path = shutil.which('node') or shutil.which('nodejs')
+    if node_path:
+        logging.info(f"[NODE-FALLBACK] Node.js found at: {node_path} — enabling as JS runtime")
+        base_options['js_runtimes'] = {'node': {}}
+        if cookies_file:
+            # Authenticated: tv_downgraded provides full DASH (up to 1080p)
+            base_options['extractor_args'] = {'youtube': {'player_client': ['tv_downgraded', 'android_vr']}}
+            logging.info("[NODE-FALLBACK] Using tv_downgraded+android_vr clients (cookies available)")
+        else:
+            # Unauthenticated: android provides combined format 18 (360p) reliably
+            base_options['extractor_args'] = {'youtube': {'player_client': ['android_vr', 'android']}}
+            logging.info("[NODE-FALLBACK] Using android_vr+android clients (no cookies)")
+    else:
+        logging.warning("[NODE-FALLBACK] Node.js not found either. Using android client (360p only).")
+        # android gives format 18 (combined 360p mp4) without any JS runtime or PO token
+        base_options['extractor_args'] = {'youtube': {'player_client': ['android']}}
+        logging.info("[NODE-FALLBACK] Using android client (format 18 = 360p combined mp4)")
+
+
 def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
     """Get robust yt-dlp options to handle YouTube changes and SABR streaming"""
     import sys
@@ -3977,22 +4055,16 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
                 base_options['extractor_args'] = {'youtube': {'player_client': ['ios', 'android_vr']}}
                 logging.info("[FIX-SABR] Using ios+android_vr clients (web_safari is SABR-only, see yt-dlp#12482)")
             else:
-                logging.warning("[WARNING] Deno exists but may not work properly. Trying alternative clients...")
-                # If Deno doesn't work, try using web client which doesn't require JS runtime
-                base_options['extractor_args'] = {'youtube': {'player_client': ['web', 'mweb']}}
-                logging.info("[FALLBACK] Using web/mweb player clients (no Deno required)")
+                logging.warning("[WARNING] Deno exists but may not work properly. Trying Node.js fallback...")
+                _setup_nodejs_fallback(base_options, cookies_file)
         else:
-            logging.warning("[WARNING] Deno runtime not found in PATH. YouTube format availability may be limited.")
+            logging.warning("[WARNING] Deno runtime not found in PATH. Trying Node.js as JS runtime fallback.")
             logging.warning("  Install Deno with: .\\scripts\\install-deno.ps1")
             logging.warning("  Then restart the application or run: .\\scripts\\add-deno-to-path.ps1")
-            # Use web client as fallback
-            base_options['extractor_args'] = {'youtube': {'player_client': ['web', 'mweb']}}
-            logging.info("[FALLBACK] Using web/mweb player clients (no Deno)")
+            _setup_nodejs_fallback(base_options, cookies_file)
     except Exception as e:
         logging.warning(f"Error checking for Deno runtime: {e}")
-        # Use web client as fallback
-        base_options['extractor_args'] = {'youtube': {'player_client': ['web', 'mweb']}}
-        logging.info("[FALLBACK] Using web/mweb player clients due to Deno check error")
+        _setup_nodejs_fallback(base_options, cookies_file)
     
     logging.info("YT-DLP options configured for robust YouTube downloading with EJS support")
     
