@@ -655,15 +655,20 @@ def log_youtube_formats(info_dict, resolution, selected_format_id=None):
             for cf in combined_formats[:3]:
                 logging.info(f"[FORMATS]    ID:{cf['id']:>5} | {cf['height']:>4}p | {cf['vcodec'][:10]}/{cf['acodec'][:10]}")
         
-        # Resolution match check
+        # Resolution match check — use min(width,height) so portrait Shorts
+        # (e.g. 1080×1920) correctly match a 1080p target instead of 1920p.
         target_height = int(resolution.replace('p', ''))
-        matching_avc1 = [f for f in avc1_formats if f['height'] == target_height]
+        def _log_res(f):
+            h = f.get('height', 0) or 0
+            w = f.get('width', 0) or 0
+            return min(h, w) if (h > 0 and w > 0) else max(h, w)
+        matching_avc1 = [f for f in avc1_formats if _log_res(f) == target_height]
         if matching_avc1:
             logging.info(f"[FORMATS] ✅ Found {len(matching_avc1)} AVC1 format(s) at target {target_height}p")
         else:
-            closest = min(avc1_formats, key=lambda x: abs((x['height'] or 0) - target_height)) if avc1_formats else None
+            closest = min(avc1_formats, key=lambda x: abs(_log_res(x) - target_height)) if avc1_formats else None
             if closest:
-                logging.warning(f"[FORMATS] ⚠️ No AVC1 at {target_height}p, closest is {closest['height']}p")
+                logging.warning(f"[FORMATS] ⚠️ No AVC1 at {target_height}p, closest is {_log_res(closest)}p")
             else:
                 logging.error(f"[FORMATS] ❌ No AVC1 formats available at any resolution!")
         
@@ -2818,12 +2823,21 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 avc1_formats = []
         
         if avc1_formats:
-            # Sort by height (resolution) descending
-            avc1_formats.sort(key=lambda f: f.get('height', 0) or 0, reverse=True)
-            # Filter by max resolution
+            # Sort by resolution descending.  For portrait videos (Shorts) the
+            # 'height' field is the long side (e.g. 1920 for 1080p portrait), so
+            # use min(width,height) as the canonical "resolution" metric so that
+            # a 1080p portrait Short (1080×1920, min=1080) ranks above 720p
+            # (720×1280, min=720) etc.
+            def _fmt_res(f):
+                h = f.get('height', 0) or 0
+                w = f.get('width', 0) or 0
+                return min(h, w) if (h > 0 and w > 0) else max(h, w)
+
+            avc1_formats.sort(key=_fmt_res, reverse=True)
+            # Filter: keep only formats whose resolution (min side) ≤ target
             target_height = int(resolution)
-            valid_avc1 = [f for f in avc1_formats if (f.get('height', 0) or 0) <= target_height]
-            
+            valid_avc1 = [f for f in avc1_formats if _fmt_res(f) <= target_height]
+
             # If no formats at or below target resolution, use best available
             if not valid_avc1:
                 valid_avc1 = avc1_formats
