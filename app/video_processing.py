@@ -2558,8 +2558,29 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                         except Exception as android_fallback_error:
                             logging.error(f"Android player client fallback also failed: {str(android_fallback_error)}")
 
-                            # LAST RESORT: completely unconstrained — no format filter, no player hint
-                            logging.warning("Trying last-resort extraction with no format/player constraints...")
+                            # TV CLIENT FALLBACK: use TVHTML5 client (used by 4K Download, serves DASH H264)
+                            # ios/android_vr clients sometimes fail for Shorts — tv client serves itag=137/140 reliably
+                            logging.warning("Trying TV (TVHTML5) player client fallback...")
+                            try:
+                                tv_fallback_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
+                                tv_fallback_opts['skip_download'] = True
+                                tv_fallback_opts['extractor_args'] = {'youtube': {'player_client': ['tv']}}
+                                tv_fallback_opts.pop('format', None)
+
+                                with yt_dlp.YoutubeDL(tv_fallback_opts) as ydl_tv:
+                                    info = ydl_tv.extract_info(video_url, download=False)
+                                    if info and info.get('formats'):
+                                        logging.info("Successfully extracted video info with TV (TVHTML5) player client")
+                                        # Tell download phase to use tv client too
+                                        use_android_player = False
+                                        use_web_client_for_shorts = ['tv']
+                                    else:
+                                        raise Exception("TV client extraction returned no usable info")
+                            except Exception as tv_fallback_error:
+                                logging.error(f"TV client fallback also failed: {str(tv_fallback_error)}")
+
+                                # LAST RESORT: completely unconstrained — no format filter, no player hint
+                                logging.warning("Trying last-resort extraction with no format/player constraints...")
                             try:
                                 last_resort_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
                                 last_resort_opts['skip_download'] = True
@@ -2588,7 +2609,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                                     shorts_candidates.append(video_url)  # Also retry original URL with web client
 
                                     for shorts_url_attempt in shorts_candidates:
-                                        for web_client in (['web'], ['mweb'], ['web', 'mweb'], ['web_safari'], ['tv'], ['android']):
+                                        for web_client in (['tv'], ['web'], ['mweb'], ['web_safari'], ['android'], ['web', 'mweb']):
                                             try:
                                                 logging.warning(f"Trying Shorts fallback: url={shorts_url_attempt} client={web_client}")
                                                 shorts_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
