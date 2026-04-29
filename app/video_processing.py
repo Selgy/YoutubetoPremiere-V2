@@ -883,16 +883,51 @@ def cleanup_temporary_cookies():
 def get_ffmpeg_postprocessor_args():
     """Get FFmpeg arguments that help hide console windows"""
     args = ['-y']  # Overwrite output files
-    
+
     if sys.platform == 'win32':
         # On Windows, add flags to minimize console interaction
         args.extend([
             '-nostdin',      # Don't read from stdin
             '-hide_banner',  # Hide copyright notice
-            '-loglevel', 'error'  # Only show errors
+            '-loglevel', 'warning'  # Show warnings and errors (not just errors)
         ])
-    
+
     return args
+
+
+class YtdlpLogger:
+    """Custom yt-dlp logger that routes output to Python's logging module.
+
+    Replaces logger=None on Windows so that FFmpeg postprocessor output
+    (muxing, trimming) is visible in the application logs.
+    """
+
+    # Prefixes from yt-dlp's FFmpeg postprocessor that indicate actual FFmpeg output
+    _FFMPEG_PREFIXES = ('[ffmpeg]', '[FFmpeg]', '[Merger]', '[VideoConvertor]',
+                        '[ExtractAudio]', '[EmbedThumbnail]', '[Fixup')
+
+    def debug(self, msg):
+        # yt-dlp sends noisy progress lines as debug — only keep FFmpeg-related ones
+        if any(msg.startswith(p) for p in self._FFMPEG_PREFIXES):
+            logging.debug(f'[yt-dlp] {msg}')
+
+    def info(self, msg):
+        logging.info(f'[yt-dlp] {msg}')
+
+    # Noisy warnings that are harmless and don't need repeating
+    _SUPPRESSED_WARNINGS = (
+        'require a GVS PO Token which was not provided',
+        'po_token=ios.gvs',
+    )
+
+    def warning(self, msg):
+        if any(s in msg for s in self._SUPPRESSED_WARNINGS):
+            logging.debug(f'[yt-dlp][suppressed] {msg[:80]}...')
+            return
+        logging.warning(f'[yt-dlp] {msg}')
+
+    def error(self, msg):
+        logging.error(f'[yt-dlp] {msg}')
 
 def verify_authentication_cookies(cookies_list):
     """Verify if the cookies contain necessary authentication data for YouTube"""
@@ -1678,6 +1713,158 @@ def sanitize_resolution(resolution):
         # Default to 1080 if conversion fails
         return 1080
 
+def _try_direct_ffmpeg_clip(video_info, target_height, clip_start, clip_end,
+                            video_file_path, ffmpeg_path, http_headers, is_cancelled):
+    """
+    Fast clip extraction using FFmpeg's HTTP input-seek.
+
+    Finds video + audio URLs in video_info and runs FFmpeg with:
+        -ss <clip_start>  placed BEFORE -i  (input seek = HTTP Range request)
+        -t  <clip_duration>
+
+    For YouTube DASH streams the CDN honours Range requests, so FFmpeg
+    downloads only the bytes needed for the clip — not the full file.
+
+    Returns True on success, False to fall back to yt-dlp.
+    """
+    import threading
+
+    clip_duration = clip_end - clip_start
+    formats = video_info.get('formats', [])
+
+    def _has_direct_url(f):
+        url = f.get('url', '')
+        return bool(url) and url.startswith('http') and not url.startswith('manifest:')
+
+    # ---- video format -------------------------------------------------------
+    video_only = [f for f in formats
+                  if f.get('vcodec', 'none') not in ('none', None, '')
+                  and f.get('acodec') in (None, 'none', '')
+                  and _has_direct_url(f)]
+
+    avc1_video = [f for f in video_only
+                  if 'avc' in str(f.get('vcodec', '')).lower()
+                  and (f.get('height', 0) or 0) <= target_height]
+    avc1_video.sort(key=lambda f: f.get('height', 0) or 0, reverse=True)
+
+    if not avc1_video:
+        fallback = [f for f in video_only if (f.get('height', 0) or 0) <= target_height]
+        fallback.sort(key=lambda f: f.get('height', 0) or 0, reverse=True)
+        if not fallback:
+            logging.warning('[DIRECT-FFmpeg] No video format with direct URL — skipping')
+            return False
+        video_fmt = fallback[0]
+    else:
+        video_fmt = avc1_video[0]
+
+    video_url_direct = video_fmt['url']
+    logging.info(f"[DIRECT-FFmpeg] Video  : fmt={video_fmt.get('format_id')} "
+                 f"{video_fmt.get('height')}p {video_fmt.get('vcodec')} "
+                 f"proto={video_fmt.get('protocol')} "
+                 f"size≈{video_fmt.get('filesize_approx', '?')}")
+
+    # ---- audio format -------------------------------------------------------
+    audio_only = [f for f in formats
+                  if f.get('acodec', 'none') not in ('none', None, '')
+                  and f.get('vcodec') in (None, 'none', '')
+                  and _has_direct_url(f)]
+
+    m4a = [f for f in audio_only if f.get('ext') == 'm4a']
+    m4a.sort(key=lambda f: f.get('abr', 0) or f.get('tbr', 0) or 0, reverse=True)
+
+    if m4a:
+        audio_fmt = m4a[0]
+    elif audio_only:
+        audio_only.sort(key=lambda f: f.get('abr', 0) or f.get('tbr', 0) or 0, reverse=True)
+        audio_fmt = audio_only[0]
+    else:
+        audio_fmt = None
+
+    if audio_fmt:
+        logging.info(f"[DIRECT-FFmpeg] Audio  : fmt={audio_fmt.get('format_id')} "
+                     f"{audio_fmt.get('ext')} proto={audio_fmt.get('protocol')}")
+    else:
+        logging.warning('[DIRECT-FFmpeg] No audio format found — clip will be silent')
+
+    # ---- build FFmpeg command -----------------------------------------------
+    ua = http_headers.get(
+        'User-Agent',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    )
+    # FFmpeg multi-header syntax: separate headers with \r\n
+    hdr = f'User-Agent: {ua}\r\nAccept: */*\r\nAccept-Language: en-US,en;q=0.9'
+
+    ss  = f'{clip_start:.3f}'
+    dur = f'{clip_duration:.3f}'
+
+    cmd = [ffmpeg_path, '-y', '-hide_banner', '-loglevel', 'warning']
+    # Input 0: video — seek BEFORE -i so FFmpeg sends an HTTP Range request
+    cmd += ['-headers', hdr, '-ss', ss, '-i', video_url_direct]
+    if audio_fmt:
+        # Input 1: audio — same seek before -i
+        cmd += ['-headers', hdr, '-ss', ss, '-i', audio_fmt['url']]
+        cmd += ['-t', dur, '-c:v', 'copy', '-c:a', 'copy',
+                '-map', '0:v:0', '-map', '1:a:0',
+                '-movflags', '+faststart', video_file_path]
+    else:
+        cmd += ['-t', dur, '-c:v', 'copy',
+                '-map', '0:v:0',
+                '-movflags', '+faststart', video_file_path]
+
+    timeout_s = max(120, int(clip_duration * 5) + 60)
+    logging.info(f'[DIRECT-FFmpeg] Seeking {clip_start:.1f}s → {clip_end:.1f}s '
+                 f'({clip_duration:.1f}s), timeout={timeout_s}s')
+
+    # ---- run & monitor ------------------------------------------------------
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0,
+        )
+        stderr_lines = []
+
+        def _read_stderr():
+            for raw in proc.stderr:
+                line = raw.decode('utf-8', errors='replace').rstrip()
+                if line:
+                    stderr_lines.append(line)
+                    logging.debug(f'[DIRECT-FFmpeg] {line}')
+
+        t = threading.Thread(target=_read_stderr, daemon=True)
+        t.start()
+
+        t0 = time.time()
+        while proc.poll() is None:
+            if is_cancelled[0]:
+                proc.terminate()
+                logging.info('[DIRECT-FFmpeg] Cancelled by user')
+                return False
+            if time.time() - t0 > timeout_s:
+                proc.terminate()
+                logging.error(f'[DIRECT-FFmpeg] Timed out after {timeout_s}s')
+                return False
+            time.sleep(0.5)
+
+        t.join(timeout=5)
+        elapsed = time.time() - t0
+        rc = proc.returncode
+
+        if rc != 0:
+            logging.error(f'[DIRECT-FFmpeg] FFmpeg exit={rc} in {elapsed:.1f}s  '
+                          f'last stderr: {stderr_lines[-5:]}')
+            return False
+
+        logging.info(f'[DIRECT-FFmpeg] Done in {elapsed:.1f}s (exit={rc})')
+        return True
+
+    except Exception as exc:
+        logging.error(f'[DIRECT-FFmpeg] Exception: {exc}')
+        return False
+
+
 def download_and_process_clip(video_url, resolution, download_path, clip_start, clip_end, download_mp3, ffmpeg_path, socketio, settings, current_download, cookies=None, user_agent=None):
     clip_duration = clip_end - clip_start
     logging.info(f"Received clip parameters: clip_start={clip_start}, clip_end={clip_end}, clip_duration={clip_duration}")
@@ -1861,14 +2048,26 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         
         # Progress hook to track download progress and send updates
         # Progress throttling variables for clips
-        last_progress_time_clip = [0]  # Use list to make it mutable in nested function
+        last_progress_time_clip = [time.time()]  # Track last meaningful progress update
         last_progress_value_clip = [0]
-        
+        download_start_time = [time.time()]
+
+        # Max download time: clip_duration * 20 (generous), capped at 5 min minimum, 15 min max
+        _max_download_seconds = max(300, min(900, clip_duration * 20))
+
         def progress_hook(d):
             # Check for cancellation first - throw exception to stop yt-dlp
             if is_cancelled[0]:
                 logging.info('[CANCEL] Clip progress hook detected cancellation, raising exception to stop yt-dlp')
                 raise Exception('Download cancelled by user')
+
+            # Stall detection: if total download time exceeds the cap, abort
+            elapsed = time.time() - download_start_time[0]
+            if elapsed > _max_download_seconds:
+                logging.error(f'[STALL] Clip download exceeded {_max_download_seconds:.0f}s limit '
+                              f'(clip is {clip_duration:.0f}s, started {elapsed:.0f}s ago). '
+                              f'Possible cause: FFmpeg downloading full video instead of clip range. Cancelling.')
+                raise Exception(f'Clip download timeout after {elapsed:.0f}s (limit: {_max_download_seconds:.0f}s)')
             
             # Log the selected format info for clips (only once)
             if d['status'] == 'downloading' and 'info_dict' in d:
@@ -2018,120 +2217,316 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             if 'cookiefile' in ydl_opts:
                 del ydl_opts['cookiefile']
             logging.info("Clip download will NOT use cookies (extraction succeeded without them)")
-        
-        ydl_opts.update({
-            'format': format_str,
-            'outtmpl': video_file_path,
-            'download_ranges': lambda info_dict, ydl: [{'start_time': clip_start, 'end_time': clip_end}],  # Function that returns ranges as dicts
-            'no_part': True,
-            'progress_hooks': [progress_hook],
-        })
-        
-        # Add browser cookies only if we should use cookies
-        if browser_cookies and use_cookies_for_download:
-            ydl_opts['cookiesfrombrowser'] = browser_cookies
-            logging.info("Using browser cookies for clip download")
-        
-        # Download with yt-dlp
-        # Note: We need to allow yt-dlp to capture progress information
-        # so we can't completely redirect stdout/stderr on Windows.
-        # Instead, we'll use a safer approach that preserves progress hooks
-        # Download with yt-dlp (AVC1 format only, no fallback)
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                current_download['ydl'] = ydl
-                logging.info('[DOWNLOAD] Set ydl object in current_download structure for clip download')
-                
-                # Log the environment variables related to ffmpeg
-                logging.info(f"Environment PATH: {os.environ.get('PATH')}")
-                logging.info(f"Environment FFMPEG_PATH: {os.environ.get('FFMPEG_PATH')}")
-                
-                # Verify ffmpeg actually exists at the path
-                if not os.path.exists(ffmpeg_path):
-                    logging.error(f"FFmpeg executable not found at configured path: {ffmpeg_path}")
-                    socketio.emit('download-failed', {'message': f"FFmpeg executable not found at: {ffmpeg_path}"})
-                    return {"error": f"FFmpeg executable not found at: {ffmpeg_path}"}
-                
-                logging.info(f"Starting clip download for {video_url} using AVC1 format and ffmpeg at {ffmpeg_path}")
-                
-                # Emit initial progress for clip
-                progress_data = {
-                    'progress': '0',
-                    'percentage': '0%',
-                    'type': 'clip',
-                    'status': 'downloading'
-                }
-                socketio.emit('progress', progress_data)
-                socketio.emit('percentage', {'percentage': '0%'})
-                
-                ydl.download([video_url])
-                
-                # Check if the download was canceled
-                if is_cancelled[0]:
-                    if os.path.exists(video_file_path):
+
+        # =====================================================================
+        # STRATEGY 1: Direct FFmpeg HTTP-seek (fastest — no yt-dlp download)
+        # Uses URLs already extracted above; FFmpeg sends HTTP Range requests
+        # so only ~clip_duration worth of bytes is fetched from the CDN.
+        # This bypasses yt-dlp's FFmpegFD which would download the full stream.
+        # =====================================================================
+        _fast_path_done = False
+        if video_info:
+            logging.info('[DIRECT-FFmpeg] Attempting fast HTTP-seek clip extraction...')
+            try:
+                _direct_ok = _try_direct_ffmpeg_clip(
+                    video_info=video_info,
+                    target_height=int(sanitized_resolution),
+                    clip_start=clip_start,
+                    clip_end=clip_end,
+                    video_file_path=video_file_path,
+                    ffmpeg_path=ffmpeg_path,
+                    http_headers=ydl_opts.get('http_headers', {}),
+                    is_cancelled=is_cancelled,
+                )
+            except Exception as _de:
+                logging.warning(f'[DIRECT-FFmpeg] Unexpected error: {_de} — trying next strategy')
+                _direct_ok = False
+
+            if _direct_ok and os.path.exists(video_file_path):
+                _fsize = os.path.getsize(video_file_path)
+                if _fsize >= 10_000:
+                    logging.info(f'[DIRECT-FFmpeg] Clip ready: {_fsize / 1024 / 1024:.1f} MB — skipping yt-dlp')
+                    _fast_path_done = True
+                else:
+                    logging.warning(f'[DIRECT-FFmpeg] Output too small ({_fsize} bytes) — trying next strategy')
+                    try:
                         os.remove(video_file_path)
+                    except Exception:
+                        pass
+
+        # =====================================================================
+        # STRATEGY 2: DASH partial download (early-stop at byte threshold)
+        # For proper DASH segmented streams — downloads only up to clip_end.
+        # =====================================================================
+        if not use_hls_formats and dash_avc1_formats and video_info:
+            _clip_dur = clip_end - clip_start
+            _vid_duration = video_info.get('duration', 0)
+
+            # Find best video-only format for byte-threshold calculation
+            _all_fmts_info = video_info.get('formats', [])
+            _target_h = int(sanitized_resolution)
+            _best_v_for_calc = None
+            for _f in sorted(_all_fmts_info, key=lambda x: x.get('height', 0) or 0, reverse=True):
+                if ('avc' in str(_f.get('vcodec', '')).lower()
+                        and _f.get('protocol', '') == 'https'
+                        and _f.get('acodec') in (None, 'none', '')
+                        and (_f.get('height', 0) or 0) <= _target_h):
+                    _best_v_for_calc = _f
+                    break
+
+            _vid_filesize = (_best_v_for_calc.get('filesize') or _best_v_for_calc.get('filesize_approx', 0)) if _best_v_for_calc else 0
+
+            # Byte threshold: download up to clip_end + 30s margin, then stop
+            if _vid_duration > 0 and _vid_filesize > 0:
+                _stop_at_sec = min(clip_end + 30.0, _vid_duration)
+                _vid_bytes_threshold = int(_stop_at_sec / _vid_duration * _vid_filesize)
+                logging.info(f"[CLIP-PARTIAL] DASH clip: will stop video at {_stop_at_sec:.0f}s (~{_vid_bytes_threshold/1024/1024:.0f} MB of {_vid_filesize/1024/1024:.0f} MB total)")
+            else:
+                _vid_bytes_threshold = float('inf')
+                logging.info(f"[CLIP-PARTIAL] No byte threshold (no filesize/duration info), full download")
+
+            # Temp files for separate video and audio
+            _vid_temp = video_file_path + '._vid.mp4'
+            _aud_temp = video_file_path + '._aud.m4a'
+            _vid_clip_temp = video_file_path + '._vid_clip.mp4'
+            _aud_clip_temp = video_file_path + '._aud_clip.m4a'
+            for _tf in [_vid_temp, _vid_temp + '.part', _aud_temp, _aud_temp + '.part',
+                        _vid_clip_temp, _aud_clip_temp]:
+                if os.path.exists(_tf):
+                    try: os.remove(_tf)
+                    except: pass
+
+            # --- Step 1: video-only download with early stop ---
+            _vid_early_stopped = [False]
+
+            def _vid_progress_hook(d):
+                if is_cancelled[0]:
+                    raise Exception('Download cancelled by user')
+                elapsed = time.time() - download_start_time[0]
+                if elapsed > _max_download_seconds:
+                    raise Exception(f'Clip download timeout after {elapsed:.0f}s')
+                if d['status'] == 'downloading':
+                    dl = d.get('downloaded_bytes', 0)
+                    if dl >= _vid_bytes_threshold:
+                        _vid_early_stopped[0] = True
+                        raise Exception('VID_PARTIAL_DONE')
+                    try:
+                        pct = re.sub(r'\x1B\[[0-?]*[ -/]*[@-~]', '', d.get('_percent_str', '0%')).strip()
+                        pct_num = int(float(pct.replace('%', '').replace(' ', '') or '0'))
+                        if pct_num % 10 == 0 or pct_num > last_progress_value_clip[0] + 5:
+                            logging.info(f'[PROGRESS] Video stream: {pct}')
+                            last_progress_value_clip[0] = pct_num
+                    except Exception: pass
+
+            _vid_only_fmt = (
+                f'bestvideo[height<={_target_h}][vcodec^=avc1][ext=mp4]/'
+                f'bestvideo[height<={_target_h}][vcodec^=avc1]/'
+                f'bestvideo[height<={_target_h}][vcodec*=avc]/'
+                f'bestvideo[height<={_target_h}][ext=mp4]'
+            )
+
+            _vid_opts = dict(ydl_opts)
+            _vid_opts.update({
+                'format': _vid_only_fmt,
+                'outtmpl': _vid_temp,
+                'no_part': False,
+                'progress_hooks': [_vid_progress_hook],
+            })
+            if browser_cookies and use_cookies_for_download:
+                _vid_opts['cookiesfrombrowser'] = browser_cookies
+
+            _vid_actual = None
+            socketio.emit('progress', {'progress': '0', 'percentage': '0%', 'type': 'clip', 'status': 'downloading'})
+            socketio.emit('percentage', {'percentage': '0%'})
+
+            try:
+                with yt_dlp.YoutubeDL(_vid_opts) as ydl_v:
+                    current_download['ydl'] = ydl_v
+                    ydl_v.download([video_url])
+                _vid_actual = _vid_temp if os.path.exists(_vid_temp) else None
+                logging.info(f"[CLIP-PARTIAL] Video download completed normally")
+            except Exception as _ve:
+                if 'cancelled' in str(_ve).lower():
+                    for _tf in [_vid_temp, _vid_temp + '.part']:
+                        if os.path.exists(_tf): os.remove(_tf)
                     return {"error": "Download cancelled by user"}
-                        
-        except Exception as e:
-                error_message = f"Error downloading clip: {str(e)}"
+                if 'VID_PARTIAL_DONE' in str(_ve) or _vid_early_stopped[0]:
+                    _part = _vid_temp + '.part'
+                    if os.path.exists(_part) and os.path.getsize(_part) > 100_000:
+                        os.rename(_part, _vid_temp)
+                        _vid_actual = _vid_temp
+                        logging.info(f"[CLIP-PARTIAL] Video early-stopped: {os.path.getsize(_vid_temp)/1024/1024:.1f} MB saved")
+                    elif os.path.exists(_vid_temp) and os.path.getsize(_vid_temp) > 100_000:
+                        _vid_actual = _vid_temp
+                        logging.info(f"[CLIP-PARTIAL] Video file (no .part): {os.path.getsize(_vid_temp)/1024/1024:.1f} MB")
+                    else:
+                        logging.warning(f"[CLIP-PARTIAL] No usable video file after early stop, falling back")
+                else:
+                    logging.warning(f"[CLIP-PARTIAL] Video download error: {str(_ve)[:200]}, falling back")
+                    for _tf in [_vid_temp, _vid_temp + '.part']:
+                        if os.path.exists(_tf):
+                            try: os.remove(_tf)
+                            except: pass
 
-                # Check if this is a cancellation exception
-                if 'cancelled' in str(e).lower():
-                    logging.info("Clip download cancelled by user")
-                    # Clean up all partial files created by yt-dlp for clips
-                    cleanup_partial_video_files(video_file_path)
-                    logging.info('[CANCEL] Clip download successfully cancelled - cleanup completed')
-                    return {"error": "Download cancelled by user"}
+            if _vid_actual:
+                # --- Step 2: audio-only download (small, no early stop needed) ---
+                _aud_opts = dict(ydl_opts)
+                _aud_opts.update({
+                    'format': '140/bestaudio[ext=m4a]/bestaudio',
+                    'outtmpl': _aud_temp,
+                    'no_part': True,
+                    'progress_hooks': [progress_hook],
+                })
+                if browser_cookies and use_cookies_for_download:
+                    _aud_opts['cookiesfrombrowser'] = browser_cookies
 
-                # Windows file lock recovery: if yt-dlp failed to rename .part -> final,
-                # the file was fully downloaded — wait for Defender to release and rename manually.
-                recovered = False
-                if 'WinError 32' in str(e) or 'utilisé par un autre processus' in str(e) or 'being used by another process' in str(e):
-                    part_file = video_file_path + '.part'
-                    if os.path.exists(part_file) and not os.path.exists(video_file_path):
-                        logging.warning(f"[WinError 32] File locked after download, retrying rename: {part_file}")
-                        import time as _time
-                        for attempt in range(10):
-                            _time.sleep(2)
-                            try:
-                                os.rename(part_file, video_file_path)
-                                logging.info(f"[WinError 32] Rename succeeded on attempt {attempt + 1}: {video_file_path}")
-                                break
-                            except OSError:
-                                logging.warning(f"[WinError 32] Rename attempt {attempt + 1} failed, retrying...")
-                        else:
-                            logging.error(f"[WinError 32] All rename attempts failed for: {part_file}")
-                    if os.path.exists(video_file_path):
-                        logging.info(f"[WinError 32] Recovery succeeded, continuing post-processing")
-                        recovered = True
+                _aud_actual = None
+                try:
+                    with yt_dlp.YoutubeDL(_aud_opts) as ydl_a:
+                        current_download['ydl'] = ydl_a
+                        ydl_a.download([video_url])
+                    _aud_actual = _aud_temp if os.path.exists(_aud_temp) else None
+                    logging.info(f"[CLIP-PARTIAL] Audio download completed")
+                except Exception as _ae:
+                    if 'cancelled' in str(_ae).lower():
+                        return {"error": "Download cancelled by user"}
+                    logging.warning(f"[CLIP-PARTIAL] Audio download error: {str(_ae)[:200]}")
 
-                if not recovered:
-                    # Log detailed context for debugging
-                    log_download_context(e, {
-                        'function': 'download_and_process_clip',
-                        'video_url': video_url,
-                        'resolution': resolution,
-                        'clip_start': clip_start,
-                        'clip_end': clip_end,
-                        'video_file_path': video_file_path,
-                        'ffmpeg_path': ffmpeg_path
-                    })
+                if _aud_actual:
+                    # --- Step 3: trim + merge with ffmpeg ---
+                    try:
+                        _fv = [ffmpeg_path, '-ss', f'{clip_start:.3f}', '-t', f'{_clip_dur:.3f}',
+                               '-i', _vid_actual, '-c:v', 'copy', '-avoid_negative_ts', 'make_zero', '-y', _vid_clip_temp]
+                        run_hidden_subprocess(_fv, timeout=120, check=True, capture_output=True,
+                                              text=True, encoding='utf-8', errors='replace')
 
-                    logging.error(error_message)
-                    logging.error(f"Exception type: {type(e).__name__}")
+                        _fa = [ffmpeg_path, '-ss', f'{clip_start:.3f}', '-t', f'{_clip_dur:.3f}',
+                               '-i', _aud_actual, '-c:a', 'copy', '-y', _aud_clip_temp]
+                        run_hidden_subprocess(_fa, timeout=60, check=True, capture_output=True,
+                                              text=True, encoding='utf-8', errors='replace')
 
-                    # Check for Windows-specific stdout/stderr issues
-                    if "[Errno 22]" in str(e) or "Invalid argument" in str(e) or "BrokenPipeError" in str(type(e)):
-                        error_message = "Clip download failed due to Windows output stream issue. This has been fixed in the latest version. Please try again."
-                        logging.error("Windows stdout/stderr pipe error detected during clip download - fix has been applied")
-                    # Check if error is related to ffmpeg
-                    elif 'ffmpeg' in str(e).lower() or 'executable' in str(e).lower():
-                        logging.error(f"FFmpeg-related error detected. Current ffmpeg path: {ffmpeg_path}")
-                        solutions = "Try restarting the application or using a different clip download approach."
-                        error_message += f" This appears to be related to ffmpeg. {solutions}"
+                        _fm = [ffmpeg_path, '-i', _vid_clip_temp, '-i', _aud_clip_temp,
+                               '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
+                               '-movflags', '+faststart', '-y', video_file_path]
+                        run_hidden_subprocess(_fm, timeout=120, check=True, capture_output=True,
+                                              text=True, encoding='utf-8', errors='replace')
 
-                    socketio.emit('download-failed', {'message': error_message})
-                    return {"error": error_message}
+                        logging.info(f"[CLIP-PARTIAL] Trim+merge succeeded: {video_file_path}")
+                        _fast_path_done = True
+                    except Exception as _mfe:
+                        logging.warning(f"[CLIP-PARTIAL] FFmpeg trim/merge failed: {str(_mfe)[:300]}, falling back")
+                        if os.path.exists(video_file_path):
+                            try: os.remove(video_file_path)
+                            except: pass
+                    finally:
+                        for _tf in [_vid_actual, _aud_actual, _vid_clip_temp, _aud_clip_temp]:
+                            if _tf and os.path.exists(_tf):
+                                try: os.remove(_tf)
+                                except: pass
+                else:
+                    if os.path.exists(_vid_actual):
+                        try: os.remove(_vid_actual)
+                        except: pass
+
+        if not _fast_path_done:
+            try:
+                from yt_dlp.utils import download_range_func
+                _download_ranges = download_range_func(None, [(clip_start, clip_end)])
+                logging.info(f"[CLIP] Using download_range_func for range {clip_start:.2f}s-{clip_end:.2f}s")
+            except ImportError:
+                _download_ranges = lambda info_dict, ydl: [{'start_time': clip_start, 'end_time': clip_end}]
+                logging.info(f"[CLIP] Using lambda fallback for range {clip_start:.2f}s-{clip_end:.2f}s")
+
+            ydl_opts.update({
+                'format': format_str,
+                'outtmpl': video_file_path,
+                'download_ranges': _download_ranges,
+                'no_part': True,
+                'progress_hooks': [progress_hook],
+            })
+
+            if browser_cookies and use_cookies_for_download:
+                ydl_opts['cookiesfrombrowser'] = browser_cookies
+                logging.info("Using browser cookies for clip download")
+
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    current_download['ydl'] = ydl
+                    logging.info('[DOWNLOAD] Set ydl object in current_download structure for clip download')
+
+                    logging.info(f"Environment PATH: {os.environ.get('PATH')}")
+                    logging.info(f"Environment FFMPEG_PATH: {os.environ.get('FFMPEG_PATH')}")
+
+                    if not os.path.exists(ffmpeg_path):
+                        logging.error(f"FFmpeg executable not found at configured path: {ffmpeg_path}")
+                        socketio.emit('download-failed', {'message': f"FFmpeg executable not found at: {ffmpeg_path}"})
+                        return {"error": f"FFmpeg executable not found at: {ffmpeg_path}"}
+
+                    logging.info(f"Starting clip download for {video_url} using AVC1 format and ffmpeg at {ffmpeg_path}")
+
+                    socketio.emit('progress', {'progress': '0', 'percentage': '0%', 'type': 'clip', 'status': 'downloading'})
+                    socketio.emit('percentage', {'percentage': '0%'})
+
+                    ydl.download([video_url])
+
+                    if is_cancelled[0]:
+                        if os.path.exists(video_file_path):
+                            os.remove(video_file_path)
+                        return {"error": "Download cancelled by user"}
+
+            except Exception as e:
+                    error_message = f"Error downloading clip: {str(e)}"
+
+                    if 'cancelled' in str(e).lower():
+                        logging.info("Clip download cancelled by user")
+                        cleanup_partial_video_files(video_file_path)
+                        logging.info('[CANCEL] Clip download successfully cancelled - cleanup completed')
+                        return {"error": "Download cancelled by user"}
+
+                    recovered = False
+                    if 'WinError 32' in str(e) or 'utilisé par un autre processus' in str(e) or 'being used by another process' in str(e):
+                        part_file = video_file_path + '.part'
+                        if os.path.exists(part_file) and not os.path.exists(video_file_path):
+                            logging.warning(f"[WinError 32] File locked after download, retrying rename: {part_file}")
+                            import time as _time
+                            for attempt in range(10):
+                                _time.sleep(2)
+                                try:
+                                    os.rename(part_file, video_file_path)
+                                    logging.info(f"[WinError 32] Rename succeeded on attempt {attempt + 1}: {video_file_path}")
+                                    break
+                                except OSError:
+                                    logging.warning(f"[WinError 32] Rename attempt {attempt + 1} failed, retrying...")
+                            else:
+                                logging.error(f"[WinError 32] All rename attempts failed for: {part_file}")
+                        if os.path.exists(video_file_path):
+                            logging.info(f"[WinError 32] Recovery succeeded, continuing post-processing")
+                            recovered = True
+
+                    if not recovered:
+                        log_download_context(e, {
+                            'function': 'download_and_process_clip',
+                            'video_url': video_url,
+                            'resolution': resolution,
+                            'clip_start': clip_start,
+                            'clip_end': clip_end,
+                            'video_file_path': video_file_path,
+                            'ffmpeg_path': ffmpeg_path
+                        })
+
+                        logging.error(error_message)
+                        logging.error(f"Exception type: {type(e).__name__}")
+
+                        if "[Errno 22]" in str(e) or "Invalid argument" in str(e) or "BrokenPipeError" in str(type(e)):
+                            error_message = "Clip download failed due to Windows output stream issue. This has been fixed in the latest version. Please try again."
+                            logging.error("Windows stdout/stderr pipe error detected during clip download - fix has been applied")
+                        elif 'ffmpeg' in str(e).lower() or 'executable' in str(e).lower():
+                            logging.error(f"FFmpeg-related error detected. Current ffmpeg path: {ffmpeg_path}")
+                            solutions = "Try restarting the application or using a different clip download approach."
+                            error_message += f" This appears to be related to ffmpeg. {solutions}"
+
+                        socketio.emit('download-failed', {'message': error_message})
+                        return {"error": error_message}
         
         # Cleanup after download
         try:
@@ -2168,7 +2563,12 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
 
         # Add metadata to the video file if it exists
         if os.path.exists(video_file_path):
-            logging.info(f"[CLIP-COMPLETE] Clip downloaded successfully: {video_file_path}")
+            file_size = os.path.getsize(video_file_path)
+            logging.info(f"[CLIP-COMPLETE] Clip downloaded successfully: {video_file_path} ({file_size/1024/1024:.1f} MB)")
+            if file_size < 10_000:  # Less than 10 KB → corrupt/empty
+                logging.error(f"[CLIP-COMPLETE] Downloaded file is too small ({file_size} bytes) — likely corrupt or incomplete. Skipping metadata and import.")
+                socketio.emit('download-failed', {'message': f'Le fichier téléchargé est vide ou corrompu ({file_size} octets). Essayez à nouveau.'})
+                return {"error": f"Downloaded clip is corrupt ({file_size} bytes)"}
             socketio.emit('percentage', {'percentage': '100% - Ajout métadonnées clip...'})
 
             # Add URL to metadata using hidden subprocess to prevent CMD popup
@@ -2185,7 +2585,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
 
             try:
                 # Use 5 minute timeout for clip metadata
-                run_hidden_subprocess(metadata_command, timeout=300, check=True, capture_output=True, text=True)
+                run_hidden_subprocess(metadata_command, timeout=300, check=True, capture_output=True, text=True, encoding='utf-8', errors='replace')
                 os.replace(f'{video_file_path}_with_metadata.mp4', video_file_path)
                 logging.info(f"[CLIP-METADATA] Metadata added: {video_file_path}")
                 
@@ -3963,6 +4363,7 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
         'retry_sleep': lambda n: min(5 * (n + 1), 30),  # Exponential backoff with max 30s
         'socket_timeout': 60,  # Increase socket timeout
         'fragment_retries': 10,  # Retry fragment downloads
+        'concurrent_fragment_downloads': 2,  # Download 2 DASH/HLS segments in parallel (4 can trigger YouTube throttling)
         'file_access_retries': 15,  # Retry file access operations (Windows Defender needs time)
         'retry_sleep_functions': {'file_access': lambda n: 2.0},  # 2s between rename retries (Windows file lock)
         'ignoreerrors': False,  # Don't ignore errors during extraction
@@ -3995,8 +4396,8 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
     
     # Add Windows-specific stdout/stderr redirection to prevent BrokenPipeError
     if redirect_output:
-        # Redirect stdout/stderr to null to prevent pipe errors on Windows
-        base_options['logger'] = None  # Disable default logger
+        # Use custom logger instead of None so FFmpeg postprocessor output is visible in logs
+        base_options['logger'] = YtdlpLogger()
         # Note: Progress hooks will still work as they're called directly by yt-dlp
         logging.info("Windows detected: Configured yt-dlp to suppress stdout/stderr output to prevent BrokenPipeError")
     
