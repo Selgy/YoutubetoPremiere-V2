@@ -1757,7 +1757,24 @@ def _try_direct_ffmpeg_clip(video_info, target_height, clip_start, clip_end,
     else:
         video_fmt = avc1_video[0]
 
-    video_url_direct = video_fmt['url']
+    # Strip 'range=0-X' query parameter from the URL.
+    # YouTube DASH URLs sometimes have this baked in, which overrides HTTP Range
+    # headers and forces FFmpeg to start downloading from byte 0 instead of seeking.
+    def _strip_range_param(url):
+        try:
+            import urllib.parse as _up
+            p = _up.urlparse(url)
+            qs = _up.parse_qs(p.query, keep_blank_values=True)
+            had = 'range' in qs
+            qs.pop('range', None)
+            clean = _up.urlunparse(p._replace(query=_up.urlencode({k: v[0] for k, v in qs.items()})))
+            if had:
+                logging.debug('[DIRECT-FFmpeg] Stripped range= param from URL (enables HTTP Range seeking)')
+            return clean
+        except Exception:
+            return url
+
+    video_url_direct = _strip_range_param(video_fmt['url'])
     logging.info(f"[DIRECT-FFmpeg] Video  : fmt={video_fmt.get('format_id')} "
                  f"{video_fmt.get('height')}p {video_fmt.get('vcodec')} "
                  f"proto={video_fmt.get('protocol')} "
@@ -1802,8 +1819,8 @@ def _try_direct_ffmpeg_clip(video_info, target_height, clip_start, clip_end,
     # Input 0: video — seek BEFORE -i so FFmpeg sends an HTTP Range request
     cmd += ['-headers', hdr, '-ss', ss, '-i', video_url_direct]
     if audio_fmt:
-        # Input 1: audio — same seek before -i
-        cmd += ['-headers', hdr, '-ss', ss, '-i', audio_fmt['url']]
+        # Input 1: audio — same seek before -i (also strip range= param)
+        cmd += ['-headers', hdr, '-ss', ss, '-i', _strip_range_param(audio_fmt['url'])]
         cmd += ['-t', dur, '-c:v', 'copy', '-c:a', 'copy',
                 '-map', '0:v:0', '-map', '1:a:0',
                 '-movflags', '+faststart', video_file_path]
@@ -2429,6 +2446,10 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                         except: pass
 
         if not _fast_path_done:
+            # yt-dlp wiki (2025) recommends: --download-sections + -S proto:https
+            # proto:https sorts formats preferring combined HTTPS streams (no embedded
+            # range= param) over DASH segments, enabling proper HTTP Range seeking.
+            # See: https://www.reddit.com/r/youtubedl/wiki/howdoidownloadpartsofavideo/
             try:
                 from yt_dlp.utils import download_range_func
                 _download_ranges = download_range_func(None, [(clip_start, clip_end)])
@@ -2443,7 +2464,12 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                 'download_ranges': _download_ranges,
                 'no_part': True,
                 'progress_hooks': [progress_hook],
+                # -S proto:https: prefer non-DASH combined streams for efficient clip seeking
+                'format_sort': ['proto:https'],
+                # Ensure clean cut at exact keyframe (avoids corrupted first frames)
+                'force_keyframes_at_cuts': True,
             })
+            logging.info('[CLIP] Strategy 3: yt-dlp download_range_func + proto:https sort')
 
             if browser_cookies and use_cookies_for_download:
                 ydl_opts['cookiesfrombrowser'] = browser_cookies
