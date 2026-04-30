@@ -2262,8 +2262,32 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             if _direct_ok and os.path.exists(video_file_path):
                 _fsize = os.path.getsize(video_file_path)
                 if _fsize >= 10_000:
-                    logging.info(f'[DIRECT-FFmpeg] Clip ready: {_fsize / 1024 / 1024:.1f} MB — skipping yt-dlp')
-                    _fast_path_done = True
+                    # Verify the output actually contains a video stream (not just audio)
+                    _has_video_stream = False
+                    try:
+                        import subprocess as _sp
+                        _probe = _sp.run(
+                            [ffmpeg_path.replace('ffmpeg', 'ffprobe').replace('ffmpeg.exe', 'ffprobe.exe'),
+                             '-v', 'error', '-select_streams', 'v:0',
+                             '-show_entries', 'stream=codec_type',
+                             '-of', 'default=noprint_wrappers=1:nokey=1',
+                             video_file_path],
+                            capture_output=True, text=True, timeout=15
+                        )
+                        _has_video_stream = 'video' in _probe.stdout.strip().lower()
+                    except Exception as _pe:
+                        logging.warning(f'[DIRECT-FFmpeg] ffprobe check failed: {_pe} — assuming video present')
+                        _has_video_stream = True  # assume ok if ffprobe fails
+
+                    if _has_video_stream:
+                        logging.info(f'[DIRECT-FFmpeg] Clip ready: {_fsize / 1024 / 1024:.1f} MB (video+audio) — skipping yt-dlp')
+                        _fast_path_done = True
+                    else:
+                        logging.warning(f'[DIRECT-FFmpeg] Output has NO video stream ({_fsize / 1024:.0f} KB = audio only) — trying next strategy')
+                        try:
+                            os.remove(video_file_path)
+                        except Exception:
+                            pass
                 else:
                     logging.warning(f'[DIRECT-FFmpeg] Output too small ({_fsize} bytes) — trying next strategy')
                     try:
