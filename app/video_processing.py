@@ -2275,7 +2275,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         # STRATEGY 2: DASH partial download (early-stop at byte threshold)
         # For proper DASH segmented streams — downloads only up to clip_end.
         # =====================================================================
-        if not use_hls_formats and dash_avc1_formats and video_info:
+        if not _fast_path_done and not use_hls_formats and dash_avc1_formats and video_info:
             _clip_dur = clip_end - clip_start
             _vid_duration = video_info.get('duration', 0)
 
