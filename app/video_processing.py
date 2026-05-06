@@ -882,7 +882,10 @@ def cleanup_temporary_cookies():
 
 def get_ffmpeg_postprocessor_args():
     """Get FFmpeg arguments that help hide console windows"""
-    args = ['-y']  # Overwrite output files
+    args = [
+        '-y',            # Overwrite output files
+        '-fflags', '+genpts',  # Regenerate PTS to fix Premiere "Error retrieving frame" errors
+    ]
 
     if sys.platform == 'win32':
         # On Windows, add flags to minimize console interaction
