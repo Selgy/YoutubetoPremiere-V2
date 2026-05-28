@@ -23,6 +23,42 @@ _settings_cache_time = 0
 # FFmpeg path cache — resolved once per process lifetime (never changes at runtime)
 _ffmpeg_path_cache = None
 
+# Allowed YouTube domains for URL validation
+YOUTUBE_DOMAINS = (
+    'youtube.com',
+    'youtu.be',
+    'www.youtube.com',
+    'm.youtube.com',
+    'youtube-nocookie.com',
+    'www.youtube-nocookie.com',
+)
+
+
+def validate_youtube_url(url):
+    """Validate that the URL is from a YouTube domain.
+
+    Uses proper URL parsing (not a suffix match) so spoofed domains like
+    'evil-youtube.com' or 'notyoutube.com' are rejected.
+    """
+    if not url:
+        return False
+
+    try:
+        from urllib.parse import urlparse
+        netloc = urlparse(url).netloc.lower()
+        # Strip any userinfo (user:pass@) and port
+        if '@' in netloc:
+            netloc = netloc.split('@', 1)[1]
+        domain = netloc.split(':', 1)[0]
+        # Exact match OR a proper subdomain (leading dot) — NOT a suffix match,
+        # which would wrongly accept 'evil-youtube.com' or 'notyoutube.com'.
+        return any(domain == yt or domain.endswith('.' + yt) for yt in YOUTUBE_DOMAINS)
+    except Exception:
+        pass
+
+    return False
+
+
 def load_settings():
     global _settings_cache, _settings_cache_time
     

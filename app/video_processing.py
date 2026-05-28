@@ -28,6 +28,60 @@ _ffmpeg_path_cached = None
 _ffmpeg_cache_time = 0
 _ffmpeg_cache_ttl = 300  # Cache for 5 minutes
 
+# Deno runtime check cache — the result never changes during a process lifetime,
+# so we test deno --version only once instead of on every yt-dlp options build
+# (previously ran 3-4x per download).
+_deno_check_done = False
+_deno_path_cached = None
+_deno_working_cached = False
+
+
+def check_deno_runtime():
+    """Check (once, cached) whether the Deno JS runtime is available and working.
+
+    Returns (deno_working: bool, deno_path: str | None).
+    The Deno binary cannot change mid-process, so the subprocess test runs only
+    the first time and the result is reused for every subsequent call.
+    """
+    global _deno_check_done, _deno_path_cached, _deno_working_cached
+
+    if _deno_check_done:
+        return _deno_working_cached, _deno_path_cached
+
+    import shutil
+    deno_path = shutil.which('deno')
+    deno_working = False
+
+    if deno_path:
+        logging.info(f"[OK] Deno runtime found at: {deno_path}")
+        try:
+            result = subprocess.run(
+                [deno_path, '--version'],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+            )
+            if result.returncode == 0:
+                deno_version = result.stdout.strip().split('\n')[0] if result.stdout else 'unknown'
+                logging.info(f"[OK] Deno is working: {deno_version}")
+                deno_working = True
+            else:
+                logging.warning(f"[WARNING] Deno found but failed to execute: exit code {result.returncode}")
+                logging.warning(f"  stderr: {result.stderr[:200] if result.stderr else 'none'}")
+        except subprocess.TimeoutExpired:
+            logging.warning("[WARNING] Deno found but timed out when testing")
+        except Exception as deno_test_error:
+            logging.warning(f"[WARNING] Deno found but failed to test: {deno_test_error}")
+    else:
+        logging.warning("[WARNING] Deno runtime not found in PATH. Will use Node.js fallback if available.")
+
+    _deno_path_cached = deno_path
+    _deno_working_cached = deno_working
+    _deno_check_done = True
+    return deno_working, deno_path
+
+
 def clean_environment_path():
     """Clean up the PATH environment variable to avoid conflicts"""
     current_path = os.environ.get("PATH", "")
@@ -1810,7 +1864,7 @@ def _try_direct_ffmpeg_clip(video_info, target_height, clip_start, clip_end,
     ua = http_headers.get(
         'User-Agent',
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-        'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
     )
     # FFmpeg multi-header syntax: separate headers with \r\n
     hdr = f'User-Agent: {ua}\r\nAccept: */*\r\nAccept-Language: en-US,en;q=0.9'
@@ -1821,15 +1875,20 @@ def _try_direct_ffmpeg_clip(video_info, target_height, clip_start, clip_end,
     cmd = [ffmpeg_path, '-y', '-hide_banner', '-loglevel', 'warning']
     # Input 0: video — seek BEFORE -i so FFmpeg sends an HTTP Range request
     cmd += ['-headers', hdr, '-ss', ss, '-i', video_url_direct]
+    # -avoid_negative_ts make_zero: input-seek (-ss before -i) with stream copy can
+    # leave the first packets with negative/non-zero timestamps, which causes Premiere
+    # "Error retrieving frame" issues. Rebase timestamps to zero so the clip starts clean.
     if audio_fmt:
         # Input 1: audio — same seek before -i (also strip range= param)
         cmd += ['-headers', hdr, '-ss', ss, '-i', _strip_range_param(audio_fmt['url'])]
         cmd += ['-t', dur, '-c:v', 'copy', '-c:a', 'copy',
                 '-map', '0:v:0', '-map', '1:a:0',
+                '-avoid_negative_ts', 'make_zero',
                 '-movflags', '+faststart', video_file_path]
     else:
         cmd += ['-t', dur, '-c:v', 'copy',
                 '-map', '0:v:0',
+                '-avoid_negative_ts', 'make_zero',
                 '-movflags', '+faststart', video_file_path]
 
     timeout_s = max(120, int(clip_duration * 5) + 60)
@@ -4464,7 +4523,7 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
         http_headers['User-Agent'] = user_agent
     else:
         # Use a modern Chrome user agent as fallback
-        http_headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        http_headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
     
     # Add essential browser headers - keep it minimal to avoid conflicts
     http_headers.update({
@@ -4481,52 +4540,19 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
     # Deno is enabled by default in yt-dlp, so we just verify it's available AND working
     # IMPORTANT: Do NOT specify player_client in extractor_args - it severely limits format availability!
     # yt-dlp's default logic works best with Deno/EJS
-    deno_working = False
     try:
-        # Check if Deno is available in PATH
-        import shutil
-        import subprocess
-        deno_path = shutil.which('deno')
-        if deno_path:
-            logging.info(f"[OK] Deno runtime found at: {deno_path}")
-            
-            # Actually TEST if Deno works (not just exists)
-            try:
-                result = subprocess.run(
-                    [deno_path, '--version'],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
-                )
-                if result.returncode == 0:
-                    deno_version = result.stdout.strip().split('\n')[0] if result.stdout else 'unknown'
-                    logging.info(f"[OK] Deno is working: {deno_version}")
-                    deno_working = True
-                else:
-                    logging.warning(f"[WARNING] Deno found but failed to execute: exit code {result.returncode}")
-                    logging.warning(f"  stderr: {result.stderr[:200] if result.stderr else 'none'}")
-            except subprocess.TimeoutExpired:
-                logging.warning("[WARNING] Deno found but timed out when testing")
-            except Exception as deno_test_error:
-                logging.warning(f"[WARNING] Deno found but failed to test: {deno_test_error}")
-            
-            if deno_working:
-                logging.info("[OK] External JavaScript runtime enabled (EJS challenge solver ready)")
-                # web_safari (default client since yt-dlp 2026.01.29) is now SABR-only - it no longer
-                # provides HTTPS adaptive formats (video OR audio). This causes silent download failures
-                # because bestaudio[ext=m4a] (format 140) becomes unavailable.
-                # Fix: force ios+android_vr which still provide full HTTPS DASH formats.
-                # See: https://github.com/yt-dlp/yt-dlp/issues/12482
-                base_options['extractor_args'] = {'youtube': {'player_client': ['ios', 'android_vr']}}
-                logging.info("[FIX-SABR] Using ios+android_vr clients (web_safari is SABR-only, see yt-dlp#12482)")
-            else:
-                logging.warning("[WARNING] Deno exists but may not work properly. Trying Node.js fallback...")
-                _setup_nodejs_fallback(base_options, cookies_file)
+        deno_working, deno_path = check_deno_runtime()  # cached after first call
+        if deno_working:
+            logging.info("[OK] External JavaScript runtime enabled (EJS challenge solver ready)")
+            # web_safari (default client since yt-dlp 2026.01.29) is now SABR-only - it no longer
+            # provides HTTPS adaptive formats (video OR audio). This causes silent download failures
+            # because bestaudio[ext=m4a] (format 140) becomes unavailable.
+            # Fix: force ios+android_vr which still provide full HTTPS DASH formats.
+            # See: https://github.com/yt-dlp/yt-dlp/issues/12482
+            base_options['extractor_args'] = {'youtube': {'player_client': ['ios', 'android_vr']}}
+            logging.info("[FIX-SABR] Using ios+android_vr clients (web_safari is SABR-only, see yt-dlp#12482)")
         else:
-            logging.warning("[WARNING] Deno runtime not found in PATH. Trying Node.js as JS runtime fallback.")
-            logging.warning("  Install Deno with: .\\scripts\\install-deno.ps1")
-            logging.warning("  Then restart the application or run: .\\scripts\\add-deno-to-path.ps1")
+            logging.warning("[WARNING] Deno unavailable or not working. Trying Node.js fallback...")
             _setup_nodejs_fallback(base_options, cookies_file)
     except Exception as e:
         logging.warning(f"Error checking for Deno runtime: {e}")
