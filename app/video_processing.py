@@ -104,10 +104,6 @@ def clean_environment_path():
     
     return cleaned_path
 from utils import (
-    is_premiere_running,
-    import_video_to_premiere,
-    sanitize_title,
-    generate_new_filename,
     play_notification_sound,
     get_default_download_path,
     get_license_key
@@ -138,15 +134,6 @@ def set_emit_function(emit_function):
     """Set the emit_to_client_type function for targeted client emissions"""
     global _emit_to_client_type
     _emit_to_client_type = emit_function
-
-def emit_targeted(event, data, client_type=None, socketio=None):
-    """Emit event to specific client type if available, otherwise broadcast"""
-    if _emit_to_client_type and client_type:
-        _emit_to_client_type(event, data, client_type)
-    elif socketio:
-        socketio.emit(event, data)
-    else:
-        logging.warning(f"Could not emit event {event}: no emission method available")
 
 def get_subprocess_creation_flags():
     """Get Windows-specific creation flags to hide console windows"""
@@ -730,90 +717,6 @@ def log_youtube_formats(info_dict, resolution, selected_format_id=None):
         logging.error(f"[FORMATS] Error analyzing formats: {e}")
     
     logging.info("[FORMATS] ================================================")
-
-
-def monitor_ffmpeg_process(process, operation_name="FFmpeg", socketio=None, timeout=600):
-    """
-    Monitor an FFmpeg subprocess and log its progress.
-    Helps diagnose hangs and performance issues.
-    
-    Args:
-        process: subprocess.Popen object
-        operation_name: Name of the operation for logging
-        socketio: SocketIO instance for emitting progress
-        timeout: Maximum time to wait in seconds
-    
-    Returns:
-        bool: True if process completed successfully, False otherwise
-    """
-    import threading
-    
-    start_time = time.time()
-    pid = process.pid
-    
-    logging.info(f"[FFMPEG-MONITOR] Starting {operation_name} (PID: {pid})")
-    
-    last_log_time = start_time
-    log_interval = 10  # Log every 10 seconds
-    
-    try:
-        while process.poll() is None:
-            elapsed = time.time() - start_time
-            
-            # Check timeout
-            if elapsed > timeout:
-                logging.error(f"[FFMPEG-MONITOR] ❌ TIMEOUT after {elapsed:.0f}s - killing process {pid}")
-                process.kill()
-                return False
-            
-            # Periodic logging
-            if time.time() - last_log_time >= log_interval:
-                last_log_time = time.time()
-                
-                # Get process info if psutil available
-                if PSUTIL_AVAILABLE:
-                    try:
-                        import psutil
-                        proc = psutil.Process(pid)
-                        cpu_percent = proc.cpu_percent(interval=0.1)
-                        mem_info = proc.memory_info()
-                        mem_mb = mem_info.rss / (1024 * 1024)
-                        
-                        status = "🟢 Active" if cpu_percent > 1 else "🟡 Idle/Waiting"
-                        logging.info(f"[FFMPEG-MONITOR] {status} | Elapsed: {elapsed:.0f}s | CPU: {cpu_percent:.0f}% | RAM: {mem_mb:.0f}MB")
-                        
-                        # Emit to client
-                        if socketio:
-                            socketio.emit('percentage', {'percentage': f'100% - {operation_name} ({elapsed:.0f}s)...'})
-                        
-                        # Warning if FFmpeg seems stuck (no CPU usage)
-                        if cpu_percent < 0.5 and elapsed > 30:
-                            logging.warning(f"[FFMPEG-MONITOR] ⚠️ FFmpeg appears idle - may be stuck or waiting for I/O")
-                            
-                    except psutil.NoSuchProcess:
-                        logging.info(f"[FFMPEG-MONITOR] Process {pid} ended")
-                        break
-                    except Exception as e:
-                        logging.debug(f"[FFMPEG-MONITOR] Could not get process info: {e}")
-                else:
-                    logging.info(f"[FFMPEG-MONITOR] {operation_name} running... Elapsed: {elapsed:.0f}s")
-            
-            time.sleep(1)
-        
-        # Process finished
-        elapsed = time.time() - start_time
-        return_code = process.returncode
-        
-        if return_code == 0:
-            logging.info(f"[FFMPEG-MONITOR] ✅ {operation_name} completed successfully in {elapsed:.1f}s")
-            return True
-        else:
-            logging.error(f"[FFMPEG-MONITOR] ❌ {operation_name} failed with code {return_code} after {elapsed:.1f}s")
-            return False
-            
-    except Exception as e:
-        logging.error(f"[FFMPEG-MONITOR] Error monitoring process: {e}")
-        return False
 
 
 def run_hidden_subprocess(cmd, timeout=300, **kwargs):
@@ -2017,7 +1920,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         current_download['cancel_callback'] = cancel_callback
                 
         # Normalize youtu.be short links → youtube.com/watch?v=ID
-        from urllib.parse import urlparse as _urlparse_clip, parse_qs as _parse_qs_clip
+        from urllib.parse import urlparse as _urlparse_clip
         _parsed_clip = _urlparse_clip(video_url)
         if 'youtu.be' in _parsed_clip.netloc and _parsed_clip.path:
             _vid_id_clip = _parsed_clip.path.lstrip('/')
@@ -3287,10 +3190,6 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         socketio.emit('percentage', {'percentage': '0%'})
         logging.info(f"[SENT] initial progress events: progress={progress_data}")
         
-        # Configure stdout/stderr to prevent Windows pipe issues
-        import contextlib
-        import io
-        
         # Note: We need to allow yt-dlp to capture progress information
         # so we can't completely redirect stdout/stderr on Windows.
         # Instead, we'll use a safer approach that preserves progress hooks
@@ -4275,41 +4174,6 @@ def format_timestamp(seconds):
     seconds = seconds % 60
     return f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
 
-def get_audio_format_selector(preferred_language='original'):
-    """
-    Create a format selector string for yt-dlp that prefers a specific audio language
-    with fallback to original audio if the preferred language is not available.
-    """
-    if preferred_language == 'original':
-        # Return the original best format selector
-        return 'bestvideo+bestaudio/best'
-    
-    # Language mapping for common cases
-    language_codes = {
-        'en': ['en', 'eng', 'english'],
-        'fr': ['fr', 'fre', 'fra', 'french', 'français'],
-        'es': ['es', 'spa', 'spanish', 'español'],
-        'de': ['de', 'ger', 'deu', 'german', 'deutsch'],
-        'it': ['it', 'ita', 'italian', 'italiano'],
-        'pt': ['pt', 'por', 'portuguese', 'português'],
-        'ru': ['ru', 'rus', 'russian', 'русский'],
-        'ja': ['ja', 'jpn', 'japanese', '日本語'],
-        'ko': ['ko', 'kor', 'korean', '한국어'],
-        'zh': ['zh', 'chi', 'zho', 'chinese', '中文'],
-        'ar': ['ar', 'ara', 'arabic', 'العربية'],
-        'hi': ['hi', 'hin', 'hindi', 'हिन्दी']
-    }
-    
-    # Get all possible language codes for the preferred language
-    lang_variants = language_codes.get(preferred_language, [preferred_language])
-    
-    # Create format selector that prefers the specified language
-    # Format: try language-specific audio + best video, fallback to original best
-    lang_conditions = '|'.join(lang_variants)
-    format_selector = f'bestvideo+bestaudio[language~="{lang_conditions}"]/bestvideo+bestaudio/best'
-    
-    return format_selector
-
 def get_audio_language_options(video_url):
     """
     Extract available audio language options from a YouTube video.
@@ -4562,29 +4426,6 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
     
     return base_options
 
-def get_fallback_format_options(max_height):
-    """Get fallback format options that are more likely to work with current YouTube"""
-    # Start with the most compatible formats that work with SABR streaming
-    format_options = [
-        # Try mobile/TV formats first (often work better with SABR)
-        f'best[height<={max_height}][protocol^=https]',  # HTTPS only
-        f'best[height<={max_height}][protocol!=http_dash_segments]',  # Avoid problematic DASH
-        f'bestvideo[height<={max_height}][protocol^=https]+bestaudio[protocol^=https]',
-        f'bestvideo[height<={max_height}]+bestaudio',
-        
-        # Fallback to any working format
-        f'best[height<={max_height}]',
-        'best[protocol^=https]',  # Any HTTPS format
-        'best[protocol!=http_dash_segments]',  # Avoid problematic protocols
-        'best',  # Last resort - any format
-        
-        # Emergency fallbacks
-        'worst[height>=360]',  # At least 360p
-        'worst',  # Absolute last resort
-    ]
-    
-    return format_options
-
 def log_download_context(error, context_info):
     """Log detailed context information when download errors occur"""
     try:
@@ -4614,11 +4455,3 @@ def log_download_context(error, context_info):
         
     except Exception as log_error:
         logging.error(f"Error while logging download context: {str(log_error)}")
-
-# Main execution
-if __name__ == "__main__":
-    # Add any additional setup if necessary
-    import time
-    import json
-    logging.basicConfig(level=logging.INFO)
-    logging.info("Script started")

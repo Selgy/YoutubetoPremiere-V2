@@ -9,7 +9,7 @@ from flask_cors import CORS
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO
 from routes import register_routes
-from utils import load_settings, monitor_premiere_and_shutdown, play_notification_sound, get_temp_dir, clear_temp_files, check_ffmpeg
+from utils import load_settings, monitor_premiere_and_shutdown, play_notification_sound, get_temp_dir, clear_temp_files
 import re
 import subprocess
 import requests
@@ -874,13 +874,6 @@ def run_server():
     server_thread = threading.Thread(target=run_server_safe)
     server_thread.start()
     
-    # Browser opening disabled - not needed for CEP extension
-    # if sys.platform == 'darwin' and getattr(sys, 'frozen', False):
-    #     try:
-    #         open_url_in_browser(f'http://localhost:3001/health')
-    #     except:
-    #         pass
-
     premiere_monitor_thread = threading.Thread(target=monitor_premiere_and_shutdown_wrapper)
     premiere_monitor_thread.start()
 
@@ -890,71 +883,10 @@ def run_server():
     logging.info("Shutting down the application.")
     os._exit(0)
 
-def open_url_in_browser(url):
-    """Open a URL in the default browser"""
-    import webbrowser
-    import time
-    
-    # Delay slightly to ensure the server is fully started
-    time.sleep(2)
-    try:
-        webbrowser.open(url)
-        logging.info(f"Opened {url} in browser")
-    except Exception as e:
-        logging.error(f"Failed to open URL in browser: {e}")
-
 def monitor_premiere_and_shutdown_wrapper():
     global should_shutdown
     monitor_premiere_and_shutdown()
     should_shutdown = True
-
-def run_extendscript(script):
-    try:
-        script_path = os.path.join(os.environ['TEMP'], 'YoutubetoPremiere_script.jsx')
-        result_path = os.path.join(os.environ['TEMP'], 'YoutubetoPremiere_result.txt')
-
-        # Remove any existing result file
-        if os.path.exists(result_path):
-            try:
-                os.remove(result_path)
-            except (OSError, PermissionError):
-                pass
-
-        # Write the script
-        with open(script_path, 'w', encoding='utf-8') as f:
-            f.write(script)
-
-        # Wait for the result file to be created by the panel extension
-        timeout = 30  # 30 seconds timeout
-        start_time = time.time()
-        while not os.path.exists(result_path):
-            if time.time() - start_time > timeout:
-                raise TimeoutError("Timeout waiting for ExtendScript result")
-            time.sleep(0.1)
-
-        # Give a small delay to ensure the file is completely written
-        time.sleep(0.1)
-
-        # Read the result
-        try:
-            with open(result_path, 'r', encoding='utf-8') as f:
-                result = f.read().strip()
-            return result
-        except Exception as e:
-            logging.error(f"Error reading result file: {e}")
-            return None
-
-    except Exception as e:
-        logging.error(f'Error running ExtendScript: {e}')
-        return None
-    finally:
-        # Clean up
-        for file_path in [script_path, result_path]:
-            if os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                except (OSError, PermissionError):
-                    pass
 
 def progress_hook(d, socketio):
     if d['status'] == 'downloading':
