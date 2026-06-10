@@ -4,7 +4,7 @@ import json
 import time
 import threading
 from video_processing import handle_video_url, get_audio_language_options, set_emit_function
-from utils import play_notification_sound, save_license_key, get_license_key, load_settings, save_settings, save_download_path, open_sounds_folder, validate_youtube_url
+from utils import play_notification_sound, save_license_key, get_license_key, load_settings, save_settings, save_download_path, open_sounds_folder, validate_youtube_url, update_current_project_path
 from config import LICENSE_API_URL, API_TIMEOUT, LICENSE_CACHE_DURATION, APP_VERSION
 import os
 import sys
@@ -781,7 +781,11 @@ def register_routes(app, socketio, settings, emit_fn=None):
     @socketio.on('project_path_response')
     def handle_project_path_response(data):
         try:
-            project_path = os.path.normpath(data.get('path', ''))
+            raw_path = data.get('path') or ''
+            project_path = os.path.normpath(raw_path) if raw_path else ''
+            # Always feed the live tracker so an in-flight download can resolve
+            # the CURRENTLY active project (set the event even on empty answers).
+            update_current_project_path(project_path if (project_path and project_path != '.') else None)
             if project_path and project_path != '.':
                 logging.info(f"Received project path from Premiere: {project_path}")
 

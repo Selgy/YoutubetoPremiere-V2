@@ -7,7 +7,12 @@ import os
 
 import pytest
 
-from utils import validate_youtube_url, YOUTUBE_DOMAINS
+from utils import (
+    validate_youtube_url,
+    YOUTUBE_DOMAINS,
+    update_current_project_path,
+    query_live_project_path,
+)
 from video_processing import (
     sanitize_youtube_title,
     sanitize_resolution,
@@ -131,3 +136,39 @@ class TestGetUniqueFilename:
         (tmp_path / "video_2.mp4").write_text("x")
         result = get_unique_filename(str(tmp_path), "video", "mp4")
         assert result == "video_3.mp4"
+
+
+# ---------------------------------------------------------------------------
+# Live active-project tracking (fix for "video lands in last opened project")
+# ---------------------------------------------------------------------------
+class FakeSocketIO:
+    """Minimal stand-in that records emits and replays a project path."""
+    def __init__(self, reply_path=None):
+        self.emitted = []
+        self._reply_path = reply_path
+
+    def emit(self, event, *args, **kwargs):
+        self.emitted.append(event)
+        # Simulate the panel answering the request synchronously.
+        if event == "request_project_path" and self._reply_path is not None:
+            update_current_project_path(self._reply_path)
+
+
+class TestLiveProjectPath:
+    def test_query_returns_none_without_socketio(self):
+        assert query_live_project_path(None, timeout=0.1) is None
+
+    def test_query_times_out_when_no_reply(self):
+        sock = FakeSocketIO(reply_path=None)  # never answers
+        assert query_live_project_path(sock, timeout=0.2) is None
+        assert "request_project_path" in sock.emitted
+
+    def test_query_returns_active_project_path(self):
+        sock = FakeSocketIO(reply_path=r"C:\Projects\Current\my.prproj")
+        result = query_live_project_path(sock, timeout=1)
+        assert result == r"C:\Projects\Current\my.prproj"
+
+    def test_latest_path_wins(self):
+        update_current_project_path(r"C:\old\a.prproj")
+        sock = FakeSocketIO(reply_path=r"C:\new\b.prproj")
+        assert query_live_project_path(sock, timeout=1) == r"C:\new\b.prproj"
