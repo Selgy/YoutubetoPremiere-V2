@@ -4,16 +4,10 @@ import psutil
 import sys
 import platform
 import logging
-import string
 import pygame
 import subprocess
-import zipfile
-import tarfile
 import shutil
-from tqdm import tqdm
-import requests
 import threading
-
 import time
 
 # Settings cache to avoid repeated file reads
@@ -22,6 +16,78 @@ _settings_cache_time = 0
 
 # FFmpeg path cache — resolved once per process lifetime (never changes at runtime)
 _ffmpeg_path_cache = None
+
+# --- Live "active project" tracking ---------------------------------------
+# The Premiere panel reports its CURRENTLY active project path via the
+# 'project_path_response' socket event. routes.py feeds every such response
+# into update_current_project_path() so a download can always ask for the
+# project that is active *right now* instead of relying on a value cached at
+# connect time (which pointed at whatever project was open when the socket
+# first connected — the source of the "video lands in the last project" bug).
+_current_project_path = {'path': None}
+_project_path_event = threading.Event()
+
+
+def update_current_project_path(path):
+    """Record the active project path reported by the Premiere panel."""
+    if path:
+        _current_project_path['path'] = path
+    # Wake any download waiting on a live query, even on a null/empty answer.
+    _project_path_event.set()
+
+
+def query_live_project_path(socketio, timeout=5):
+    """Ask the Premiere panel for the path of the CURRENTLY active project.
+
+    Returns the raw .prproj path, or None if no panel answered in time.
+    """
+    if not socketio:
+        return None
+    try:
+        _project_path_event.clear()
+        socketio.emit('request_project_path')
+        if _project_path_event.wait(timeout=timeout):
+            return _current_project_path.get('path')
+    except Exception as e:
+        logging.warning(f"Live project-path query failed: {e}")
+    return None
+
+
+# Allowed YouTube domains for URL validation
+YOUTUBE_DOMAINS = (
+    'youtube.com',
+    'youtu.be',
+    'www.youtube.com',
+    'm.youtube.com',
+    'youtube-nocookie.com',
+    'www.youtube-nocookie.com',
+)
+
+
+def validate_youtube_url(url):
+    """Validate that the URL is from a YouTube domain.
+
+    Uses proper URL parsing (not a suffix match) so spoofed domains like
+    'evil-youtube.com' or 'notyoutube.com' are rejected.
+    """
+    if not url:
+        return False
+
+    try:
+        from urllib.parse import urlparse
+        netloc = urlparse(url).netloc.lower()
+        # Strip any userinfo (user:pass@) and port
+        if '@' in netloc:
+            netloc = netloc.split('@', 1)[1]
+        domain = netloc.split(':', 1)[0]
+        # Exact match OR a proper subdomain (leading dot) — NOT a suffix match,
+        # which would wrongly accept 'evil-youtube.com' or 'notyoutube.com'.
+        return any(domain == yt or domain.endswith('.' + yt) for yt in YOUTUBE_DOMAINS)
+    except Exception:
+        pass
+
+    return False
+
 
 def load_settings():
     global _settings_cache, _settings_cache_time
@@ -222,46 +288,40 @@ def monitor_premiere_and_shutdown():
 
 def get_default_download_path(socketio=None):
     try:
-        # Check if the Premiere panel already pushed a project path on connect.
-        # routes.py stores it in settings['downloadPath'] via save_download_path()
-        # whenever it receives a project_path_response event.
-        cached_settings = load_settings()
-        cached_dl_path = cached_settings.get('downloadPath', '')
-        if cached_dl_path and os.path.isdir(os.path.dirname(cached_dl_path) or cached_dl_path):
-            logging.info(f"Using project-related download path: {cached_dl_path}")
-            os.makedirs(cached_dl_path, exist_ok=True)
-            return cached_dl_path
-
-        # Fallback: ask Premiere panel via socket round-trip (5s timeout)
-        if socketio:
-            # Create an event to wait for the response
-            response_event = threading.Event()
-            project_path_response = {'path': None}
-
-            def on_project_path_response(data):
-                project_path_response['path'] = data.get('path')
-                response_event.set()
-
-            # Register temporary handler
-            socketio.on_event('project_path_response', on_project_path_response)
-
-            # Request the path
-            socketio.emit('request_project_path')
-
-            # Wait for response with timeout
-            if response_event.wait(timeout=5):
-                project_path = project_path_response['path']
-                if project_path:
-                    # Create YoutubeToPremiere_download folder next to the project
-                    download_path = os.path.join(os.path.dirname(project_path), 'YoutubeToPremiere_download')
-                    os.makedirs(download_path, exist_ok=True)
-                    logging.info(f"Using project-related download path: {download_path}")
-                    return download_path
-        
-        # If we couldn't get a path from the Premiere project, use fallback paths
         download_folder_name = 'YoutubeToPremiere_download'
-        fallback_path = None
-        
+        cached_settings = load_settings()
+        user_path = (cached_settings.get('downloadPath', '') or '').strip()
+
+        # A path ending in 'YoutubeToPremiere_download' was auto-generated by us
+        # next to some project — it must NOT pin downloads to that old project.
+        # Only a different path counts as an explicit user override.
+        normalized = user_path.replace('\\', '/').rstrip('/')
+        is_custom_path = bool(user_path) and not normalized.endswith(download_folder_name)
+
+        if is_custom_path:
+            os.makedirs(user_path, exist_ok=True)
+            logging.info(f"Using custom download path: {user_path}")
+            return user_path
+
+        # Auto mode: follow the project that is active RIGHT NOW. We query the
+        # panel live every time instead of trusting the connect-time cache,
+        # which pointed at whatever project was open when the socket connected
+        # (the cause of videos landing in the last-opened project).
+        live_project_path = query_live_project_path(socketio, timeout=5)
+        if live_project_path:
+            download_path = os.path.join(os.path.dirname(live_project_path), download_folder_name)
+            os.makedirs(download_path, exist_ok=True)
+            logging.info(f"Using current project's download path: {download_path}")
+            return download_path
+
+        # Live query failed (panel slow / no project open): fall back to the
+        # last known auto path so we at least keep working.
+        if user_path and os.path.isdir(os.path.dirname(user_path) or user_path):
+            os.makedirs(user_path, exist_ok=True)
+            logging.info(f"Live query unavailable; using cached download path: {user_path}")
+            return user_path
+
+        # If we couldn't get a path from the Premiere project, use fallback paths
         # Try to use Documents folder as fallback
         documents_path = os.path.expanduser('~/Documents')
         fallback_path = os.path.join(documents_path, download_folder_name)
@@ -284,167 +344,6 @@ def get_default_download_path(socketio=None):
     except Exception as e:
         logging.error(f'Error getting download path: {e}')
         return None
-
-def get_current_project_path():
-    try:
-        # Get the default Premiere Pro project directory
-        if platform.system() == 'Windows':
-            project_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'Adobe', 'Premiere Pro')
-        else:
-            project_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'Adobe', 'Premiere Pro')
-        
-        # Find the most recent version folder
-        version_folders = [f for f in os.listdir(project_dir) if os.path.isdir(os.path.join(project_dir, f))]
-        if not version_folders:
-            return None
-            
-        latest_version = sorted(version_folders)[-1]
-        project_dir_path = os.path.join(project_dir, latest_version)
-        
-        logging.info(f"Project directory path: {project_dir_path}")
-        return project_dir_path
-    except Exception as e:
-        logging.error(f'Error getting project path: {e}', exc_info=True)
-        return None
-
-def import_video_to_premiere(video_path):
-    """Import video file into the active Premiere Pro project and open it in the source monitor."""
-    if not os.path.exists(video_path):
-        logging.error(f'File does not exist: {video_path}')
-        return False
-
-    try:
-        logging.info('Attempting to import video to Premiere...')
-        temp_dir = os.path.join(os.environ['TEMP'], 'YoutubetoPremiere')
-        os.makedirs(temp_dir, exist_ok=True)
-        
-        script_path = os.path.join(temp_dir, 'script.jsx')
-        result_path = os.path.join(temp_dir, 'result.txt')
-
-        # Remove any existing files
-        for file in [script_path, result_path]:
-            if os.path.exists(file):
-                try:
-                    os.remove(file)
-                except OSError:
-                    pass
-
-        # Prepare the path for ExtendScript - handle Windows paths correctly
-        # On Windows, convert backslashes to forward slashes for ExtendScript
-        if sys.platform == 'win32':
-            # ExtendScript on Windows prefers forward slashes
-            video_path_escaped = video_path.replace('\\', '/')
-        else:
-            video_path_escaped = video_path
-        
-        # Also escape any quotes in the path
-        video_path_escaped = video_path_escaped.replace('"', '\\"')
-        
-        # Normalize result_path for ExtendScript (use forward slashes)
-        result_path_normalized = result_path.replace('\\', '/')
-        
-        logging.info(f'Preparing import script for: {video_path}')
-        logging.info(f'Script path: {script_path}')
-        logging.info(f'Result path: {result_path}')
-        logging.info(f'Escaped video path: {video_path_escaped}')
-        
-        # Create the ExtendScript optimized for maximum speed
-        script = f"""
-        var result = "false";
-        try {{
-            if (app.project && app.sourceMonitor) {{
-                // Ultra-fast approach: import and immediately open
-                var projectItem = app.project.importFiles(["{video_path_escaped}"], false, app.project.rootItem, false);
-                
-                if (projectItem && projectItem.length > 0) {{
-                    // Immediate opening - no validation needed
-                    app.sourceMonitor.openProjectItem(projectItem[0]);
-                    result = "true";
-                }} else {{
-                    result = "import_failed";
-                }}
-            }} else if (app.project) {{
-                // Fallback: import only
-                var projectItem = app.project.importFiles(["{video_path_escaped}"], false, app.project.rootItem, false);
-                result = projectItem && projectItem.length > 0 ? "true_no_monitor" : "import_failed";
-            }} else {{
-                result = "no_project";
-            }}
-        }} catch(e) {{
-            result = "error: " + e.toString();
-        }}
-
-        // Write result
-        var file = new File("{result_path_normalized}");
-        file.open('w');
-        file.write(result);
-        file.close();
-        """
-
-        # Write the script
-        with open(script_path, 'w', encoding='utf-8') as f:
-            f.write(script)
-
-        # Reduced timeout - faster response
-        start_time = time.time()
-        while not os.path.exists(result_path):
-            if time.time() - start_time > 15:  # Reduced from 30 to 15 seconds
-                logging.error("Timeout waiting for import result")
-                return False
-            time.sleep(0.05)  # Check more frequently - every 50ms instead of 100ms
-
-        # Read the result with retry for partial writes
-        result = None
-        for attempt in range(3):  # Try up to 3 times
-            try:
-                with open(result_path, 'r', encoding='utf-8') as f:
-                    result = f.read().strip()
-                if result:  # If we got a result, break
-                    break
-            except (FileNotFoundError, PermissionError):
-                time.sleep(0.1)  # Wait briefly and retry
-
-        # Clean up immediately
-        try:
-            os.remove(script_path)
-            os.remove(result_path)
-        except OSError:
-            pass
-
-        if result and result.startswith("true"):
-            logging.info('Video imported and opened in source monitor successfully')
-            if result == "true_no_monitor":
-                logging.warning("Source monitor not available")
-            return True
-        else:
-            logging.error(f'Failed to import video: {result}')
-            return False
-
-    except Exception as e:
-        logging.error(f'Error during import: {e}', exc_info=True)
-        return False
-
-def sanitize_title(title):
-    # Keep more characters, only remove problematic ones
-    invalid_chars = '<>:"/\\|?*'
-    sanitized_title = ''.join(c for c in title if c not in invalid_chars)
-    sanitized_title = sanitized_title.strip()
-    # Limit length to avoid path length issues
-    if len(sanitized_title) > 100:
-        sanitized_title = sanitized_title[:100]
-    return sanitized_title
-
-def generate_new_filename(base_path, original_name, extension, suffix=""):
-    base_filename = f"{original_name}{suffix}.{extension}"
-    if not os.path.exists(os.path.join(base_path, base_filename)):
-        return base_filename
-    
-    counter = 1
-    new_name = f"{original_name}{suffix}_{counter}.{extension}"
-    while os.path.exists(os.path.join(base_path, new_name)):
-        counter += 1
-        new_name = f"{original_name}{suffix}_{counter}.{extension}"
-    return new_name
 
 def play_notification_sound(volume=0.3, sound_type='notification_sound'): 
     pygame.mixer.init()
@@ -524,86 +423,11 @@ def play_notification_sound(volume=0.3, sound_type='notification_sound'):
     except Exception as e:
         logging.error(f"Error playing notification sound: {e}")
 
-def is_premiere_running():
-    for process in psutil.process_iter(['pid', 'name']):
-        if process.info['name'] and 'Adobe Premiere Pro' in process.info['name']:
-            return True
-    return False
-
-def find_ffmpeg():
-    if getattr(sys, 'frozen', False):
-        base_path = os.path.dirname(sys.executable)
-    else:
-        base_path = os.path.dirname(os.path.abspath(__file__))
-    
-    ffmpeg_paths = [
-        os.path.join(base_path, 'exec', 'ffmpeg.exe'),
-        os.path.join(base_path, 'ffmpeg.exe'),
-        os.path.join(os.path.dirname(base_path), 'exec', 'ffmpeg.exe'),
-        os.path.join(os.path.dirname(base_path), 'ffmpeg.exe')
-    ]
-    
-    for path in ffmpeg_paths:
-        if os.path.exists(path):
-            logging.info(f"Found FFmpeg at: {path}")
-            return path
-            
-    raise Exception("FFmpeg not found in any of the expected locations")
-
 def save_download_path(download_path):
     """Save the download path to settings"""
     settings = load_settings()
     settings['downloadPath'] = download_path
     return save_settings(settings)
-
-def check_ffmpeg(ffmpeg_path):
-    """Check if ffmpeg is available and working."""
-    import subprocess
-    import platform
-    import logging
-    import os
-    
-    logger = logging.getLogger('YoutubetoPremiere')
-    
-    if not ffmpeg_path:
-        logger.error("FFmpeg path is not set")
-        return False
-    
-    try:
-        # First make sure the file exists
-        if not os.path.exists(ffmpeg_path):
-            logger.error(f"FFmpeg executable not found at path: {ffmpeg_path}")
-            return False
-
-        # On Windows, use shell=True to avoid handle issues in Premiere environment
-        use_shell = platform.system() == 'Windows'
-        
-        # Run ffmpeg -version with shell=True on Windows
-        cmd = [ffmpeg_path, "-version"] if not use_shell else f'"{ffmpeg_path}" -version'
-        
-        logger.info(f"Running ffmpeg check command: {cmd}")
-        result = subprocess.run(
-            cmd,
-            shell=use_shell, 
-            capture_output=True, 
-            text=True, 
-            check=False
-        )
-        
-        if result.returncode == 0 and "ffmpeg version" in result.stdout:
-            logger.info(f"FFmpeg found and working: {ffmpeg_path}")
-            return True
-        else:
-            logger.error(f"FFmpeg check failed. Return code: {result.returncode}")
-            logger.error(f"Error output: {result.stderr}")
-            return False
-    except Exception as e:
-        logger.error(f"Error checking FFmpeg: {str(e)}")
-        # If verification fails but file exists, assume it works
-        if os.path.exists(ffmpeg_path) and os.path.getsize(ffmpeg_path) > 1000000:  # File exists and is reasonably sized
-            logger.warning(f"FFmpeg verification failed but file exists and appears valid. Assuming it works: {ffmpeg_path}")
-            return True
-        return False
 
 def get_temp_dir():
     """Get the temporary directory for files."""

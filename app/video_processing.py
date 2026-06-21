@@ -28,6 +28,60 @@ _ffmpeg_path_cached = None
 _ffmpeg_cache_time = 0
 _ffmpeg_cache_ttl = 300  # Cache for 5 minutes
 
+# Deno runtime check cache — the result never changes during a process lifetime,
+# so we test deno --version only once instead of on every yt-dlp options build
+# (previously ran 3-4x per download).
+_deno_check_done = False
+_deno_path_cached = None
+_deno_working_cached = False
+
+
+def check_deno_runtime():
+    """Check (once, cached) whether the Deno JS runtime is available and working.
+
+    Returns (deno_working: bool, deno_path: str | None).
+    The Deno binary cannot change mid-process, so the subprocess test runs only
+    the first time and the result is reused for every subsequent call.
+    """
+    global _deno_check_done, _deno_path_cached, _deno_working_cached
+
+    if _deno_check_done:
+        return _deno_working_cached, _deno_path_cached
+
+    import shutil
+    deno_path = shutil.which('deno')
+    deno_working = False
+
+    if deno_path:
+        logging.info(f"[OK] Deno runtime found at: {deno_path}")
+        try:
+            result = subprocess.run(
+                [deno_path, '--version'],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+            )
+            if result.returncode == 0:
+                deno_version = result.stdout.strip().split('\n')[0] if result.stdout else 'unknown'
+                logging.info(f"[OK] Deno is working: {deno_version}")
+                deno_working = True
+            else:
+                logging.warning(f"[WARNING] Deno found but failed to execute: exit code {result.returncode}")
+                logging.warning(f"  stderr: {result.stderr[:200] if result.stderr else 'none'}")
+        except subprocess.TimeoutExpired:
+            logging.warning("[WARNING] Deno found but timed out when testing")
+        except Exception as deno_test_error:
+            logging.warning(f"[WARNING] Deno found but failed to test: {deno_test_error}")
+    else:
+        logging.warning("[WARNING] Deno runtime not found in PATH. Will use Node.js fallback if available.")
+
+    _deno_path_cached = deno_path
+    _deno_working_cached = deno_working
+    _deno_check_done = True
+    return deno_working, deno_path
+
+
 def clean_environment_path():
     """Clean up the PATH environment variable to avoid conflicts"""
     current_path = os.environ.get("PATH", "")
@@ -50,10 +104,6 @@ def clean_environment_path():
     
     return cleaned_path
 from utils import (
-    is_premiere_running,
-    import_video_to_premiere,
-    sanitize_title,
-    generate_new_filename,
     play_notification_sound,
     get_default_download_path,
     get_license_key
@@ -84,15 +134,6 @@ def set_emit_function(emit_function):
     """Set the emit_to_client_type function for targeted client emissions"""
     global _emit_to_client_type
     _emit_to_client_type = emit_function
-
-def emit_targeted(event, data, client_type=None, socketio=None):
-    """Emit event to specific client type if available, otherwise broadcast"""
-    if _emit_to_client_type and client_type:
-        _emit_to_client_type(event, data, client_type)
-    elif socketio:
-        socketio.emit(event, data)
-    else:
-        logging.warning(f"Could not emit event {event}: no emission method available")
 
 def get_subprocess_creation_flags():
     """Get Windows-specific creation flags to hide console windows"""
@@ -676,90 +717,6 @@ def log_youtube_formats(info_dict, resolution, selected_format_id=None):
         logging.error(f"[FORMATS] Error analyzing formats: {e}")
     
     logging.info("[FORMATS] ================================================")
-
-
-def monitor_ffmpeg_process(process, operation_name="FFmpeg", socketio=None, timeout=600):
-    """
-    Monitor an FFmpeg subprocess and log its progress.
-    Helps diagnose hangs and performance issues.
-    
-    Args:
-        process: subprocess.Popen object
-        operation_name: Name of the operation for logging
-        socketio: SocketIO instance for emitting progress
-        timeout: Maximum time to wait in seconds
-    
-    Returns:
-        bool: True if process completed successfully, False otherwise
-    """
-    import threading
-    
-    start_time = time.time()
-    pid = process.pid
-    
-    logging.info(f"[FFMPEG-MONITOR] Starting {operation_name} (PID: {pid})")
-    
-    last_log_time = start_time
-    log_interval = 10  # Log every 10 seconds
-    
-    try:
-        while process.poll() is None:
-            elapsed = time.time() - start_time
-            
-            # Check timeout
-            if elapsed > timeout:
-                logging.error(f"[FFMPEG-MONITOR] ❌ TIMEOUT after {elapsed:.0f}s - killing process {pid}")
-                process.kill()
-                return False
-            
-            # Periodic logging
-            if time.time() - last_log_time >= log_interval:
-                last_log_time = time.time()
-                
-                # Get process info if psutil available
-                if PSUTIL_AVAILABLE:
-                    try:
-                        import psutil
-                        proc = psutil.Process(pid)
-                        cpu_percent = proc.cpu_percent(interval=0.1)
-                        mem_info = proc.memory_info()
-                        mem_mb = mem_info.rss / (1024 * 1024)
-                        
-                        status = "🟢 Active" if cpu_percent > 1 else "🟡 Idle/Waiting"
-                        logging.info(f"[FFMPEG-MONITOR] {status} | Elapsed: {elapsed:.0f}s | CPU: {cpu_percent:.0f}% | RAM: {mem_mb:.0f}MB")
-                        
-                        # Emit to client
-                        if socketio:
-                            socketio.emit('percentage', {'percentage': f'100% - {operation_name} ({elapsed:.0f}s)...'})
-                        
-                        # Warning if FFmpeg seems stuck (no CPU usage)
-                        if cpu_percent < 0.5 and elapsed > 30:
-                            logging.warning(f"[FFMPEG-MONITOR] ⚠️ FFmpeg appears idle - may be stuck or waiting for I/O")
-                            
-                    except psutil.NoSuchProcess:
-                        logging.info(f"[FFMPEG-MONITOR] Process {pid} ended")
-                        break
-                    except Exception as e:
-                        logging.debug(f"[FFMPEG-MONITOR] Could not get process info: {e}")
-                else:
-                    logging.info(f"[FFMPEG-MONITOR] {operation_name} running... Elapsed: {elapsed:.0f}s")
-            
-            time.sleep(1)
-        
-        # Process finished
-        elapsed = time.time() - start_time
-        return_code = process.returncode
-        
-        if return_code == 0:
-            logging.info(f"[FFMPEG-MONITOR] ✅ {operation_name} completed successfully in {elapsed:.1f}s")
-            return True
-        else:
-            logging.error(f"[FFMPEG-MONITOR] ❌ {operation_name} failed with code {return_code} after {elapsed:.1f}s")
-            return False
-            
-    except Exception as e:
-        logging.error(f"[FFMPEG-MONITOR] Error monitoring process: {e}")
-        return False
 
 
 def run_hidden_subprocess(cmd, timeout=300, **kwargs):
@@ -1807,7 +1764,7 @@ def _try_direct_ffmpeg_clip(video_info, target_height, clip_start, clip_end,
     ua = http_headers.get(
         'User-Agent',
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-        'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
     )
     # FFmpeg multi-header syntax: separate headers with \r\n
     hdr = f'User-Agent: {ua}\r\nAccept: */*\r\nAccept-Language: en-US,en;q=0.9'
@@ -1818,15 +1775,20 @@ def _try_direct_ffmpeg_clip(video_info, target_height, clip_start, clip_end,
     cmd = [ffmpeg_path, '-y', '-hide_banner', '-loglevel', 'warning']
     # Input 0: video — seek BEFORE -i so FFmpeg sends an HTTP Range request
     cmd += ['-headers', hdr, '-ss', ss, '-i', video_url_direct]
+    # -avoid_negative_ts make_zero: input-seek (-ss before -i) with stream copy can
+    # leave the first packets with negative/non-zero timestamps, which causes Premiere
+    # "Error retrieving frame" issues. Rebase timestamps to zero so the clip starts clean.
     if audio_fmt:
         # Input 1: audio — same seek before -i (also strip range= param)
         cmd += ['-headers', hdr, '-ss', ss, '-i', _strip_range_param(audio_fmt['url'])]
         cmd += ['-t', dur, '-c:v', 'copy', '-c:a', 'copy',
                 '-map', '0:v:0', '-map', '1:a:0',
+                '-avoid_negative_ts', 'make_zero',
                 '-movflags', '+faststart', video_file_path]
     else:
         cmd += ['-t', dur, '-c:v', 'copy',
                 '-map', '0:v:0',
+                '-avoid_negative_ts', 'make_zero',
                 '-movflags', '+faststart', video_file_path]
 
     timeout_s = max(120, int(clip_duration * 5) + 60)
@@ -1955,7 +1917,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
         current_download['cancel_callback'] = cancel_callback
                 
         # Normalize youtu.be short links → youtube.com/watch?v=ID
-        from urllib.parse import urlparse as _urlparse_clip, parse_qs as _parse_qs_clip
+        from urllib.parse import urlparse as _urlparse_clip
         _parsed_clip = _urlparse_clip(video_url)
         if 'youtu.be' in _parsed_clip.netloc and _parsed_clip.path:
             _vid_id_clip = _parsed_clip.path.lstrip('/')
@@ -3225,10 +3187,6 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         socketio.emit('percentage', {'percentage': '0%'})
         logging.info(f"[SENT] initial progress events: progress={progress_data}")
         
-        # Configure stdout/stderr to prevent Windows pipe issues
-        import contextlib
-        import io
-        
         # Note: We need to allow yt-dlp to capture progress information
         # so we can't completely redirect stdout/stderr on Windows.
         # Instead, we'll use a safer approach that preserves progress hooks
@@ -4213,41 +4171,6 @@ def format_timestamp(seconds):
     seconds = seconds % 60
     return f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
 
-def get_audio_format_selector(preferred_language='original'):
-    """
-    Create a format selector string for yt-dlp that prefers a specific audio language
-    with fallback to original audio if the preferred language is not available.
-    """
-    if preferred_language == 'original':
-        # Return the original best format selector
-        return 'bestvideo+bestaudio/best'
-    
-    # Language mapping for common cases
-    language_codes = {
-        'en': ['en', 'eng', 'english'],
-        'fr': ['fr', 'fre', 'fra', 'french', 'français'],
-        'es': ['es', 'spa', 'spanish', 'español'],
-        'de': ['de', 'ger', 'deu', 'german', 'deutsch'],
-        'it': ['it', 'ita', 'italian', 'italiano'],
-        'pt': ['pt', 'por', 'portuguese', 'português'],
-        'ru': ['ru', 'rus', 'russian', 'русский'],
-        'ja': ['ja', 'jpn', 'japanese', '日本語'],
-        'ko': ['ko', 'kor', 'korean', '한국어'],
-        'zh': ['zh', 'chi', 'zho', 'chinese', '中文'],
-        'ar': ['ar', 'ara', 'arabic', 'العربية'],
-        'hi': ['hi', 'hin', 'hindi', 'हिन्दी']
-    }
-    
-    # Get all possible language codes for the preferred language
-    lang_variants = language_codes.get(preferred_language, [preferred_language])
-    
-    # Create format selector that prefers the specified language
-    # Format: try language-specific audio + best video, fallback to original best
-    lang_conditions = '|'.join(lang_variants)
-    format_selector = f'bestvideo+bestaudio[language~="{lang_conditions}"]/bestvideo+bestaudio/best'
-    
-    return format_selector
-
 def get_audio_language_options(video_url):
     """
     Extract available audio language options from a YouTube video.
@@ -4461,7 +4384,7 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
         http_headers['User-Agent'] = user_agent
     else:
         # Use a modern Chrome user agent as fallback
-        http_headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        http_headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
     
     # Add essential browser headers - keep it minimal to avoid conflicts
     http_headers.update({
@@ -4478,52 +4401,19 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
     # Deno is enabled by default in yt-dlp, so we just verify it's available AND working
     # IMPORTANT: Do NOT specify player_client in extractor_args - it severely limits format availability!
     # yt-dlp's default logic works best with Deno/EJS
-    deno_working = False
     try:
-        # Check if Deno is available in PATH
-        import shutil
-        import subprocess
-        deno_path = shutil.which('deno')
-        if deno_path:
-            logging.info(f"[OK] Deno runtime found at: {deno_path}")
-            
-            # Actually TEST if Deno works (not just exists)
-            try:
-                result = subprocess.run(
-                    [deno_path, '--version'],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
-                )
-                if result.returncode == 0:
-                    deno_version = result.stdout.strip().split('\n')[0] if result.stdout else 'unknown'
-                    logging.info(f"[OK] Deno is working: {deno_version}")
-                    deno_working = True
-                else:
-                    logging.warning(f"[WARNING] Deno found but failed to execute: exit code {result.returncode}")
-                    logging.warning(f"  stderr: {result.stderr[:200] if result.stderr else 'none'}")
-            except subprocess.TimeoutExpired:
-                logging.warning("[WARNING] Deno found but timed out when testing")
-            except Exception as deno_test_error:
-                logging.warning(f"[WARNING] Deno found but failed to test: {deno_test_error}")
-            
-            if deno_working:
-                logging.info("[OK] External JavaScript runtime enabled (EJS challenge solver ready)")
-                # web_safari (default client since yt-dlp 2026.01.29) is now SABR-only - it no longer
-                # provides HTTPS adaptive formats (video OR audio). This causes silent download failures
-                # because bestaudio[ext=m4a] (format 140) becomes unavailable.
-                # Fix: force ios+android_vr which still provide full HTTPS DASH formats.
-                # See: https://github.com/yt-dlp/yt-dlp/issues/12482
-                base_options['extractor_args'] = {'youtube': {'player_client': ['ios', 'android_vr']}}
-                logging.info("[FIX-SABR] Using ios+android_vr clients (web_safari is SABR-only, see yt-dlp#12482)")
-            else:
-                logging.warning("[WARNING] Deno exists but may not work properly. Trying Node.js fallback...")
-                _setup_nodejs_fallback(base_options, cookies_file)
+        deno_working, deno_path = check_deno_runtime()  # cached after first call
+        if deno_working:
+            logging.info("[OK] External JavaScript runtime enabled (EJS challenge solver ready)")
+            # web_safari (default client since yt-dlp 2026.01.29) is now SABR-only - it no longer
+            # provides HTTPS adaptive formats (video OR audio). This causes silent download failures
+            # because bestaudio[ext=m4a] (format 140) becomes unavailable.
+            # Fix: force ios+android_vr which still provide full HTTPS DASH formats.
+            # See: https://github.com/yt-dlp/yt-dlp/issues/12482
+            base_options['extractor_args'] = {'youtube': {'player_client': ['ios', 'android_vr']}}
+            logging.info("[FIX-SABR] Using ios+android_vr clients (web_safari is SABR-only, see yt-dlp#12482)")
         else:
-            logging.warning("[WARNING] Deno runtime not found in PATH. Trying Node.js as JS runtime fallback.")
-            logging.warning("  Install Deno with: .\\scripts\\install-deno.ps1")
-            logging.warning("  Then restart the application or run: .\\scripts\\add-deno-to-path.ps1")
+            logging.warning("[WARNING] Deno unavailable or not working. Trying Node.js fallback...")
             _setup_nodejs_fallback(base_options, cookies_file)
     except Exception as e:
         logging.warning(f"Error checking for Deno runtime: {e}")
@@ -4532,29 +4422,6 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
     logging.info("YT-DLP options configured for robust YouTube downloading with EJS support")
     
     return base_options
-
-def get_fallback_format_options(max_height):
-    """Get fallback format options that are more likely to work with current YouTube"""
-    # Start with the most compatible formats that work with SABR streaming
-    format_options = [
-        # Try mobile/TV formats first (often work better with SABR)
-        f'best[height<={max_height}][protocol^=https]',  # HTTPS only
-        f'best[height<={max_height}][protocol!=http_dash_segments]',  # Avoid problematic DASH
-        f'bestvideo[height<={max_height}][protocol^=https]+bestaudio[protocol^=https]',
-        f'bestvideo[height<={max_height}]+bestaudio',
-        
-        # Fallback to any working format
-        f'best[height<={max_height}]',
-        'best[protocol^=https]',  # Any HTTPS format
-        'best[protocol!=http_dash_segments]',  # Avoid problematic protocols
-        'best',  # Last resort - any format
-        
-        # Emergency fallbacks
-        'worst[height>=360]',  # At least 360p
-        'worst',  # Absolute last resort
-    ]
-    
-    return format_options
 
 def log_download_context(error, context_info):
     """Log detailed context information when download errors occur"""
@@ -4585,11 +4452,3 @@ def log_download_context(error, context_info):
         
     except Exception as log_error:
         logging.error(f"Error while logging download context: {str(log_error)}")
-
-# Main execution
-if __name__ == "__main__":
-    # Add any additional setup if necessary
-    import time
-    import json
-    logging.basicConfig(level=logging.INFO)
-    logging.info("Script started")

@@ -1,6 +1,6 @@
 {
     "name":  "youtube-to-premiere",
-    "version": "3.0.32",
+    "version": "3.0.34",
     "description":  "Bridge entre YouTube et Adobe Premiere Pro",
     "main":  "index.js",
     "license":  "MIT",
@@ -17,7 +17,7 @@
                     "build-mac":  "node tools/build.js all",
                     "build:python":  "node tools/build.js python",
                     "build:cep":  "vite build",
-                    "build:chrome":  "node -e \"const fs=require(\u0027fs-extra\u0027); fs.copySync(\u0027./Extension Youtube/Chrome\u0027, \u0027./dist/chrome\u0027); console.log(\u0027Chrome extension copied successfully\u0027);\"",
+                    "build:chrome":  "node -e \"const fs=require('fs-extra'); fs.copySync('./Extension Youtube/Chrome', './dist/chrome'); console.log('Chrome extension copied successfully');\"",
                     "build:all":  "node tools/build.js all",
                     "build:verbose":  "node tools/build.js --verbose",
                     "dev":  "vite",
@@ -26,7 +26,7 @@
                     "organize":  "node tools/clean.js organize",
                     "upload:chrome":  "powershell -ExecutionPolicy Bypass -File scripts/upload-chrome.ps1",
                     "publish:chrome":  "powershell -ExecutionPolicy Bypass -File scripts/upload-chrome.ps1 -Action publish",
-                    "test":  "echo \"Tests à implémenter\" \u0026\u0026 exit 0"
+                    "test":  "python -m pytest tests/ -q"
                 },
     "dependencies":  {
                          "react":  "^19.0.0",
