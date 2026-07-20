@@ -1551,8 +1551,7 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
         # Get download parameters from settings
         resolution = settings.get('resolution', '1080')
         download_mp3 = settings.get('downloadMP3', False)
-        download_path = settings.get('downloadPath', '')
-        
+
         # Validate license if required (for video and full downloads)
         # Note: 'full' is the actual type sent by the extension for video downloads
         if download_type in ('video', 'full'):
@@ -1560,13 +1559,15 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             if not license_valid:
                 logging.warning(f"License validation failed for download type: {download_type}")
                 return {"error": "Licence invalide. Veuillez acheter une licence pour télécharger des vidéos."}
-        
-        # If no download path is set, use a default path
+
+        # ALWAYS resolve through get_default_download_path: it honours an explicit
+        # custom folder, but otherwise queries Premiere live so the download follows
+        # the CURRENTLY active project. Reading settings['downloadPath'] directly here
+        # would reuse the auto path saved for a previously opened project.
+        download_path = get_default_download_path(socketio)
         if not download_path:
-            download_path = get_default_download_path(socketio)
-            if not download_path:
-                return {"error": "Download path not set and could not determine default"}
-        
+            return {"error": "Download path not set and could not determine default"}
+
         logging.info(f"Processing {download_type} request for {video_url}")
         logging.info(f"Settings: resolution={resolution}, download_path={download_path}, download_mp3={download_mp3}")
         
