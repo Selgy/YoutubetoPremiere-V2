@@ -1,12 +1,18 @@
 """Regression tests for download-path resolution.
 
-The bug these guard against: downloads landed next to the *previously opened*
-Premiere project. Two distinct causes, both covered here:
+Contract (matches what the panel UI promises the user):
+  settings['downloadPath'] empty     -> save next to the ACTIVE project
+  settings['downloadPath'] non-empty -> the folder the user picked, always
 
-1. get_default_download_path() short-circuited on the cached settings value.
-2. handle_video_url() read settings['downloadPath'] directly, so the fixed
-   get_default_download_path() was never even called.
+Bugs these guard against, all of which made downloads land next to a
+previously opened project:
+  1. get_default_download_path() short-circuited on a cached settings value.
+  2. handle_video_url() read settings['downloadPath'] directly, so the fixed
+     get_default_download_path() was never called.
+  3. routes.py persisted the auto-generated folder into settings, so the
+     setting was never actually empty and froze onto one project.
 """
+import json
 import os
 
 import pytest
@@ -29,21 +35,33 @@ def _auto_path(project_dir):
 
 
 class TestGetDefaultDownloadPath:
-    def test_follows_live_project_not_stale_auto_path(self, monkeypatch, project_dirs):
-        """The core bug: a stale auto path must lose to the live project."""
-        old, new = project_dirs
-        monkeypatch.setattr(utils, 'load_settings',
-                            lambda: {'downloadPath': _auto_path(old)})
+    def test_empty_setting_follows_active_project(self, monkeypatch, project_dirs):
+        """The core behaviour: empty setting -> current project's folder."""
+        _, new = project_dirs
+        monkeypatch.setattr(utils, 'load_settings', lambda: {'downloadPath': ''})
         monkeypatch.setattr(utils, 'query_live_project_path',
                             lambda socketio, timeout=5: str(new / "current.prproj"))
 
-        result = utils.get_default_download_path(socketio=object())
+        assert utils.get_default_download_path(socketio=object()) == _auto_path(new)
 
-        assert result == _auto_path(new)
-        assert "ProjectOld" not in result
+    def test_switching_project_changes_the_folder(self, monkeypatch, project_dirs):
+        """Two downloads, two different active projects, two destinations."""
+        old, new = project_dirs
+        monkeypatch.setattr(utils, 'load_settings', lambda: {'downloadPath': ''})
 
-    def test_explicit_custom_path_wins_over_live_query(self, monkeypatch, tmp_path, project_dirs):
-        """A folder the user chose by hand must not be overridden."""
+        monkeypatch.setattr(utils, 'query_live_project_path',
+                            lambda socketio, timeout=5: str(old / "a.prproj"))
+        first = utils.get_default_download_path(socketio=object())
+
+        monkeypatch.setattr(utils, 'query_live_project_path',
+                            lambda socketio, timeout=5: str(new / "b.prproj"))
+        second = utils.get_default_download_path(socketio=object())
+
+        assert first == _auto_path(old)
+        assert second == _auto_path(new)
+
+    def test_custom_path_wins_and_is_never_overridden(self, monkeypatch, tmp_path, project_dirs):
+        """A folder the user chose by hand must always be honoured."""
         _, new = project_dirs
         custom = tmp_path / "MyDownloads"
         custom.mkdir()
@@ -52,46 +70,107 @@ class TestGetDefaultDownloadPath:
         monkeypatch.setattr(utils, 'query_live_project_path',
                             lambda socketio, timeout=5: str(new / "current.prproj"))
 
-        result = utils.get_default_download_path(socketio=object())
+        assert utils.get_default_download_path(socketio=object()) == str(custom)
 
-        assert result == str(custom)
-
-    def test_falls_back_to_cached_path_when_live_query_fails(self, monkeypatch, project_dirs):
-        """No panel answer (no project open / timeout): keep working."""
-        old, _ = project_dirs
-        os.makedirs(_auto_path(old), exist_ok=True)
-        monkeypatch.setattr(utils, 'load_settings',
-                            lambda: {'downloadPath': _auto_path(old)})
+    def test_falls_back_when_no_project_and_no_custom_path(self, monkeypatch):
+        """No panel answer and no user choice: must still return somewhere."""
+        monkeypatch.setattr(utils, 'load_settings', lambda: {'downloadPath': ''})
         monkeypatch.setattr(utils, 'query_live_project_path',
                             lambda socketio, timeout=5: None)
 
         result = utils.get_default_download_path(socketio=object())
 
-        assert result == _auto_path(old)
-
-    def test_empty_settings_uses_live_project(self, monkeypatch, project_dirs):
-        _, new = project_dirs
-        monkeypatch.setattr(utils, 'load_settings', lambda: {'downloadPath': ''})
-        monkeypatch.setattr(utils, 'query_live_project_path',
-                            lambda socketio, timeout=5: str(new / "current.prproj"))
-
-        assert utils.get_default_download_path(socketio=object()) == _auto_path(new)
+        assert result
+        assert result.endswith('YoutubeToPremiere_download')
 
 
-class TestHandleVideoUrlResolvesPathLive:
-    def test_does_not_read_download_path_from_settings(self):
-        """handle_video_url must delegate to get_default_download_path.
+class TestAutoPathMigration:
+    """Old builds wrote the auto folder into settings; clear it once."""
 
-        Reading settings['downloadPath'] there re-introduced the bug even
-        after get_default_download_path itself was fixed.
+    @pytest.fixture
+    def isolated_settings(self, tmp_path, monkeypatch):
+        """Run load_settings() against a throwaway config dir.
+
+        Both APPDATA and '~' must be redirected: load_settings has a legacy
+        Windows migration that copies ~/.config/YoutubetoPremiere/settings.json
+        over the current file, which would otherwise pull in the real machine's
+        settings and silently invalidate the test.
         """
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        real_expanduser = os.path.expanduser
+
+        def fake_expanduser(path):
+            if path.startswith('~'):
+                return str(fake_home) + path[1:]
+            return real_expanduser(path)
+
+        monkeypatch.setattr(os.path, 'expanduser', fake_expanduser)
+        monkeypatch.setattr(utils.sys, 'platform', 'win32')
+
+        def _load(payload):
+            cfg_dir = tmp_path / "appdata" / "YoutubetoPremiere"
+            cfg_dir.mkdir(parents=True, exist_ok=True)
+            settings_file = cfg_dir / "settings.json"
+            settings_file.write_text(json.dumps(payload))
+            monkeypatch.setenv('APPDATA', str(tmp_path / "appdata"))
+            utils._settings_cache = None
+            utils._settings_cache_time = 0
+            return utils.load_settings(), settings_file
+
+        return _load
+
+    def test_clears_leftover_auto_path_and_flags_it(self, tmp_path, isolated_settings):
+        stale = str(tmp_path / "ProjectOld" / "YoutubeToPremiere_download")
+
+        settings, settings_file = isolated_settings({'downloadPath': stale})
+
+        assert settings['downloadPath'] == '', "stale auto path should be cleared"
+        assert settings['autoDownloadPathCleared'] is True
+
+        on_disk = json.loads(settings_file.read_text())
+        assert on_disk['downloadPath'] == ''
+        assert on_disk['autoDownloadPathCleared'] is True
+
+    def test_leaves_custom_path_untouched(self, tmp_path, isolated_settings):
+        custom = str(tmp_path / "MyDownloads")
+
+        settings, _ = isolated_settings({'downloadPath': custom})
+
+        assert settings['downloadPath'] == custom
+
+    def test_does_not_reclear_after_migration(self, tmp_path, isolated_settings):
+        """Once flagged, a folder with that name is a deliberate user choice."""
+        deliberate = str(tmp_path / "Stuff" / "YoutubeToPremiere_download")
+
+        settings, _ = isolated_settings({
+            'downloadPath': deliberate,
+            'autoDownloadPathCleared': True,
+        })
+
+        assert settings['downloadPath'] == deliberate
+
+
+class TestCallersDoNotBypassResolution:
+    def test_handle_video_url_delegates(self):
+        """Reading downloadPath there re-introduced the bug once already."""
         import inspect
         import video_processing
 
         src = inspect.getsource(video_processing.handle_video_url)
         assert "settings.get('downloadPath'" not in src, (
             "handle_video_url reads downloadPath from settings directly; "
-            "it must call get_default_download_path(socketio) so the download "
-            "follows the currently active project"
+            "it must call get_default_download_path(socketio)"
         )
         assert "get_default_download_path(socketio)" in src
+
+    def test_routes_never_persists_auto_path(self):
+        """routes.py must not write the auto folder back into settings."""
+        routes_src = (
+            open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                              'app', 'routes.py'), encoding='utf-8').read()
+        )
+        assert 'save_download_path(auto_path)' not in routes_src, (
+            "routes.py persists the auto folder into settings, which stops the "
+            "setting from ever being empty and freezes downloads onto one project"
+        )

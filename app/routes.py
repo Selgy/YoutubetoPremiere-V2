@@ -789,32 +789,25 @@ def register_routes(app, socketio, settings, emit_fn=None):
             if project_path and project_path != '.':
                 logging.info(f"Received project path from Premiere: {project_path}")
 
-                # Auto-derive a download folder next to the project
-                auto_path = os.path.join(os.path.dirname(project_path), 'YoutubeToPremiere_download')
                 try:
-                    os.makedirs(auto_path, exist_ok=True)
-                    logging.info(f"Created auto download folder: {auto_path}")
-
-                    # Only preserve the path if the user explicitly set a CUSTOM one.
-                    # A path ending with 'YoutubeToPremiere_download' was auto-generated
-                    # by us on a previous connect — treat it the same as empty so it
-                    # always follows the current project.
-                    current_settings = load_settings()
-                    user_path = current_settings.get('downloadPath', '').strip()
-                    is_auto_path = not user_path or user_path.replace('\\', '/').endswith('YoutubeToPremiere_download')
-
-                    if is_auto_path:
-                        save_download_path(auto_path)
-                        logging.info(f"Auto-updating download folder to match current project: {auto_path}")
-                        effective_path = auto_path
-                    else:
+                    # NEVER persist the auto folder into settings['downloadPath'].
+                    # An empty setting means "follow the active project", and writing
+                    # a concrete path here would freeze downloads onto whichever
+                    # project happened to be open. The folder is resolved per download
+                    # by get_default_download_path() instead.
+                    user_path = (load_settings().get('downloadPath', '') or '').strip()
+                    if user_path:
                         logging.info(f"Custom download path set ({user_path}) — keeping it")
                         effective_path = user_path
+                    else:
+                        effective_path = os.path.join(os.path.dirname(project_path),
+                                                      'YoutubeToPremiere_download')
+                        logging.info(f"No custom path — downloads follow current project: {effective_path}")
 
                     socketio.emit('project_path_result', {'success': True, 'path': effective_path})
                 except Exception as e:
-                    logging.error(f"Error creating download folder: {str(e)}")
-                    socketio.emit('project_path_result', {'error': f"Could not create download folder: {str(e)}"})
+                    logging.error(f"Error resolving download folder: {str(e)}")
+                    socketio.emit('project_path_result', {'error': f"Could not resolve download folder: {str(e)}"})
             else:
                 logging.warning("Received empty project path from Premiere")
                 socketio.emit('project_path_result', {'error': 'Empty project path received'})
