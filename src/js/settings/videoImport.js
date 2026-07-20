@@ -128,7 +128,14 @@ export async function setupVideoImportHandler(csInterface) {
 
             // Proactively push the current project path so the server
             // never has to do a round-trip request (which can time out).
-            const pathScript = `app.project ? app.project.path : ""`;
+            // app.project.path is URI-encoded (spaces become %20, notably on
+            // macOS); File(...).fsName yields the native path on both OSes.
+            const pathScript = `
+                (function () {
+                    if (!app.project || !app.project.path) { return ""; }
+                    return new File(app.project.path).fsName;
+                })()
+            `;
             csInterface.evalScript(pathScript, (result) => {
                 if (result && result !== 'undefined' && result !== '') {
                     console.log('📁 Pushing project path to server:', result);
@@ -409,12 +416,13 @@ export async function setupVideoImportHandler(csInterface) {
 
         socket.on('request_project_path', async () => {
             try {
+                // fsName decodes the URI form app.project.path returns
+                // (e.g. /Users/me/My%20Project on macOS) into a real OS path.
                 const script = `
-                    if (app.project) {
-                        app.project.path;
-                    } else {
-                        "NO_PROJECT";
-                    }
+                    (function () {
+                        if (!app.project || !app.project.path) { return "NO_PROJECT"; }
+                        return new File(app.project.path).fsName;
+                    })()
                 `;
                 
                 csInterface.evalScript(script, (result) => {

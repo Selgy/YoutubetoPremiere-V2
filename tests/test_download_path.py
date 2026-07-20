@@ -151,6 +151,74 @@ class TestAutoPathMigration:
         assert settings['downloadPath'] == deliberate
 
 
+class TestCrossPlatform:
+    """The panel ships for Windows and macOS; both must resolve identically."""
+
+    def test_posix_project_path_resolves(self, monkeypatch, tmp_path):
+        """A macOS-style POSIX project path yields a sibling folder."""
+        proj_dir = tmp_path / "Mac Project"
+        proj_dir.mkdir()
+        monkeypatch.setattr(utils, 'load_settings', lambda: {'downloadPath': ''})
+        monkeypatch.setattr(utils, 'query_live_project_path',
+                            lambda socketio, timeout=5: str(proj_dir / "film.prproj"))
+
+        result = utils.get_default_download_path(socketio=object())
+
+        assert result == str(proj_dir / "YoutubeToPremiere_download")
+        assert os.path.isdir(result)
+
+    def test_uri_encoded_path_is_decoded_when_it_resolves(self, tmp_path):
+        """app.project.path returns %20 for spaces, notably on macOS."""
+        real = tmp_path / "My Project"
+        real.mkdir()
+        encoded = str(real).replace(' ', '%20')
+
+        assert utils.normalize_project_path(encoded) == str(real)
+
+    def test_literal_percent_in_real_path_is_preserved(self, tmp_path):
+        """A folder genuinely containing '%' must not be mangled."""
+        weird = tmp_path / "100%20off"
+        weird.mkdir()
+
+        assert utils.normalize_project_path(str(weird)) == str(weird)
+
+    def test_plain_path_untouched(self):
+        assert utils.normalize_project_path('/Users/me/film.prproj') == '/Users/me/film.prproj'
+        assert utils.normalize_project_path('') == ''
+        assert utils.normalize_project_path(None) is None
+
+    def test_unwritable_project_folder_falls_back(self, monkeypatch, tmp_path):
+        """Read-only volume / macOS TCC denial must not break the download."""
+        monkeypatch.setattr(utils, 'load_settings', lambda: {'downloadPath': ''})
+        monkeypatch.setattr(utils, 'query_live_project_path',
+                            lambda socketio, timeout=5: '/nope/readonly/film.prproj')
+
+        real_makedirs = os.makedirs
+
+        def picky_makedirs(path, **kwargs):
+            if str(path).startswith(('/nope', '\\nope')):
+                raise OSError(13, 'Permission denied')
+            return real_makedirs(path, **kwargs)
+
+        monkeypatch.setattr(utils.os, 'makedirs', picky_makedirs)
+
+        result = utils.get_default_download_path(socketio=object())
+
+        assert result
+        assert not str(result).startswith('/nope')
+
+    def test_panel_uses_fsname_for_project_path(self):
+        """The JSX must convert app.project.path via File(...).fsName."""
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        src = open(os.path.join(root, 'src', 'js', 'settings', 'videoImport.js'),
+                   encoding='utf-8').read()
+
+        assert src.count('new File(app.project.path).fsName') == 2, (
+            "both the connect-time push and the request_project_path handler must "
+            "use File(...).fsName; raw app.project.path is URI-encoded on macOS"
+        )
+
+
 class TestCallersDoNotBypassResolution:
     def test_handle_video_url_delegates(self):
         """Reading downloadPath there re-introduced the bug once already."""

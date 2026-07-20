@@ -28,10 +28,32 @@ _current_project_path = {'path': None}
 _project_path_event = threading.Event()
 
 
+def normalize_project_path(path):
+    """Normalize a project path coming from ExtendScript.
+
+    The panel sends File(...).fsName, which is already a native path on both
+    Windows and macOS. This is a safety net for any value that still arrives
+    URI-encoded (app.project.path returns e.g. /Users/me/My%20Project on Mac):
+    only decode when doing so actually resolves to something on disk, so a
+    literal '%' in a real folder name is left alone.
+    """
+    if not path or '%' not in path:
+        return path
+    try:
+        from urllib.parse import unquote
+        decoded = unquote(path)
+        if decoded != path and os.path.exists(decoded) and not os.path.exists(path):
+            logging.info(f"Decoded URI-encoded project path: {path} -> {decoded}")
+            return decoded
+    except Exception as e:
+        logging.debug(f"Could not normalize project path {path}: {e}")
+    return path
+
+
 def update_current_project_path(path):
     """Record the active project path reported by the Premiere panel."""
     if path:
-        _current_project_path['path'] = path
+        _current_project_path['path'] = normalize_project_path(path)
     # Wake any download waiting on a live query, even on a null/empty answer.
     _project_path_event.set()
 
@@ -318,19 +340,30 @@ def get_default_download_path(socketio=None):
         # Nothing ever writes the auto folder back into settings, so an empty
         # value stays empty and downloads keep following the current project.
         if user_path:
-            os.makedirs(user_path, exist_ok=True)
-            logging.info(f"Using custom download path: {user_path}")
-            return user_path
+            try:
+                os.makedirs(user_path, exist_ok=True)
+                logging.info(f"Using custom download path: {user_path}")
+                return user_path
+            except OSError as e:
+                # Unwritable/unmounted custom folder (external drive, network
+                # share, macOS permission prompt declined) — fall through.
+                logging.warning(f"Custom download path unusable ({user_path}): {e}")
 
         # Auto mode: ask the panel which project is active RIGHT NOW.
         live_project_path = query_live_project_path(socketio, timeout=5)
         if live_project_path:
             download_path = os.path.join(os.path.dirname(live_project_path), download_folder_name)
-            os.makedirs(download_path, exist_ok=True)
-            logging.info(f"Using current project's download path: {download_path}")
-            return download_path
+            try:
+                os.makedirs(download_path, exist_ok=True)
+                logging.info(f"Using current project's download path: {download_path}")
+                return download_path
+            except OSError as e:
+                # Project sitting on a read-only volume, or macOS TCC blocking
+                # writes (Desktop/Documents/removable) — fall back below.
+                logging.warning(f"Cannot create download folder next to project "
+                                f"({download_path}): {e}")
 
-        # No panel answer (no project open / timeout): use fallback paths
+        # No panel answer, or the project folder is not writable: use fallbacks
         # Try to use Documents folder as fallback
         documents_path = os.path.expanduser('~/Documents')
         fallback_path = os.path.join(documents_path, download_folder_name)
