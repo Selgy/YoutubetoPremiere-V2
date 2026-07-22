@@ -1778,20 +1778,33 @@ def _try_direct_ffmpeg_clip(video_info, target_height, clip_start, clip_end,
 
     cmd = [ffmpeg_path, '-y', '-hide_banner', '-loglevel', 'warning']
     # Input 0: video — seek BEFORE -i so FFmpeg sends an HTTP Range request
+    # (only the bytes for the clip are downloaded, not the whole file).
     cmd += ['-headers', hdr, '-ss', ss, '-i', video_url_direct]
-    # -avoid_negative_ts make_zero: input-seek (-ss before -i) with stream copy can
-    # leave the first packets with negative/non-zero timestamps, which causes Premiere
-    # "Error retrieving frame" issues. Rebase timestamps to zero so the clip starts clean.
+
+    # Re-encode the video instead of copying it. With -c:v copy the clip can
+    # only begin on the nearest preceding keyframe, so the video gets a
+    # variable lead-in (0..GOP seconds) that has no audio yet — which plays
+    # back as "the audio is late / out of sync", intermittently, depending on
+    # how far clip_start falls from a keyframe. Re-encoding makes the input
+    # seek frame-accurate: both streams start exactly at clip_start, in sync,
+    # and the first frame is a real keyframe (which also fixes Premiere's
+    # "Error retrieving frame"). Input seek still uses HTTP Range, so we keep
+    # the partial-download speed; encoding a short clip is cheap.
+    # -avoid_negative_ts make_zero keeps the first timestamp at zero.
+    venc = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18',
+            '-pix_fmt', 'yuv420p']
     if audio_fmt:
-        # Input 1: audio — same seek before -i (also strip range= param)
+        # Input 1: audio — same seek before -i (also strip range= param).
+        # Audio has no keyframes, so its input seek is already frame-accurate;
+        # copy it to avoid a needless quality loss.
         cmd += ['-headers', hdr, '-ss', ss, '-i', _strip_range_param(audio_fmt['url'])]
-        cmd += ['-t', dur, '-c:v', 'copy', '-c:a', 'copy',
-                '-map', '0:v:0', '-map', '1:a:0',
+        cmd += ['-t', dur, '-map', '0:v:0', '-map', '1:a:0',
+                *venc, '-c:a', 'copy',
                 '-avoid_negative_ts', 'make_zero',
                 '-movflags', '+faststart', video_file_path]
     else:
-        cmd += ['-t', dur, '-c:v', 'copy',
-                '-map', '0:v:0',
+        cmd += ['-t', dur, '-map', '0:v:0',
+                *venc,
                 '-avoid_negative_ts', 'make_zero',
                 '-movflags', '+faststart', video_file_path]
 
@@ -2400,8 +2413,15 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                 if _aud_actual:
                     # --- Step 3: trim + merge with ffmpeg ---
                     try:
+                        # Re-encode the video trim (NOT copy): input seek with copy
+                        # starts at the nearest keyframe before clip_start, giving a
+                        # lead-in with no audio that later reads as A/V desync once
+                        # merged with the frame-accurate audio trim. Re-encoding makes
+                        # the seek frame-accurate so both clips start at clip_start.
                         _fv = [ffmpeg_path, '-ss', f'{clip_start:.3f}', '-t', f'{_clip_dur:.3f}',
-                               '-i', _vid_actual, '-c:v', 'copy', '-avoid_negative_ts', 'make_zero', '-y', _vid_clip_temp]
+                               '-i', _vid_actual, '-c:v', 'libx264', '-preset', 'veryfast',
+                               '-crf', '18', '-pix_fmt', 'yuv420p',
+                               '-avoid_negative_ts', 'make_zero', '-y', _vid_clip_temp]
                         run_hidden_subprocess(_fv, timeout=120, check=True, capture_output=True,
                                               text=True, encoding='utf-8', errors='replace')
 
