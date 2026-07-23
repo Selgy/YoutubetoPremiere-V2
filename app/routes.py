@@ -33,6 +33,53 @@ def reset_current_download():
         current_download['ydl'] = None
         current_download['cancel_callback'] = None
 
+
+def parse_youtube_time_param(value):
+    """Parse a YouTube t=/start= URL value into seconds.
+
+    Accepts '246', '246s', '4m6s', '1h2m3s'. Returns float or None.
+    """
+    if not value:
+        return None
+    value = str(value).strip()
+    if re.fullmatch(r'\d+(\.\d+)?', value):
+        return float(value)
+    m = re.fullmatch(r'(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?', value)
+    if m and any(m.groups()):
+        h, mnt, s = (int(g) if g else 0 for g in m.groups())
+        return float(h * 3600 + mnt * 60 + s)
+    return None
+
+
+def resolve_clip_anchor_time(current_time, video_url):
+    """Pick the clip anchor: the player's reported time, or the URL timestamp.
+
+    YouTube's watch page can contain several <video> elements, and the
+    extension sometimes reads currentTime=0 from the wrong one. A reported
+    time of ~0 is almost never what the user meant, so when the URL carries
+    a t=/start= parameter we trust that instead. Returns (seconds, source).
+    """
+    try:
+        reported = float(current_time) if current_time is not None else None
+    except (TypeError, ValueError):
+        reported = None
+
+    if reported is not None and reported > 0.5:
+        return reported, 'player'
+
+    try:
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(video_url).query)
+        for key in ('t', 'start'):
+            if key in qs:
+                url_time = parse_youtube_time_param(qs[key][0])
+                if url_time is not None and url_time > 0:
+                    return url_time, f'url ({key}=)'
+    except Exception as e:
+        logging.debug(f"Could not parse URL time parameter: {e}")
+
+    return (reported if reported is not None else 0.0), 'player'
+
 def register_routes(app, socketio, settings, emit_fn=None):
     connected_clients = set()
 
@@ -310,10 +357,11 @@ def register_routes(app, socketio, settings, emit_fn=None):
                     if current_time is not None:
                         # Handle clip request with old format
                         download_type_async = 'clip'
-                        current_time = float(current_time)
+                        current_time, time_source = resolve_clip_anchor_time(current_time, video_url)
+                        logging.info(f"Clip anchor time: {current_time}s (source: {time_source})")
                         seconds_before = float(current_settings.get('secondsBefore', 15))
                         seconds_after = float(current_settings.get('secondsAfter', 15))
-                        
+
                         clip_start = max(0, current_time - seconds_before)
                         clip_end = current_time + seconds_after
                         
@@ -448,12 +496,13 @@ def register_routes(app, socketio, settings, emit_fn=None):
                         # Ensure download_type is set to 'clip'
                         download_type_async = 'clip'
                         logging.info(f"Handling as clip download for time: {current_time}")
-                        
-                        # Convert to float and use settings for before/after times
-                        current_time = float(current_time)
+
+                        # Player time when trustworthy, else the URL's t=/start= param
+                        current_time, time_source = resolve_clip_anchor_time(current_time, video_url)
+                        logging.info(f"Clip anchor time: {current_time}s (source: {time_source})")
                         seconds_before = float(current_settings.get('secondsBefore', 15))
                         seconds_after = float(current_settings.get('secondsAfter', 15))
-                        
+
                         # Calculate clip start and end times
                         clip_start = max(0, current_time - seconds_before)
                         clip_end = current_time + seconds_after

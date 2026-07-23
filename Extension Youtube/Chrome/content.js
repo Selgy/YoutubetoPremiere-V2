@@ -2652,33 +2652,46 @@ function addButtons() {
             }));
             
             buttonsContainer.appendChild(createButton('clip-button', 'Clip', () => {
-                // Try multiple selectors to find the main YouTube video player
-                let videoPlayer = document.querySelector('video.html5-main-video');
-                if (!videoPlayer) {
-                    videoPlayer = document.querySelector('#movie_player video');
+                let currentTime = null;
+
+                // 1) <video> scoped to the main player only. YouTube is a SPA:
+                //    after in-page navigation the page can hold several <video>
+                //    elements (inline previews, shorts) and the old bare
+                //    querySelectorAll('video')[0] fallback could grab one sitting
+                //    at 0 — which sent currentTime=0 and clipped the video start.
+                //    A reported 0 is treated as unreliable (tier 2 then applies).
+                {
+                    const videoPlayer =
+                        document.querySelector('#movie_player video.html5-main-video') ||
+                        document.querySelector('#movie_player video') ||
+                        document.querySelector('video.html5-main-video');
+                    if (videoPlayer && isFinite(videoPlayer.currentTime) && videoPlayer.currentTime > 0) {
+                        currentTime = videoPlayer.currentTime;
+                        console.log('YTP: Current time from video element:', currentTime);
+                    }
                 }
-                if (!videoPlayer) {
-                    videoPlayer = document.querySelector('.html5-video-player video');
+
+                // 2) URL t=/start= parameter (page opened via a timestamped link
+                //    and the player never reported a usable time).
+                if (currentTime === null) {
+                    const p = new URLSearchParams(window.location.search);
+                    const raw = p.get('t') || p.get('start');
+                    if (raw) {
+                        const m = String(raw).match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/);
+                        if (m && (m[1] || m[2] || m[3])) {
+                            currentTime = (parseInt(m[1] || 0) * 3600) +
+                                          (parseInt(m[2] || 0) * 60) +
+                                          parseInt(m[3] || 0);
+                            console.log('YTP: Current time from URL parameter:', currentTime);
+                        }
+                    }
                 }
-                if (!videoPlayer) {
-                    // Fallback to any video element
-                    const videos = document.querySelectorAll('video');
-                    videoPlayer = videos.length > 0 ? videos[0] : null;
+
+                if (currentTime === null) {
+                    currentTime = 0;
+                    console.warn('YTP: Could not determine playback time, defaulting to 0');
                 }
-                
-                console.log('YTP: Video player found:', videoPlayer);
-                console.log('YTP: All video elements:', document.querySelectorAll('video'));
-                
-                if (videoPlayer) {
-                    const currentTime = videoPlayer.currentTime;
-                    console.log('YTP: Current time from video player:', currentTime);
-                    console.log('YTP: Video duration:', videoPlayer.duration);
-                    console.log('YTP: Video paused:', videoPlayer.paused);
-                    console.log('YTP: Video src:', videoPlayer.src || videoPlayer.currentSrc);
-                    sendURL('clip', { currentTime });
-                } else {
-                    console.error('YTP: No video player found with any selector');
-                }
+                sendURL('clip', { currentTime });
             }));
             
             buttonsContainer.appendChild(createButton('audio-button', 'Audio', () => {
