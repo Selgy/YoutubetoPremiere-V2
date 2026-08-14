@@ -1,3 +1,7 @@
+// i18n helper - i18n.js is injected before this file by the manifest.
+// Falls back to the key itself if it somehow failed to load.
+const T = (key, params) => (window.YTPI18n ? window.YTPI18n.t(key, params) : key);
+
 // YouTube to Premiere Pro Extension - Enhanced UI
 // Modern button design with icons and improved animations - Original Colors
 
@@ -77,22 +81,22 @@ function updateButtonsServerStatus() {
     // Update status indicator
     if (statusIndicator) {
         statusIndicator.className = serverAvailable ? 'ytp-status-connected' : 'ytp-status-disconnected';
-        statusIndicator.title = serverAvailable ? 'YoutubetoPremiere connecté' : 'YoutubetoPremiere non détecté';
+        statusIndicator.title = serverAvailable ? T('statusConnected') : T('statusNotDetected');
     }
 }
 
 // Show simple message when server is not available
 function showServerRequiredMessage(buttonType) {
     const features = {
-        premiere: 'importer cette vidéo vers Premiere Pro',
-        clip: 'créer un clip à partir du timestamp actuel',
-        audio: 'extraire l\'audio de cette vidéo'
+        premiere: T('featurePremiere'),
+        clip: T('featureClip'),
+        audio: T('featureAudio')
     };
-    
-    const feature = features[buttonType] || 'utiliser cette fonctionnalité';
-    
+
+    const feature = features[buttonType] || T('featureGeneric');
+
     showNotification(
-        `Pour ${feature}, l'application YoutubetoPremiere doit être installée et démarrée.`,
+        T('serverRequired', { feature: feature }),
         'info',
         4000
     );
@@ -157,7 +161,7 @@ async function checkYouTubeAuth() {
 // Fonction pour guider l'utilisateur vers la connexion si nécessaire
 function promptUserLogin() {
     const notification = showNotification(
-        'Pour télécharger des vidéos avec restrictions d\'âge, veuillez vous connecter à votre compte YouTube dans cet onglet, puis rafraîchir la page.', 
+        T('loginPrompt'), 
         'info', 
         10000
     );
@@ -165,7 +169,7 @@ function promptUserLogin() {
     // Ajouter un bouton pour ouvrir la page de connexion YouTube
     setTimeout(() => {
         const loginButton = document.createElement('button');
-        loginButton.textContent = 'Se connecter à YouTube';
+        loginButton.textContent = T('loginButton');
         loginButton.style.cssText = `
             background: #ff0000;
             color: white;
@@ -1176,7 +1180,7 @@ function initializeSocket() {
                 // Show user-friendly message only if import is active and multiple failures
                 if (isimportActive && reconnectAttempts >= 5) {
                     showNotification(
-                        'Connexion instable pendant le téléchargement. Tentative de reconnexion...', 
+                        T('connectionUnstable'), 
                         'warning', 
                         5000
                     );
@@ -1209,7 +1213,7 @@ function initializeSocket() {
             } else if (reconnectAttempts >= maxAttempts) {
                 console.warn('🔌 [SOCKET] Max reconnection attempts reached. Connection abandoned.');
                 if (isimportActive) {
-                    showNotification('Connexion perdue pendant le téléchargement. Rafraîchissez la page.', 'error', 10000);
+                    showNotification(T('connectionLost'), 'error', 10000);
                 }
             }
         });
@@ -1354,7 +1358,7 @@ function initializeSocket() {
             if (hasActiveimports) {
                 console.log('🚫 [SERVER] Resetting buttons after server cancellation');
             resetAllButtons();
-                showNotification('Téléchargement annulé', 'info', 3000);
+                showNotification(T('downloadCancelled'), 'info', 3000);
             } else {
                 console.log('🚫 [SERVER] Buttons already reset');
             }
@@ -1364,12 +1368,12 @@ function initializeSocket() {
             console.log('❌ [SERVER] import failed:', data);
             if (!validateExtensionContext()) return;
             
-            let errorMessage = data.message || data.error || 'Erreur de téléchargement inconnue';
+            let errorMessage = data.message || data.error || T('errorUnknownDownload');
             
             // Check for compatibility issues that might require an update
             if (errorMessage.includes('version') || errorMessage.includes('incompatible') || 
                 errorMessage.includes('unsupported') || errorMessage.includes('upgrade')) {
-                errorMessage += '\n\n💡 Une mise à jour de l\'extension pourrait résoudre ce problème.\nOuvrez les paramètres de l\'extension pour vérifier.';
+                errorMessage += T('updateHint');
             }
             
             // Check if this is a user cancellation
@@ -1396,7 +1400,7 @@ function initializeSocket() {
                 if (hasActiveimports) {
                     console.log('🚫 [SERVER] Resetting buttons after server cancellation confirmation');
                     resetAllButtons();
-                    showNotification('Téléchargement annulé', 'info', 3000);
+                    showNotification(T('downloadCancelled'), 'info', 3000);
                 } else {
                     console.log('🚫 [SERVER] Buttons already reset, no additional message needed');
                 }
@@ -1408,19 +1412,19 @@ function initializeSocket() {
             
             // Check for specific error types and provide better messages
             if (errorMessage.includes('403') || errorMessage.includes('Forbidden')) {
-                errorMessage = 'Erreur d\'authentification YouTube (403). Veuillez vous reconnecter à YouTube et réessayer.';
+                errorMessage = T('error403');
                 // Show additional help for 403 errors
                 setTimeout(() => {
-                    showNotification('Conseil: Rafraîchissez la page YouTube et assurez-vous d\'être connecté.', 'info', 8000);
+                    showNotification(T('tip403'), 'info', 8000);
                 }, 2000);
             } else if (errorMessage.includes('age') || errorMessage.includes('restriction')) {
-                errorMessage = 'Cette vidéo est soumise à une restriction d\'âge. Veuillez vous connecter à YouTube.';
+                errorMessage = T('errorAgeRestricted');
             } else if (errorMessage.includes('private') || errorMessage.includes('members-only')) {
-                errorMessage = 'Cette vidéo est privée ou réservée aux membres.';
+                errorMessage = T('errorPrivate');
             } else if (errorMessage.includes('geo') || errorMessage.includes('region')) {
-                errorMessage = 'Cette vidéo n\'est pas disponible dans votre région.';
+                errorMessage = T('errorGeo');
             } else if (errorMessage.includes('unavailable') || errorMessage.includes('removed')) {
-                errorMessage = 'Cette vidéo n\'est plus disponible.';
+                errorMessage = T('errorUnavailable');
             }
             
             showNotification(errorMessage, 'error', 10000);
@@ -1431,7 +1435,7 @@ function initializeSocket() {
             console.log('❌ [SERVER] Download failed:', data);
             if (!validateExtensionContext()) return;
             
-            let errorMessage = data.message || data.error || 'Erreur de téléchargement';
+            let errorMessage = data.message || data.error || T('errorDownload');
             
             // Reset all buttons and show error
             resetAllButtons();
@@ -1463,7 +1467,7 @@ function initializeSocket() {
             // Silently handle server errors to prevent console spam
             if (!validateExtensionContext()) return;
             resetAllButtons();
-            showNotification(data.message || 'Erreur de traitement', 'error');
+            showNotification(data.message || T('errorProcessing'), 'error');
         });
             
         // Handle processing status updates (especially useful for clips)
@@ -1617,7 +1621,7 @@ function handleExtensionInvalidation() {
         // Only show notification once, and only if DOM elements are available
         if (document.body && document.getElementById) {
             showNotification(
-                'Extension rechargée. Rafraîchissez la page pour continuer.',
+                T('extensionReloaded'),
                 'info',
                 8000
             );
@@ -1644,7 +1648,7 @@ function attemptReconnection() {
         // Silently handle reconnection errors
         if (reconnectAttempts >= maxReconnectAttempts) {
             showNotification(
-                'Impossible de se reconnecter à YoutubetoPremiere. Veuillez rafraîchir la page.',
+                T('reconnectFailed'),
                 'error',
                 10000
             );
@@ -1854,7 +1858,7 @@ function createButton(id, text, onClick) {
             
             // Immediately show cancellation message and reset button
             console.log('🚫 [CANCEL] Showing immediate cancellation feedback');
-            showNotification('Téléchargement annulé', 'info', 3000);
+            showNotification(T('downloadCancelled'), 'info', 3000);
             resetButtonState(button);
             
             // Try to send cancellation to server (but don't wait for response)
@@ -2001,7 +2005,7 @@ function sendURL(importType, additionalData = {}) {
         // Check if this button type is in cancellation cooldown
         if (buttonStates[buttonType].cancelCooldown) {
             console.log('🚫 [COOLDOWN] import blocked - cancellation cooldown active for:', buttonType);
-            showNotification('Veuillez patienter quelques secondes après l\'annulation avant de relancer.', 'warning', 3000);
+            showNotification(T('cooldown'), 'warning', 3000);
             return;
         }
         
@@ -2012,7 +2016,7 @@ function sendURL(importType, additionalData = {}) {
             const importingName = importingType === 'premiere' ? 'Vidéo' : 
                                    importingType === 'clip' ? 'Clip' : 'Audio';
             console.log('🚫 [BLOCK] import blocked - another import is in progress:', importingType);
-            showNotification(`Un téléchargement ${importingName} est déjà en cours. Veuillez patienter.`, 'warning', 3000);
+            showNotification(T('alreadyDownloading', { type: importingName }), 'warning', 3000);
             return;
         }
         
@@ -2037,7 +2041,7 @@ function sendURL(importType, additionalData = {}) {
                 // Show warning but continue with import
                 console.warn('YTP: Authentication warning - user may not be fully logged in');
                 showNotification(
-                    'Attention: Authentification YouTube incomplète. Le téléchargement peut échouer pour certaines vidéos privées ou avec restrictions d\'âge.',
+                    T('authIncomplete'),
                     'warning',
                     8000
                 );
@@ -2048,7 +2052,7 @@ function sendURL(importType, additionalData = {}) {
         }).catch(error => {
             console.error('YTP: Auth check failed:', error);
             // Proceed anyway but warn user
-            showNotification('Impossible de vérifier l\'authentification. Tentative de téléchargement...', 'warning', 5000);
+            showNotification(T('authCheckFailed'), 'warning', 5000);
             proceedWithServerCheck();
         });
         
@@ -2067,7 +2071,7 @@ function sendURL(importType, additionalData = {}) {
             if (!data.isValid) {
                 button.classList.add('failure');
                 enableAllButtons(); // Re-enable all buttons on license failure
-                showNotification('Clé de licence invalide ou manquante. Veuillez entrer une clé de licence valide dans les paramètres.', 'error');
+                showNotification(T('licenseInvalid'), 'error');
                 setTimeout(() => {
                     button.classList.remove('failure');
                 }, 1000);
@@ -2092,7 +2096,7 @@ function sendURL(importType, additionalData = {}) {
                     button.classList.add('failure');
                     buttonStates[buttonType].isimporting = false;
                     enableAllButtons(); // Re-enable all buttons on timeout
-                    showNotification('Délai d\'attente dépassé pour le téléchargement. Veuillez réessayer.', 'error');
+                    showNotification(T('timeout'), 'error');
                     setTimeout(() => {
                         resetButtonState(button);
                     }, 3000);
@@ -2182,7 +2186,7 @@ function sendURL(importType, additionalData = {}) {
                 .then(({status, data}) => {
                     if (status === 403) {
                         resetButtonState(button);
-                        showNotification('Licence invalide ou expirée. Veuillez vérifier votre clé de licence.', 'error');
+                        showNotification(T('licenseExpired'), 'error');
                         throw new Error('License validation failed');
                     }
                     // Accept both 200 (OK) and 202 (Accepted) status codes
@@ -2205,11 +2209,11 @@ function sendURL(importType, additionalData = {}) {
                         enableAllButtons(); // Re-enable all buttons on import error
                         
                     if (error.message === 'Failed to fetch') {
-                        showNotification('Connexion à YoutubetoPremiere échouée. Assurez-vous qu\'Adobe Premiere Pro est ouvert et que YoutubetoPremiere fonctionne.', 'error');
+                        showNotification(T('connectionFailed'), 'error');
                     } else if (error.message === 'License validation failed') {
                         // Don't show another notification since we already showed one above
                     } else {
-                        showNotification(error.message || 'Échec du traitement de la vidéo', 'error');
+                        showNotification(error.message || T('processingFailed'), 'error');
                     }
                     setTimeout(() => {
                         button.classList.remove('failure');
@@ -2221,7 +2225,7 @@ function sendURL(importType, additionalData = {}) {
                 button.classList.remove('loading');
                 button.classList.add('failure');
                 enableAllButtons(); // Re-enable all buttons on video ID error
-                showNotification('Impossible de détecter l\'ID de la vidéo YouTube.', 'error');
+                showNotification(T('videoIdFailed'), 'error');
                 setTimeout(() => {
                     button.classList.remove('failure');
                     buttonStates[buttonType].isimporting = false;
@@ -2232,7 +2236,7 @@ function sendURL(importType, additionalData = {}) {
             console.error('Server check error:', error);
             button.classList.add('failure');
             enableAllButtons(); // Re-enable all buttons on server error
-            showNotification('Veuillez vous assurer que YoutubetoPremiere fonctionne.', 'error');
+            showNotification(T('ensureRunning'), 'error');
             setTimeout(() => {
                 button.classList.remove('failure');
             }, 1000);
@@ -2246,7 +2250,7 @@ function createToggleButton() {
     const toggleButton = document.createElement('button');
     toggleButton.className = 'ytp-toggle-button';
     toggleButton.id = 'ytp-toggle-visibility';
-    toggleButton.title = buttonsVisible ? 'Masquer les boutons' : 'Afficher les boutons';
+    toggleButton.title = buttonsVisible ? T('toggleHide') : T('toggleShow');
     toggleButton.innerHTML = buttonsVisible ? 'visibility' : 'visibility_off';
     
     if (!buttonsVisible) {
@@ -2294,12 +2298,12 @@ function toggleButtonsVisibility() {
         if (buttonsVisible) {
             toggleButton.classList.remove('buttons-hidden');
             toggleButton.innerHTML = 'visibility';
-            toggleButton.title = 'Masquer les boutons';
+            toggleButton.title = T('toggleHide');
             toggleButton.setAttribute('aria-label', 'Masquer les boutons YouTube to Premiere');
         } else {
             toggleButton.classList.add('buttons-hidden');
             toggleButton.innerHTML = 'visibility_off';
-            toggleButton.title = 'Afficher les boutons';
+            toggleButton.title = T('toggleShow');
             toggleButton.setAttribute('aria-label', 'Afficher les boutons YouTube to Premiere');
         }
     }
@@ -2608,11 +2612,11 @@ function addButtons() {
             }
             
             // Add import buttons to container
-            buttonsContainer.appendChild(createButton('send-to-premiere-button', 'Vidéo', () => {
+            buttonsContainer.appendChild(createButton('send-to-premiere-button', T('btnVideo'), () => {
                 sendURL('full');
             }));
             
-            buttonsContainer.appendChild(createButton('clip-button', 'Clip', () => {
+            buttonsContainer.appendChild(createButton('clip-button', T('btnClip'), () => {
                 let currentTime = null;
 
                 // 1) <video> scoped to the main player only. YouTube is a SPA:
@@ -2655,7 +2659,7 @@ function addButtons() {
                 sendURL('clip', { currentTime });
             }));
             
-            buttonsContainer.appendChild(createButton('audio-button', 'Audio', () => {
+            buttonsContainer.appendChild(createButton('audio-button', T('btnAudio'), () => {
                 sendURL('audio');
             }));
             
@@ -3232,7 +3236,7 @@ async function checkAuthenticationStatus() {
         if (!authStatus.isLoggedIn) {
             // Only show notification on video pages where it's relevant
             if (isVideoPage()) {
-                showNotification('Attention: Veuillez vous connecter à YouTube pour télécharger des vidéos.', 'warning', 10000);
+                showNotification(T('pleaseSignIn'), 'warning', 10000);
             }
         }
         // Success case is silent to reduce console spam
@@ -3300,7 +3304,7 @@ function detectYouTubeResourceErrors() {
                     setTimeout(() => {
                         if (isVideoPage()) {
                             showNotification(
-                                'Erreurs de streaming détectées. Rafraîchir la page pourrait aider.',
+                                T('streamingErrors'),
                                 'warning',
                                 10000
                             );
@@ -3337,7 +3341,7 @@ async function enhancedAuthCheck() {
             // Only show notification if we're on a video page where imports might happen
             if (isVideoPage()) {
                 showNotification(
-                    'Non connecté à YouTube. Les téléchargements peuvent échouer.',
+                    T('notSignedIn'),
                     'warning',
                     8000
                 );
@@ -3354,7 +3358,7 @@ async function enhancedAuthCheck() {
         if (missingCookies.length > 0 && isVideoPage()) {
             // Only show warning on video pages
             showNotification(
-                'Authentification YouTube incomplète. Veuillez vous reconnecter.',
+                T('authIncompleteReconnect'),
                 'warning',
                 6000
             );

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;600&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
-    <title>YouTube to Premiere - Paramètres</title>
+    <title>YouTube to Premiere - Settings</title>
     <style>
         * {
             margin: 0;
@@ -336,7 +336,7 @@
 <body>
     <div class="header">
         <h1>YouTube to Premiere</h1>
-        <p>Paramètres de l'extension</p>
+        <p data-i18n="popupSubtitle">Extension settings</p>
     </div>
 
     <div class="content">
@@ -344,22 +344,22 @@
         <div id="update-notification" class="status" style="display: none; background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); color: #d97706; border: 1px solid #fbbf24; cursor: pointer;">
             <span class="material-symbols-outlined">system_update</span>
             <div style="flex: 1;">
-                <div style="font-weight: 600;">Mise à jour disponible</div>
-                <div style="font-size: 11px; opacity: 0.9;">Nouvelle version de l'extension détectée</div>
+                <div style="font-weight: 600;" data-i18n="updateAvailable">Update available</div>
+                <div style="font-size: 11px; opacity: 0.9;" data-i18n="updateAvailableDesc">A new version of the extension was detected</div>
             </div>
         </div>
 
         <!-- Application Status -->
         <div id="server-status" class="status disconnected">
             <span class="material-symbols-outlined">sync</span>
-            <span>Vérification de l'application...</span>
+            <span data-i18n="checkingApp">Checking application...</span>
         </div>
 
         <!-- Panel Visibility -->
         <div class="setting-group">
             <div class="setting-label">
                 <span class="material-symbols-outlined">visibility</span>
-                Affichage du panneau
+                <span data-i18n="panelVisibility">Panel visibility</span>
             </div>
             <div class="slider-container">
                 <label class="toggle-switch">
@@ -367,14 +367,14 @@
                     <span class="slider"></span>
                 </label>
             </div>
-            <div class="setting-description">Activer/désactiver l'affichage du panneau flottant</div>
+            <div class="setting-description" data-i18n="panelVisibilityDesc">Show or hide the floating panel</div>
         </div>
 
         <!-- Panel Pin Mode -->
         <div class="setting-group">
             <div class="setting-label">
                 <span class="material-symbols-outlined">push_pin</span>
-                Mode épinglage
+                <span data-i18n="pinMode">Pin mode</span>
             </div>
             <div class="slider-container">
                 <label class="toggle-switch">
@@ -382,7 +382,7 @@
                     <span class="slider"></span>
                 </label>
             </div>
-            <div class="setting-description">Épingler le panneau à la page (suit le scroll) ou le laisser flottant (fixe dans la fenêtre)</div>
+            <div class="setting-description" data-i18n="pinModeDesc">Pin the panel to the page (follows scrolling) or leave it floating (fixed in the window)</div>
         </div>
 
         <div class="divider"></div>
@@ -391,11 +391,11 @@
         <div class="setting-group">
             <div class="setting-label">
                 <span class="material-symbols-outlined">photo_size_select_small</span>
-                Taille des boutons
+                <span data-i18n="buttonSize">Button size</span>
             </div>
             <input type="range" id="button-size" class="range-slider" min="0" max="3" value="0" step="1">
             <div class="range-value" id="size-value">Normal</div>
-            <div class="setting-description">Ajuste la taille des boutons selon l'espace disponible</div>
+            <div class="setting-description" data-i18n="buttonSizeDesc">Adjust the button size to the space available</div>
         </div>
 
         <div class="divider"></div>
@@ -404,19 +404,19 @@
         <div class="setting-group">
             <div class="setting-label">
                 <span class="material-symbols-outlined">open_with</span>
-                Position du panneau
+                <span data-i18n="panelPosition">Panel position</span>
             </div>
             <div class="position-controls">
                 <button class="button secondary" id="reset-position">
                     <span class="material-symbols-outlined">home</span>
-                    Réinitialiser
+                    <span data-i18n="resetBtn">Reset</span>
                 </button>
                 <button class="button secondary" id="center-position">
                     <span class="material-symbols-outlined">center_focus_strong</span>
-                    Centrer
+                    <span data-i18n="centerBtn">Center</span>
                 </button>
             </div>
-            <div class="setting-description">Vous pouvez aussi déplacer le panneau en le faisant glisser</div>
+            <div class="setting-description" data-i18n="panelPositionDesc">You can also move the panel by dragging it</div>
         </div>
 
         <div class="divider"></div>
@@ -425,7 +425,7 @@
         <div class="setting-group">
             <div class="setting-label">
                 <span class="material-symbols-outlined">visibility_off</span>
-                Masquage automatique
+                <span data-i18n="autoHide">Auto-hide</span>
             </div>
             <div class="slider-container">
                 <label class="toggle-switch">
@@ -433,7 +433,7 @@
                     <span class="slider"></span>
                 </label>
             </div>
-            <div class="setting-description">Masquer automatiquement en plein écran</div>
+            <div class="setting-description" data-i18n="autoHideDesc">Hide automatically in fullscreen</div>
         </div>
 
         <div class="divider"></div>
@@ -442,13 +442,14 @@
         <div class="setting-group">
             <button class="button secondary" id="reset-all">
                 <span class="material-symbols-outlined">restart_alt</span>
-                Réinitialiser tous les paramètres
+                <span data-i18n="resetAll">Reset all settings</span>
             </button>
         </div>
     </div>
 
 
 
+    <script src="i18n.js"></script>
     <script src="popup.js"></script>
 </body>
 </html> 
