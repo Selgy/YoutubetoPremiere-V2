@@ -13,6 +13,11 @@
             box-sizing: border-box;
         }
 
+        html {
+            width: 350px;
+            overflow-x: hidden;
+        }
+
         body {
             width: 350px;
             min-height: 450px;
@@ -29,6 +34,10 @@
             text-align: center;
             border-bottom: 1px solid rgba(255, 255, 255, 0.2);
             position: relative;
+            /* Clips the ::before shimmer, which animates to left:100% and would
+               otherwise stretch the document to ~700px — the browser then sizes
+               the popup to that, leaving an empty gradient band on the right. */
+            overflow: hidden;
         }
 
         .header::before {
