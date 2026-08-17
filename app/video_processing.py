@@ -155,6 +155,9 @@ def is_retryable_download_error(error):
         'unable to download webpage',
         'fragment',
         'requested format is not available',
+        # yt-dlp's external ffmpeg downloader reports the 403 as an exit code
+        # ("ffmpeg exited with code 3436169992"), which used to be fatal.
+        'ffmpeg exited with code',
     ))
 
 
@@ -1788,13 +1791,32 @@ def _try_direct_ffmpeg_clip(video_info, target_height, clip_start, clip_end,
         logging.warning('[DIRECT-FFmpeg] No audio format found — clip will be silent')
 
     # ---- build FFmpeg command -----------------------------------------------
-    ua = http_headers.get(
-        'User-Agent',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-        'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
-    )
-    # FFmpeg multi-header syntax: separate headers with \r\n
-    hdr = f'User-Agent: {ua}\r\nAccept: */*\r\nAccept-Language: en-US,en;q=0.9'
+    def _ffmpeg_headers(fmt):
+        """Reproduce exactly the headers yt-dlp would send for this format.
+
+        googlevideo URLs are issued for the request that produced them, so
+        fetching one with a different header set is answered with 403. Building
+        a header block by hand used to drop what yt-dlp adds per format —
+        notably X-Forwarded-For, which geo_bypass sets to a generated IP — and
+        every direct-ffmpeg attempt died with
+        "HTTP error 403 Forbidden / Error opening input".
+
+        yt-dlp's native downloader sends these and succeeds on the same URL,
+        so take its headers rather than inventing our own.
+        """
+        headers = dict(http_headers or {})
+        headers.update(fmt.get('http_headers') or {})
+        headers.setdefault(
+            'User-Agent',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36')
+        headers.pop('Range', None)  # ffmpeg manages its own Range for -ss
+        # FFmpeg multi-header syntax: CRLF separated, and it must end with one
+        # ("No trailing CRLF found in HTTP header. Adding it.")
+        return ''.join(f'{k}: {v}\r\n' for k, v in headers.items())
+
+    hdr = _ffmpeg_headers(video_fmt)
+    audio_hdr = _ffmpeg_headers(audio_fmt) if audio_fmt else hdr
 
     ss  = f'{clip_start:.3f}'
     dur = f'{clip_duration:.3f}'
@@ -1820,7 +1842,7 @@ def _try_direct_ffmpeg_clip(video_info, target_height, clip_start, clip_end,
         # Input 1: audio — same seek before -i (also strip range= param).
         # Audio has no keyframes, so its input seek is already frame-accurate;
         # copy it to avoid a needless quality loss.
-        cmd += ['-headers', hdr, '-ss', ss, '-i', _strip_range_param(audio_fmt['url'])]
+        cmd += ['-headers', audio_hdr, '-ss', ss, '-i', _strip_range_param(audio_fmt['url'])]
         cmd += ['-t', dur, '-map', '0:v:0', '-map', '1:a:0',
                 *venc, '-c:a', 'copy',
                 '-avoid_negative_ts', 'make_zero',

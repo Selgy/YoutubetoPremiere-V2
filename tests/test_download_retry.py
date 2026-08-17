@@ -110,3 +110,37 @@ class TestVideoPathRetriesOn403:
         assert "'cancelled' not in str(e).lower()" in src, (
             "a user cancellation must not trigger the retry ladder"
         )
+
+
+class TestDirectFfmpegHeaders:
+    """Strategy 1 hands a URL to ffmpeg itself, so it must send the same
+    headers yt-dlp would: googlevideo answers 403 when the request that
+    fetches a URL does not match the one it was issued for. Building the
+    block by hand dropped what yt-dlp adds per format (X-Forwarded-For from
+    geo_bypass, Sec-Fetch-Mode, Accept-Encoding).
+    """
+
+    def test_uses_the_formats_own_headers(self):
+        src = inspect.getsource(video_processing._try_direct_ffmpeg_clip)
+        assert "fmt.get('http_headers')" in src, (
+            "must reuse yt-dlp's per-format headers, not a hand-built set"
+        )
+
+    def test_no_hardcoded_single_ua_block(self):
+        src = inspect.getsource(video_processing._try_direct_ffmpeg_clip)
+        assert r"hdr = f'User-Agent: {ua}\r\nAccept: */*" not in src
+
+    def test_audio_input_gets_its_own_headers(self):
+        src = inspect.getsource(video_processing._try_direct_ffmpeg_clip)
+        assert "'-headers', audio_hdr" in src, (
+            "the audio input is a different format and needs its own headers"
+        )
+
+    def test_header_block_ends_with_crlf(self):
+        """ffmpeg warns "No trailing CRLF found in HTTP header. Adding it."."""
+        src = inspect.getsource(video_processing._try_direct_ffmpeg_clip)
+        assert r"\r\n' for k, v in headers.items()" in src
+
+    def test_ffmpeg_exit_code_is_retryable(self):
+        assert is_retryable_download_error(
+            'ERROR: ffmpeg exited with code 3436169992') is True
