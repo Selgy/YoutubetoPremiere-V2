@@ -3,6 +3,11 @@ Flask-SocketIO==5.3.6
 Flask-CORS==4.0.0
 requests>=2.32.2,<3
 yt-dlp==2026.7.4
+# JS challenge solver scripts, run through Deno. yt-dlp 2026.7.4 requires 0.8.0
+# and disables the solver on an older one ("Challenge solver lib script version
+# 0.3.2 is not supported"), which makes YouTube answer downloads with 403.
+# It is not a hard dependency of yt-dlp, so pip kept a stale 0.3.2 around.
+yt-dlp-ejs>=0.8.0
 python-socketio==5.8.0
 python-engineio==4.7.1
 psutil==5.9.8

@@ -135,6 +135,29 @@ def set_emit_function(emit_function):
     global _emit_to_client_type
     _emit_to_client_type = emit_function
 
+def is_retryable_download_error(error):
+    """True when a download failure is worth retrying with another player client.
+
+    YouTube commonly answers a perfectly valid stream URL with 403 Forbidden:
+    the URLs are tied to the client that requested them, and which clients are
+    served changes over time and per video. Retrying with a different
+    player_client usually succeeds, so these must not be treated as fatal.
+
+    The fallback chains already existed but were gated on 'empty file' (audio)
+    or cookie-format errors (video) only, so a 403 failed instantly with no
+    retry at all.
+    """
+    message = str(error).lower()
+    return any(marker in message for marker in (
+        '403', 'forbidden',
+        'empty', 'downloaded file is empty',
+        'unable to download video data',
+        'unable to download webpage',
+        'fragment',
+        'requested format is not available',
+    ))
+
+
 def get_subprocess_creation_flags():
     """Get Windows-specific creation flags to hide console windows"""
     if sys.platform == 'win32':
@@ -3550,6 +3573,51 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         logging.error(f"Exception type: {type(e)}")
         logging.error(f"Exception traceback: {traceback.format_exc()}")
         
+        # YouTube frequently answers a valid stream URL with 403 Forbidden
+        # depending on which player client produced it. Retry with other
+        # clients before giving up — this path previously only retried on
+        # cookie-format errors, so a 403 failed instantly.
+        if is_retryable_download_error(e) and 'cancelled' not in str(e).lower():
+            logging.warning(f"[VIDEO] Download failed ({str(e)[:80]}), trying fallback clients...")
+            for label, clients in (
+                ('yt-dlp default selection', None),
+                ('android_vr', ['android_vr']),
+                ('web_safari', ['web_safari']),
+            ):
+                if is_cancelled[0]:
+                    break
+                try:
+                    retry_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
+                    retry_opts.pop('cookiefile', None)
+                    if clients:
+                        retry_opts['extractor_args'] = {'youtube': {'player_client': clients}}
+                    else:
+                        retry_opts.pop('extractor_args', None)
+                    retry_opts.update({
+                        'format': format_string,
+                        'merge_output_format': 'mp4',
+                        'progress_hooks': [progress_hook],
+                        'outtmpl': {
+                            'default': os.path.join(download_path, os.path.splitext(unique_filename)[0] + '.%(ext)s')
+                        },
+                    })
+                    logging.info(f"[VIDEO] Retry with {label}...")
+                    with yt_dlp.YoutubeDL(retry_opts) as ydl_retry:
+                        current_download['ydl'] = ydl_retry
+                        # Re-extract so the URLs come from this client/session
+                        ydl_retry.download([video_url])
+
+                    base = os.path.splitext(os.path.join(download_path, unique_filename))[0]
+                    for ext in ('mp4', 'mkv', 'webm'):
+                        candidate = f"{base}.{ext}"
+                        if os.path.exists(candidate) and os.path.getsize(candidate) > 0:
+                            logging.info(f"[VIDEO] Retry SUCCESS with {label}: {candidate}")
+                            return candidate
+                    logging.warning(f"[VIDEO] Retry with {label} produced no file")
+                except Exception as retry_error:
+                    logging.warning(f"[VIDEO] Retry with {label} failed: {str(retry_error)[:100]}")
+            logging.error("[VIDEO] All fallback clients failed. YouTube may be blocking this request.")
+
         # Check for cookie-related errors and retry without cookies
         if "invalid Netscape format cookies file" in str(e) or "CookieLoadError" in str(e) or "failed to load cookies" in str(e):
             logging.warning("Cookie format error detected. Attempting download without cookies...")
@@ -3917,9 +3985,11 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                     except Exception as download_error:
                         error_str = str(download_error)
                         
-                        # Retry with different format if we get "empty file" error (HLS issue)
-                        if 'empty' in error_str.lower() or 'downloaded file is empty' in error_str.lower():
-                            logging.warning(f"[AUDIO] First download attempt failed with empty file, trying fallback methods...")
+                        # Retry on anything YouTube might serve differently to
+                        # another client: empty file (HLS quirk) and, crucially,
+                        # 403 Forbidden, which used to fail instantly here.
+                        if is_retryable_download_error(download_error):
+                            logging.warning(f"[AUDIO] First attempt failed ({error_str[:80]}), trying fallback clients...")
                             
                             # Clean up any partial files
                             temp_pattern_cleanup = os.path.join(download_path, f"temp_{sanitized_title}*")
@@ -3958,15 +4028,17 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                                     except OSError:
                                         pass
                             
-                            # FALLBACK 2: Try with web client explicitly
+                            # FALLBACK 2: different player client. 'web' alone
+                            # tends to expose no usable audio format, whereas
+                            # web_safari serves a downloadable one.
                             if not fallback_success:
-                                logging.info("[AUDIO] Fallback 2: Trying with web client...")
+                                logging.info("[AUDIO] Fallback 2: Trying with web_safari client...")
                                 try:
                                     fallback_opts_web = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
                                     if 'cookiefile' in fallback_opts_web:
                                         del fallback_opts_web['cookiefile']
                                     fallback_opts_web['format'] = 'bestaudio/best'
-                                    fallback_opts_web['extractor_args'] = {'youtube': {'player_client': ['web']}}
+                                    fallback_opts_web['extractor_args'] = {'youtube': {'player_client': ['web_safari']}}
                                     fallback_opts_web['outtmpl'] = os.path.join(download_path, f'temp_{sanitized_title}')
                                     fallback_opts_web['postprocessors'] = ydl_opts.get('postprocessors', [])
                                     fallback_opts_web['progress_hooks'] = [progress_hook]
@@ -3986,16 +4058,18 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                                         except OSError:
                                             pass
                             
-                            # FALLBACK 3: Try with iOS player client (m3u8 formats)
+                            # FALLBACK 3: let yt-dlp pick the client itself.
+                            # Forcing 'ios' alone exposes no usable audio
+                            # format; yt-dlp's own default ordering tracks
+                            # whatever YouTube currently serves.
                             if not fallback_success:
-                                logging.info("[AUDIO] Fallback 3: Trying with iOS player client...")
+                                logging.info("[AUDIO] Fallback 3: Trying with yt-dlp default client selection...")
                                 try:
                                     fallback_opts_ios = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
                                     if 'cookiefile' in fallback_opts_ios:
                                         del fallback_opts_ios['cookiefile']
-                                    # iOS client with m3u8 formats
-                                    fallback_opts_ios['format'] = 'bestaudio[protocol=m3u8_native]/bestaudio/best'
-                                    fallback_opts_ios['extractor_args'] = {'youtube': {'player_client': ['ios']}}
+                                    fallback_opts_ios['format'] = 'bestaudio/best'
+                                    fallback_opts_ios.pop('extractor_args', None)
                                     fallback_opts_ios['outtmpl'] = os.path.join(download_path, f'temp_{sanitized_title}')
                                     fallback_opts_ios['postprocessors'] = ydl_opts.get('postprocessors', [])
                                     fallback_opts_ios['progress_hooks'] = [progress_hook]
@@ -4005,7 +4079,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                                         if fresh_info:
                                             ydl_ios.process_ie_result(fresh_info, download=True)
                                             fallback_success = True
-                                            logging.info("[AUDIO] Fallback 3 SUCCESS: Downloaded with iOS client")
+                                            logging.info("[AUDIO] Fallback 3 SUCCESS: Downloaded with default client selection")
                                 except Exception as e3:
                                     logging.warning(f"[AUDIO] Fallback 3 failed: {str(e3)[:100]}")
                             
@@ -4014,7 +4088,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                                 logging.error("[AUDIO] All fallback methods failed. YouTube may be blocking this request.")
                                 raise download_error
                         else:
-                            raise download_error  # Re-raise non-empty-file errors
+                            raise download_error  # Not retryable - surface it
                     
                     # IMPORTANT: Wait for post-processing to complete
                     # yt-dlp's process_ie_result is synchronous and should wait,
