@@ -17,6 +17,79 @@ _settings_cache_time = 0
 # FFmpeg path cache — resolved once per process lifetime (never changes at runtime)
 _ffmpeg_path_cache = None
 
+def rotate_log_files(paths):
+    """Move each existing log aside to <path>.1 so it survives a restart.
+
+    The app used to blank its logs on startup, which meant a crash erased the
+    very lines explaining it before anyone could read them.
+    """
+    for path in paths:
+        try:
+            if os.path.exists(path) and os.path.getsize(path) > 0:
+                previous = path + '.1'
+                if os.path.exists(previous):
+                    os.remove(previous)
+                os.replace(path, previous)
+        except Exception as e:
+            # Never let log housekeeping stop the app from starting
+            print(f"Warning: could not rotate {os.path.basename(path)}: {e}")
+
+
+class SharedFileHandler(logging.FileHandler):
+    """File handler that does not hold the log file open.
+
+    A normal FileHandler keeps a write handle for the whole session. On Windows
+    that makes the file unreadable for any tool opening it with the default
+    share mode (Notepad, most editors, dragging it into a bug report), which is
+    why the logs looked empty or stale while the app was running. Opening in
+    append mode per record and closing straight after keeps the file readable
+    at all times, and leaves nothing buffered if the process dies.
+
+    Volume is a few hundred records per session, so the extra open/close is not
+    worth optimising away.
+    """
+
+    def __init__(self, filename, encoding=None, max_bytes=5 * 1024 * 1024):
+        # delay=True: do not open the file until something is actually logged
+        super().__init__(filename, mode='a', encoding=encoding, delay=True)
+        self.max_bytes = max_bytes
+
+    def emit(self, record):
+        try:
+            self._truncate_if_oversized()
+            super().emit(record)
+        except Exception:
+            # A log write must never take the app down. FileHandler.emit lets
+            # errors from opening the file (deleted directory, revoked
+            # permissions, full disk) escape, so catch them here and use the
+            # logging module's own error path.
+            self.handleError(record)
+        finally:
+            # Release the handle so external readers are never locked out
+            if self.stream:
+                try:
+                    self.stream.close()
+                except Exception:
+                    pass
+                finally:
+                    self.stream = None
+
+    def _truncate_if_oversized(self):
+        """Guard against a runaway log filling the disk."""
+        try:
+            if self.max_bytes and os.path.exists(self.baseFilename):
+                if os.path.getsize(self.baseFilename) > self.max_bytes:
+                    if self.stream:
+                        self.stream.close()
+                        self.stream = None
+                    stamp = time.strftime('%Y-%m-%d %H:%M:%S')
+                    with open(self.baseFilename, 'w', encoding=self.encoding) as f:
+                        f.write(f"[log truncated at {stamp} - exceeded "
+                                f"{self.max_bytes // (1024 * 1024)} MB]\n")
+        except Exception:
+            pass
+
+
 # --- Live "active project" tracking ---------------------------------------
 # The Premiere panel reports its CURRENTLY active project path via the
 # 'project_path_response' socket event. routes.py feeds every such response
