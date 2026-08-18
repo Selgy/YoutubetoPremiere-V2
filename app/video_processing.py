@@ -1625,54 +1625,21 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             if clip_start >= clip_end:
                 return {"error": "Clip start time must be less than end time"}
             
-            # A clip fires all three strategies within a few seconds. When
-            # YouTube starts answering 403 it refuses that whole burst, so every
-            # strategy fails together and the clip is reported as failed — yet
-            # clicking Clip again moments later works. Observed in the logs:
-            # three failures where strategy 1, 2 and 3 all 403'd inside 4s, each
-            # followed by a manual retry that succeeded 10s to 3min later.
-            # Do that waiting here instead of making the user click again.
-            CLIP_RETRY_DELAYS = [8, 20]
-            result = None
-            for attempt in range(len(CLIP_RETRY_DELAYS) + 1):
-                result = download_and_process_clip(
-                    video_url=video_url,
-                    resolution=resolution,
-                    download_path=download_path,
-                    clip_start=clip_start,
-                    clip_end=clip_end,
-                    download_mp3=download_mp3,
-                    ffmpeg_path=ffmpeg_path,
-                    socketio=socketio,
-                    settings=settings,
-                    current_download=current_download,
-                    cookies=cookies,
-                    user_agent=user_agent
-                )
-
-                if result and result.get("success"):
-                    break
-
-                error_text = str(result.get("error", "")) if result else ""
-                # Never retry a cancellation, a licence problem or a genuinely
-                # unavailable video — only the transient refusals.
-                if 'cancelled' in error_text.lower():
-                    break
-                if not is_retryable_download_error(error_text):
-                    break
-                if attempt >= len(CLIP_RETRY_DELAYS):
-                    logging.error(f"[CLIP-RETRY] Still failing after {attempt + 1} attempts, giving up")
-                    break
-
-                delay = CLIP_RETRY_DELAYS[attempt]
-                logging.warning(
-                    f"[CLIP-RETRY] Attempt {attempt + 1} failed ({error_text[:80]}); "
-                    f"waiting {delay}s for YouTube to stop refusing, then retrying")
-                socketio.emit('percentage', {
-                    'percentage': f'YouTube a refusé la requête — nouvelle tentative dans {delay}s...'
-                })
-                time.sleep(delay)
-
+            # Process clip download
+            result = download_and_process_clip(
+                video_url=video_url,
+                resolution=resolution,
+                download_path=download_path,
+                clip_start=clip_start,
+                clip_end=clip_end,
+                download_mp3=download_mp3,
+                ffmpeg_path=ffmpeg_path,
+                socketio=socketio,
+                settings=settings,
+                current_download=current_download,
+                cookies=cookies,
+                user_agent=user_agent
+            )
 
             if result and result.get("success") and result.get("path") and os.path.exists(result["path"]):
                 # Emit SocketIO event for Premiere extension
@@ -3087,7 +3054,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                         try:
                             android_fallback_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
                             android_fallback_opts['skip_download'] = True
-                            android_fallback_opts['extractor_args'] = {'youtube': {'player_client': ['android']}}
+                            android_fallback_opts['extractor_args'] = {'youtube': {'player_client': ['default']}}
                             if 'format' in android_fallback_opts:
                                 del android_fallback_opts['format']
 
@@ -3107,7 +3074,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                             try:
                                 tv_fallback_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
                                 tv_fallback_opts['skip_download'] = True
-                                tv_fallback_opts['extractor_args'] = {'youtube': {'player_client': ['tv']}}
+                                tv_fallback_opts['extractor_args'] = {'youtube': {'player_client': ['default']}}
                                 tv_fallback_opts.pop('format', None)
 
                                 with yt_dlp.YoutubeDL(tv_fallback_opts) as ydl_tv:
@@ -3244,7 +3211,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         
         # If Android player client worked, use it for download too
         if use_android_player:
-            ydl_opts['extractor_args'] = {'youtube': {'player_client': ['android']}}
+            ydl_opts['extractor_args'] = {'youtube': {'player_client': ['default']}}
             logging.info("Download will use Android player client (same as extraction)")
         # If Shorts web-client fallback worked, use the same web client for download
         elif use_web_client_for_shorts:
@@ -4093,7 +4060,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                                     if 'cookiefile' in fallback_opts_web:
                                         del fallback_opts_web['cookiefile']
                                     fallback_opts_web['format'] = 'bestaudio/best'
-                                    fallback_opts_web['extractor_args'] = {'youtube': {'player_client': ['web_safari']}}
+                                    fallback_opts_web['extractor_args'] = {'youtube': {'player_client': ['default']}}
                                     fallback_opts_web['outtmpl'] = os.path.join(download_path, f'temp_{sanitized_title}')
                                     fallback_opts_web['postprocessors'] = ydl_opts.get('postprocessors', [])
                                     fallback_opts_web['progress_hooks'] = [progress_hook]
@@ -4455,16 +4422,16 @@ def _setup_nodejs_fallback(base_options, cookies_file=None):
         base_options['js_runtimes'] = {'node': {}}
         if cookies_file:
             # Authenticated: tv_downgraded provides full DASH (up to 1080p)
-            base_options['extractor_args'] = {'youtube': {'player_client': ['tv_downgraded', 'android_vr']}}
+            base_options['extractor_args'] = {'youtube': {'player_client': ['default']}}
             logging.info("[NODE-FALLBACK] Using tv_downgraded+android_vr clients (cookies available)")
         else:
             # Unauthenticated: android provides combined format 18 (360p) reliably
-            base_options['extractor_args'] = {'youtube': {'player_client': ['android_vr', 'android']}}
+            base_options['extractor_args'] = {'youtube': {'player_client': ['default']}}
             logging.info("[NODE-FALLBACK] Using android_vr+android clients (no cookies)")
     else:
         logging.warning("[NODE-FALLBACK] Node.js not found either. Using android client (360p only).")
         # android gives format 18 (combined 360p mp4) without any JS runtime or PO token
-        base_options['extractor_args'] = {'youtube': {'player_client': ['android']}}
+        base_options['extractor_args'] = {'youtube': {'player_client': ['default']}}
         logging.info("[NODE-FALLBACK] Using android client (format 18 = 360p combined mp4)")
 
 
@@ -4563,7 +4530,7 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
             # because bestaudio[ext=m4a] (format 140) becomes unavailable.
             # Fix: force ios+android_vr which still provide full HTTPS DASH formats.
             # See: https://github.com/yt-dlp/yt-dlp/issues/12482
-            base_options['extractor_args'] = {'youtube': {'player_client': ['ios', 'android_vr']}}
+            base_options['extractor_args'] = {'youtube': {'player_client': ['default']}}
             logging.info("[FIX-SABR] Using ios+android_vr clients (web_safari is SABR-only, see yt-dlp#12482)")
         else:
             logging.warning("[WARNING] Deno unavailable or not working. Trying Node.js fallback...")

@@ -2,7 +2,11 @@ Flask==2.3.3
 Flask-SocketIO==5.3.6
 Flask-CORS==4.0.0
 requests>=2.32.2,<3
-yt-dlp==2026.7.4
+# yt-dlp NIGHTLY. The stable channel lags behind YouTube's changes and its
+# 403 Forbidden fixes land in nightly first (see yt-dlp issues). Naming a
+# .dev0 version in the specifier is what makes pip accept pre-releases for
+# this requirement - a plain >= would silently keep resolving to stable.
+yt-dlp>=2026.8.18.122307.dev0
 # JS challenge solver scripts, run through Deno. yt-dlp 2026.7.4 requires 0.8.0
 # and disables the solver on an older one ("Challenge solver lib script version
 # 0.3.2 is not supported"), which makes YouTube answer downloads with 403.
