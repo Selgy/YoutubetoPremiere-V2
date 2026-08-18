@@ -408,11 +408,23 @@ def get_default_download_path(socketio=None):
         user_path = (load_settings().get('downloadPath', '') or '').strip()
 
         # Two modes, exactly as the panel advertises:
-        #   settings['downloadPath'] non-empty -> the user picked that folder, use it
+        #   settings['downloadPath'] non-empty -> the user picked that folder
         #   settings['downloadPath'] empty     -> follow the ACTIVE project
-        # Nothing ever writes the auto folder back into settings, so an empty
-        # value stays empty and downloads keep following the current project.
-        if user_path:
+        #
+        # A stored path ending in our own auto folder name was never a user
+        # choice: it is the folder we generate next to a project. Older builds
+        # persisted it, and the panel re-sends the whole settings object on any
+        # change, so it comes back even after the one-shot migration cleared it
+        # — leaving downloads pinned to a project the user closed long ago
+        # (observed: active project Parapactum, files landing in
+        # H:\RobloxFortnite\8_SAVE\YoutubeToPremiere_download).
+        # Deciding this at resolution time is self-healing: whatever writes the
+        # setting, an auto folder never wins over the active project.
+        looks_auto = user_path.replace('\\', '/').rstrip('/').endswith(download_folder_name)
+        if looks_auto:
+            logging.info(f"Ignoring stored auto folder ({user_path}); following the active project instead")
+
+        if user_path and not looks_auto:
             try:
                 os.makedirs(user_path, exist_ok=True)
                 logging.info(f"Using custom download path: {user_path}")

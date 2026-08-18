@@ -242,3 +242,69 @@ class TestCallersDoNotBypassResolution:
             "routes.py persists the auto folder into settings, which stops the "
             "setting from ever being empty and freezes downloads onto one project"
         )
+
+
+class TestStaleAutoPathIsIgnoredAtResolution:
+    r"""A stored auto folder must never beat the active project.
+
+    Real case: settings held
+        H:\RobloxFortnite\8_SAVE\YoutubeToPremiere_download
+    with autoDownloadPathCleared already true, while the open project was
+    E:\MONTAGE\...\Parapactum. The clip landed in the RobloxFortnite folder.
+
+    The one-shot migration could not save this: an older build re-persisted the
+    auto folder afterwards, and the panel re-sends the whole settings object on
+    any change. Deciding at resolution time is what makes it self-healing.
+    """
+
+    def test_stale_auto_path_loses_to_active_project(self, monkeypatch, project_dirs):
+        old, new = project_dirs
+        monkeypatch.setattr(utils, 'load_settings',
+                            lambda: {'downloadPath': _auto_path(old),
+                                     'autoDownloadPathCleared': True})
+        monkeypatch.setattr(utils, 'query_live_project_path',
+                            lambda socketio, timeout=5: str(new / 'cur.prproj'))
+
+        result = utils.get_default_download_path(socketio=object())
+
+        assert result == _auto_path(new)
+        assert 'ProjectOld' not in result
+
+    def test_survives_being_re_persisted_by_an_old_build(self, monkeypatch, project_dirs):
+        """Even re-written every time, it must never pin the download."""
+        old, new = project_dirs
+        monkeypatch.setattr(utils, 'query_live_project_path',
+                            lambda socketio, timeout=5: str(new / 'cur.prproj'))
+        for _ in range(3):
+            monkeypatch.setattr(utils, 'load_settings',
+                                lambda: {'downloadPath': _auto_path(old)})
+            assert utils.get_default_download_path(socketio=object()) == _auto_path(new)
+
+    def test_trailing_separator_still_detected(self, monkeypatch, project_dirs):
+        old, new = project_dirs
+        monkeypatch.setattr(utils, 'load_settings',
+                            lambda: {'downloadPath': _auto_path(old) + '\\'})
+        monkeypatch.setattr(utils, 'query_live_project_path',
+                            lambda socketio, timeout=5: str(new / 'cur.prproj'))
+        assert utils.get_default_download_path(socketio=object()) == _auto_path(new)
+
+    def test_a_real_custom_folder_is_still_honoured(self, monkeypatch, tmp_path, project_dirs):
+        _, new = project_dirs
+        custom = tmp_path / 'Mes Telechargements'
+        custom.mkdir()
+        monkeypatch.setattr(utils, 'load_settings',
+                            lambda: {'downloadPath': str(custom)})
+        monkeypatch.setattr(utils, 'query_live_project_path',
+                            lambda socketio, timeout=5: str(new / 'cur.prproj'))
+        assert utils.get_default_download_path(socketio=object()) == str(custom)
+
+
+def test_routes_does_not_report_a_stale_auto_path_to_the_panel():
+    """The panel displays what routes reports, then saves it back."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(root, 'app', 'routes.py'), encoding='utf-8').read()
+    assert 'looks_auto' in src, (
+        "routes still hands the panel a stored auto folder, which the panel "
+        "then re-persists as if it were a user choice"
+    )
+    assert 'if user_path and not looks_auto:' in src

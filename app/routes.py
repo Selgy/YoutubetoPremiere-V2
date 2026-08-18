@@ -845,7 +845,12 @@ def register_routes(app, socketio, settings, emit_fn=None):
                     # project happened to be open. The folder is resolved per download
                     # by get_default_download_path() instead.
                     user_path = (load_settings().get('downloadPath', '') or '').strip()
-                    if user_path:
+                    # A stored path ending in our own auto folder name is not a
+                    # user choice, it is one we generated next to some project.
+                    # Reporting it here made the panel display, and then re-save,
+                    # a folder belonging to a project that is no longer open.
+                    looks_auto = user_path.replace('\\', '/').rstrip('/').endswith('YoutubeToPremiere_download')
+                    if user_path and not looks_auto:
                         logging.info(f"Custom download path set ({user_path}) — keeping it")
                         effective_path = user_path
                     else:
