@@ -1714,8 +1714,47 @@ def sanitize_resolution(resolution):
         # Default to 1080 if conversion fails
         return 1080
 
+def _pick_audio_format(candidates, preferred_language):
+    """Choose the audio track, honouring the user's language preference.
+
+    YouTube ships every dub as a separate audio format at practically the same
+    bitrate (48.788 vs 48.789 kbps on a real video), so sorting on bitrate alone
+    picks an essentially random language - which is how a clip came out in
+    German. yt-dlp marks the real track with language_preference 10 ("original
+    (default)"); dubs carry -1.
+    """
+    if not candidates:
+        return None
+
+    def is_original(f):
+        return (f.get('language_preference') or -1) >= 10
+
+    def base_lang(f):
+        return str(f.get('language') or '').lower().split('-')[0]
+
+    pool = candidates
+    wanted = (preferred_language or 'original').lower()
+
+    if wanted and wanted != 'original':
+        matches = [f for f in pool if base_lang(f) == wanted]
+        if matches:
+            pool = matches
+        else:
+            # Requested language absent: fall back to the original track rather
+            # than to whichever dub happens to sort first.
+            logging.info(f"[AUDIO-LANG] No '{wanted}' track; falling back to the original")
+            pool = [f for f in pool if is_original(f)] or pool
+    else:
+        originals = [f for f in pool if is_original(f)]
+        if originals:
+            pool = originals
+
+    return max(pool, key=lambda f: f.get('abr') or f.get('tbr') or 0)
+
+
 def _try_direct_ffmpeg_clip(video_info, target_height, clip_start, clip_end,
-                            video_file_path, ffmpeg_path, http_headers, is_cancelled):
+                            video_file_path, ffmpeg_path, http_headers, is_cancelled,
+                            preferred_language='original'):
     """
     Fast clip extraction using FFmpeg's HTTP input-seek.
 
@@ -1788,19 +1827,12 @@ def _try_direct_ffmpeg_clip(video_info, target_height, clip_start, clip_end,
                   and _has_direct_url(f)]
 
     m4a = [f for f in audio_only if f.get('ext') == 'm4a']
-    m4a.sort(key=lambda f: f.get('abr', 0) or f.get('tbr', 0) or 0, reverse=True)
-
-    if m4a:
-        audio_fmt = m4a[0]
-    elif audio_only:
-        audio_only.sort(key=lambda f: f.get('abr', 0) or f.get('tbr', 0) or 0, reverse=True)
-        audio_fmt = audio_only[0]
-    else:
-        audio_fmt = None
+    audio_fmt = _pick_audio_format(m4a or audio_only, preferred_language)
 
     if audio_fmt:
         logging.info(f"[DIRECT-FFmpeg] Audio  : fmt={audio_fmt.get('format_id')} "
-                     f"{audio_fmt.get('ext')} proto={audio_fmt.get('protocol')}")
+                     f"{audio_fmt.get('ext')} lang={audio_fmt.get('language')} "
+                     f"(pref={preferred_language}) proto={audio_fmt.get('protocol')}")
     else:
         logging.warning('[DIRECT-FFmpeg] No audio format found — clip will be silent')
 
@@ -2292,6 +2324,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                     ffmpeg_path=ffmpeg_path,
                     http_headers=ydl_opts.get('http_headers', {}),
                     is_cancelled=is_cancelled,
+                    preferred_language=settings.get('preferredAudioLanguage', 'original'),
                 )
             except Exception as _de:
                 logging.warning(f'[DIRECT-FFmpeg] Unexpected error: {_de} — trying next strategy')
@@ -2448,8 +2481,20 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             if _vid_actual:
                 # --- Step 2: audio-only download (small, no early stop needed) ---
                 _aud_opts = dict(ydl_opts)
+                # yt-dlp's own sorting already prefers the original track
+                # (language_preference 10), so 'original' needs no filter. A
+                # specific language does: without one, requesting French on a
+                # dubbed video silently returns the original instead.
+                _aud_pref = (settings or {}).get('preferredAudioLanguage', 'original')
+                if _aud_pref and _aud_pref != 'original':
+                    _aud_format = (f'bestaudio[ext=m4a][language^={_aud_pref}]'
+                                   f'/bestaudio[language^={_aud_pref}]'
+                                   f'/140/bestaudio[ext=m4a]/bestaudio')
+                    logging.info(f"[CLIP-PARTIAL] Audio language requested: {_aud_pref}")
+                else:
+                    _aud_format = '140/bestaudio[ext=m4a]/bestaudio'
                 _aud_opts.update({
-                    'format': '140/bestaudio[ext=m4a]/bestaudio',
+                    'format': _aud_format,
                     'outtmpl': _aud_temp,
                     'no_part': True,
                     'progress_hooks': [progress_hook],
