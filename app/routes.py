@@ -33,6 +33,53 @@ def reset_current_download():
         current_download['ydl'] = None
         current_download['cancel_callback'] = None
 
+
+def parse_youtube_time_param(value):
+    """Parse a YouTube t=/start= URL value into seconds.
+
+    Accepts '246', '246s', '4m6s', '1h2m3s'. Returns float or None.
+    """
+    if not value:
+        return None
+    value = str(value).strip()
+    if re.fullmatch(r'\d+(\.\d+)?', value):
+        return float(value)
+    m = re.fullmatch(r'(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?', value)
+    if m and any(m.groups()):
+        h, mnt, s = (int(g) if g else 0 for g in m.groups())
+        return float(h * 3600 + mnt * 60 + s)
+    return None
+
+
+def resolve_clip_anchor_time(current_time, video_url):
+    """Pick the clip anchor: the player's reported time, or the URL timestamp.
+
+    YouTube's watch page can contain several <video> elements, and the
+    extension sometimes reads currentTime=0 from the wrong one. A reported
+    time of ~0 is almost never what the user meant, so when the URL carries
+    a t=/start= parameter we trust that instead. Returns (seconds, source).
+    """
+    try:
+        reported = float(current_time) if current_time is not None else None
+    except (TypeError, ValueError):
+        reported = None
+
+    if reported is not None and reported > 0.5:
+        return reported, 'player'
+
+    try:
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(video_url).query)
+        for key in ('t', 'start'):
+            if key in qs:
+                url_time = parse_youtube_time_param(qs[key][0])
+                if url_time is not None and url_time > 0:
+                    return url_time, f'url ({key}=)'
+    except Exception as e:
+        logging.debug(f"Could not parse URL time parameter: {e}")
+
+    return (reported if reported is not None else 0.0), 'player'
+
 def register_routes(app, socketio, settings, emit_fn=None):
     connected_clients = set()
 
@@ -310,10 +357,11 @@ def register_routes(app, socketio, settings, emit_fn=None):
                     if current_time is not None:
                         # Handle clip request with old format
                         download_type_async = 'clip'
-                        current_time = float(current_time)
+                        current_time, time_source = resolve_clip_anchor_time(current_time, video_url)
+                        logging.info(f"Clip anchor time: {current_time}s (source: {time_source})")
                         seconds_before = float(current_settings.get('secondsBefore', 15))
                         seconds_after = float(current_settings.get('secondsAfter', 15))
-                        
+
                         clip_start = max(0, current_time - seconds_before)
                         clip_end = current_time + seconds_after
                         
@@ -448,12 +496,13 @@ def register_routes(app, socketio, settings, emit_fn=None):
                         # Ensure download_type is set to 'clip'
                         download_type_async = 'clip'
                         logging.info(f"Handling as clip download for time: {current_time}")
-                        
-                        # Convert to float and use settings for before/after times
-                        current_time = float(current_time)
+
+                        # Player time when trustworthy, else the URL's t=/start= param
+                        current_time, time_source = resolve_clip_anchor_time(current_time, video_url)
+                        logging.info(f"Clip anchor time: {current_time}s (source: {time_source})")
                         seconds_before = float(current_settings.get('secondsBefore', 15))
                         seconds_after = float(current_settings.get('secondsAfter', 15))
-                        
+
                         # Calculate clip start and end times
                         clip_start = max(0, current_time - seconds_before)
                         clip_end = current_time + seconds_after
@@ -789,32 +838,30 @@ def register_routes(app, socketio, settings, emit_fn=None):
             if project_path and project_path != '.':
                 logging.info(f"Received project path from Premiere: {project_path}")
 
-                # Auto-derive a download folder next to the project
-                auto_path = os.path.join(os.path.dirname(project_path), 'YoutubeToPremiere_download')
                 try:
-                    os.makedirs(auto_path, exist_ok=True)
-                    logging.info(f"Created auto download folder: {auto_path}")
-
-                    # Only preserve the path if the user explicitly set a CUSTOM one.
-                    # A path ending with 'YoutubeToPremiere_download' was auto-generated
-                    # by us on a previous connect — treat it the same as empty so it
-                    # always follows the current project.
-                    current_settings = load_settings()
-                    user_path = current_settings.get('downloadPath', '').strip()
-                    is_auto_path = not user_path or user_path.replace('\\', '/').endswith('YoutubeToPremiere_download')
-
-                    if is_auto_path:
-                        save_download_path(auto_path)
-                        logging.info(f"Auto-updating download folder to match current project: {auto_path}")
-                        effective_path = auto_path
-                    else:
+                    # NEVER persist the auto folder into settings['downloadPath'].
+                    # An empty setting means "follow the active project", and writing
+                    # a concrete path here would freeze downloads onto whichever
+                    # project happened to be open. The folder is resolved per download
+                    # by get_default_download_path() instead.
+                    user_path = (load_settings().get('downloadPath', '') or '').strip()
+                    # A stored path ending in our own auto folder name is not a
+                    # user choice, it is one we generated next to some project.
+                    # Reporting it here made the panel display, and then re-save,
+                    # a folder belonging to a project that is no longer open.
+                    looks_auto = user_path.replace('\\', '/').rstrip('/').endswith('YoutubeToPremiere_download')
+                    if user_path and not looks_auto:
                         logging.info(f"Custom download path set ({user_path}) — keeping it")
                         effective_path = user_path
+                    else:
+                        effective_path = os.path.join(os.path.dirname(project_path),
+                                                      'YoutubeToPremiere_download')
+                        logging.info(f"No custom path — downloads follow current project: {effective_path}")
 
                     socketio.emit('project_path_result', {'success': True, 'path': effective_path})
                 except Exception as e:
-                    logging.error(f"Error creating download folder: {str(e)}")
-                    socketio.emit('project_path_result', {'error': f"Could not create download folder: {str(e)}"})
+                    logging.error(f"Error resolving download folder: {str(e)}")
+                    socketio.emit('project_path_result', {'error': f"Could not resolve download folder: {str(e)}"})
             else:
                 logging.warning("Received empty project path from Premiere")
                 socketio.emit('project_path_result', {'error': 'Empty project path received'})

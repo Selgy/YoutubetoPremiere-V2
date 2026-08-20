@@ -2,7 +2,21 @@ Flask==2.3.3
 Flask-SocketIO==5.3.6
 Flask-CORS==4.0.0
 requests>=2.32.2,<3
-yt-dlp==2026.6.9
+# yt-dlp: on the STABLE channel.
+#
+# To switch to nightly, comment the stable pin below and uncomment the nightly
+# one, then add `--pre` to the two `pip install --upgrade yt-dlp` lines in
+# .github/workflows/{main,nightly}.yml. Naming a .dev0 version is what makes
+# pip accept pre-releases here; a plain >= keeps resolving to stable.
+#
+# yt-dlp>=2026.8.18.122307.dev0  # nightly
+yt-dlp==2026.8.19                # stable
+# JS challenge solver scripts, run through Deno. yt-dlp pins a minimum version
+# and silently disables the solver on an older one ("Challenge solver lib
+# script version 0.3.2 is not supported"), which makes YouTube answer downloads
+# with 403. Keep this in step when bumping yt-dlp: 2026.8.19 wants >=0.8.0.
+# It is not a hard dependency of yt-dlp, so pip kept a stale 0.3.2 around.
+yt-dlp-ejs>=0.8.0
 python-socketio==5.8.0
 python-engineio==4.7.1
 psutil==5.9.8

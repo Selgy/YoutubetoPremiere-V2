@@ -122,13 +122,20 @@ export async function setupVideoImportHandler(csInterface) {
             console.log('- Connected at:', new Date().toISOString());
             reconnectAttempts = 0;
             if (reconnectInterval) {
-                clearInterval(reconnectInterval);
+                clearTimeout(reconnectInterval);
                 reconnectInterval = null;
             }
 
             // Proactively push the current project path so the server
             // never has to do a round-trip request (which can time out).
-            const pathScript = `app.project ? app.project.path : ""`;
+            // app.project.path is URI-encoded (spaces become %20, notably on
+            // macOS); File(...).fsName yields the native path on both OSes.
+            const pathScript = `
+                (function () {
+                    if (!app.project || !app.project.path) { return ""; }
+                    return new File(app.project.path).fsName;
+                })()
+            `;
             csInterface.evalScript(pathScript, (result) => {
                 if (result && result !== 'undefined' && result !== '') {
                     console.log('📁 Pushing project path to server:', result);
@@ -147,23 +154,29 @@ export async function setupVideoImportHandler(csInterface) {
             }, 30000);
         });
 
+        // Keep trying for as long as the panel is open. The server is a local
+        // app that legitimately restarts (update, crash, relaunch, a developer
+        // running it by hand), and it used to be given up on after 5 attempts
+        // (~25s) with reconnectAttempts never reset — so the panel stayed dead
+        // until Premiere was restarted, silently swallowing every later import.
+        const RECONNECT_BASE_MS = 3000;
+        const RECONNECT_MAX_MS = 30000;
+
+        const scheduleReconnect = () => {
+            if (reconnectInterval) return;
+            reconnectAttempts++;
+            // Back off gradually, then keep probing at a steady, cheap interval
+            const delay = Math.min(RECONNECT_BASE_MS * reconnectAttempts, RECONNECT_MAX_MS);
+            console.log(`🔄 Reconnecting to YoutubetoPremiere in ${delay / 1000}s (attempt ${reconnectAttempts})`);
+            reconnectInterval = setTimeout(() => {
+                reconnectInterval = null;
+                connectSocket();
+            }, delay);
+        };
+
         socket.on('connect_error', (error) => {
             console.error('Connection error:', error);
-            if (!reconnectInterval && reconnectAttempts < 5) {
-                reconnectInterval = setInterval(() => {
-                    reconnectAttempts++;
-                    console.log(`Attempting to reconnect... (${reconnectAttempts}/5)`);
-                    if (reconnectAttempts >= 5) {
-                        clearInterval(reconnectInterval);
-                        reconnectInterval = null;
-                        console.log('Max reconnection attempts reached for video import handler');
-                        // Try to fall back to localhost
-                        localStorage.removeItem('serverIP');
-                        return;
-                    }
-                    connectSocket();
-                }, 5000);
-            }
+            scheduleReconnect();
         });
 
         socket.on('disconnect', (reason) => {
@@ -177,10 +190,8 @@ export async function setupVideoImportHandler(csInterface) {
 
             // 'io client disconnect' means WE closed the socket (e.g. at the top of
             // connectSocket). Don't schedule a reconnect — connectSocket already handles it.
-            if (!reconnectInterval && reason !== 'io client disconnect') {
-                reconnectAttempts++;
-                console.log(`🔄 Attempting to reconnect... (${reconnectAttempts})`);
-                setTimeout(connectSocket, 5000);
+            if (reason !== 'io client disconnect') {
+                scheduleReconnect();
             }
         });
 
@@ -409,12 +420,13 @@ export async function setupVideoImportHandler(csInterface) {
 
         socket.on('request_project_path', async () => {
             try {
+                // fsName decodes the URI form app.project.path returns
+                // (e.g. /Users/me/My%20Project on macOS) into a real OS path.
                 const script = `
-                    if (app.project) {
-                        app.project.path;
-                    } else {
-                        "NO_PROJECT";
-                    }
+                    (function () {
+                        if (!app.project || !app.project.path) { return "NO_PROJECT"; }
+                        return new File(app.project.path).fsName;
+                    })()
                 `;
                 
                 csInterface.evalScript(script, (result) => {
@@ -439,7 +451,7 @@ export async function setupVideoImportHandler(csInterface) {
         socket,
         cleanup: () => {
             if (reconnectInterval) {
-                clearInterval(reconnectInterval);
+                clearTimeout(reconnectInterval);
                 reconnectInterval = null;
             }
             if (socket) {

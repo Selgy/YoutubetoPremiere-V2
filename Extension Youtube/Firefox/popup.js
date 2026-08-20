@@ -58,11 +58,17 @@ const SETTINGS_KEYS = {
     BUTTONS_VISIBLE: 'ytp-buttons-visible'
 };
 
-// Size labels
-const SIZE_LABELS = ['Normal', 'Compact', 'Mini', 'Micro'];
+// i18n helper - i18n.js is loaded before this file by popup.html
+const T = (key, params) => (window.YTPI18n ? window.YTPI18n.t(key, params) : key);
+
+// Size labels (translated at call time)
+const SIZE_LABEL_KEYS = ['sizeNormal', 'sizeCompact', 'sizeMini', 'sizeMicro'];
 
 // Initialize popup when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
+    if (window.YTPI18n) {
+        window.YTPI18n.applyI18n();
+    }
     initializePopup();
     loadSettings();
     checkServerStatus();
@@ -149,19 +155,19 @@ function setupEventListeners() {
         chrome.storage.local.set({ [SETTINGS_KEYS.CONTAINER_POSITION]: JSON.stringify(defaultPosition) }, () => {
             console.log('YTP Popup: Position reset to default');
             notifyContentScript('RESET_POSITION', defaultPosition);
-            showFeedback('Position réinitialisée');
+            showFeedback(T('positionReset'));
         });
     });
     
     // Center position button
     document.getElementById('center-position').addEventListener('click', () => {
         notifyContentScript('CENTER_POSITION', {});
-        showFeedback('Position centrée');
+        showFeedback(T('positionCentered'));
     });
     
     // Reset all settings
     document.getElementById('reset-all').addEventListener('click', () => {
-        if (confirm('Voulez-vous vraiment réinitialiser tous les paramètres ?')) {
+        if (confirm(T('confirmResetAll'))) {
             resetAllSettings();
         }
     });
@@ -169,7 +175,7 @@ function setupEventListeners() {
 
 function updateSizeLabel() {
     const sizeValue = parseInt(document.getElementById('button-size').value);
-    document.getElementById('size-value').textContent = SIZE_LABELS[sizeValue] || 'Normal';
+    document.getElementById('size-value').textContent = T(SIZE_LABEL_KEYS[sizeValue] || 'sizeNormal');
 }
 
 function resetAllSettings() {
@@ -186,7 +192,7 @@ function resetAllSettings() {
         console.log('YTP Popup: All settings reset to defaults');
         loadSettings(); // Reload UI
         notifyContentScript('RESET_ALL_SETTINGS', defaultSettings);
-        showFeedback('Tous les paramètres ont été réinitialisés');
+        showFeedback(T('settingsReset'));
     });
 }
 
@@ -205,7 +211,7 @@ async function checkServerStatus() {
             const data = await response.json();
             statusElement.className = 'status connected';
             statusIcon.textContent = 'check_circle';
-            statusText.textContent = 'Application connectée et prête';
+            statusText.textContent = T('appConnected');
         } else {
             throw new Error('Server not responding');
         }
@@ -285,7 +291,7 @@ function showInstallationInstructions(statusElement, statusIcon, statusText) {
     statusIcon.textContent = 'download';
     
     if (os === 'windows' || os === 'mac') {
-        statusText.textContent = 'Application non détectée - Cliquer pour télécharger';
+        statusText.textContent = T('appNotDetectedClick');
         
         statusElement.style.cursor = 'pointer';
         statusElement.onclick = () => {
@@ -296,7 +302,7 @@ function showInstallationInstructions(statusElement, statusIcon, statusText) {
             }
         };
     } else {
-        statusText.textContent = 'Application non détectée';
+        statusText.textContent = T('appNotDetected');
         statusElement.style.cursor = 'default';
     }
 }
@@ -380,7 +386,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         switch (message.action) {
             case 'POSITION_UPDATED':
                 // Content script notified us of position change
-                showFeedback('Position mise à jour');
+                showFeedback(T('positionUpdated'));
                 break;
             case 'PANEL_TOGGLED':
                 // Update UI to reflect panel state

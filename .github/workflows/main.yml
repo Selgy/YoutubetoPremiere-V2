@@ -50,7 +50,8 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install --upgrade yt-dlp
+          # Add --pre here to build against the yt-dlp nightly channel
+          pip install --upgrade yt-dlp "yt-dlp-ejs>=0.8.0"
           pip install python-dotenv
 
       - name: Install Node.js dependencies
@@ -164,7 +165,7 @@ jobs:
           --hidden-import=video_processing \
           --hidden-import=utils \
           --hidden-import=routes \
-          --collect-all=yt_dlp \
+          --collect-all=yt_dlp --collect-all=yt_dlp_ejs \
           --collect-all=flask \
           --collect-all=flask_socketio \
           --collect-all=flask_cors \
@@ -591,7 +592,8 @@ jobs:
           echo "Installing Python dependencies..."
           python -m pip install --upgrade pip setuptools wheel
           pip install -r requirements.txt
-          pip install --upgrade yt-dlp
+          # Add --pre here to build against the yt-dlp nightly channel
+          pip install --upgrade yt-dlp "yt-dlp-ejs>=0.8.0"
           pip install --upgrade pyinstaller
           echo "Python dependencies and PyInstaller installed"
 
@@ -649,7 +651,7 @@ jobs:
             --hidden-import=flask --hidden-import=flask_cors --hidden-import=flask_socketio `
             --hidden-import=yt_dlp --hidden-import=psutil `
             --hidden-import=video_processing --hidden-import=utils --hidden-import=routes `
-            --collect-all=yt_dlp `
+            --collect-all=yt_dlp --collect-all=yt_dlp_ejs `
             --collect-all=flask `
             --collect-all=flask_socketio `
             --collect-all=flask_cors `

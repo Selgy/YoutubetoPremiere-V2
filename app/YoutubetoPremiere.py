@@ -9,7 +9,7 @@ from flask_cors import CORS
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO
 from routes import register_routes
-from utils import load_settings, monitor_premiere_and_shutdown, play_notification_sound, get_temp_dir, clear_temp_files
+from utils import load_settings, monitor_premiere_and_shutdown, play_notification_sound, get_temp_dir, clear_temp_files, rotate_log_files, SharedFileHandler
 import re
 import subprocess
 import requests
@@ -45,37 +45,19 @@ os.makedirs(log_dir, exist_ok=True)
 main_log_file = os.path.join(log_dir, 'YoutubetoPremiere.log')
 error_log_file = os.path.join(log_dir, 'errors.log')
 
-# Clear previous logs at session start
-def clear_previous_logs():
-    """Clear log files from previous sessions"""
-    try:
-        # Clear main log file
-        if os.path.exists(main_log_file):
-            with open(main_log_file, 'w', encoding='utf-8') as f:
-                f.write('')
-        
-        # Clear error log file  
-        if os.path.exists(error_log_file):
-            with open(error_log_file, 'w', encoding='utf-8') as f:
-                f.write('')
-        
-        # Clear video processing error log if it exists
-        video_error_log = os.path.join(log_dir, 'video_processing_errors.log')
-        if os.path.exists(video_error_log):
-            with open(video_error_log, 'w', encoding='utf-8') as f:
-                f.write('')
-                
-        print(f"Previous logs cleared for new session")
-    except Exception as e:
-        print(f"Warning: Could not clear previous logs: {e}")
-
-# Clear logs before setting up new logging
-clear_previous_logs()
+# Keep the previous session instead of wiping it: when the app crashes and
+# restarts (or Premiere relaunches it), the log explaining the crash used to be
+# erased before anyone could read it.
+rotate_log_files([
+    main_log_file,
+    error_log_file,
+    os.path.join(log_dir, 'video_processing_errors.log'),
+])
 
 # Configure logging with file and console handlers
 console_handler = logging.StreamHandler(sys.stdout)
-main_file_handler = logging.FileHandler(main_log_file, mode='a', encoding='utf-8')
-error_file_handler = logging.FileHandler(error_log_file, mode='a', encoding='utf-8')
+main_file_handler = SharedFileHandler(main_log_file, encoding='utf-8')
+error_file_handler = SharedFileHandler(error_log_file, encoding='utf-8')
 
 # Set levels for handlers
 console_handler.setLevel(logging.INFO)
@@ -85,22 +67,6 @@ error_file_handler.setLevel(logging.ERROR)
 # Set formatter
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 console_handler.setFormatter(formatter)
-main_file_handler.setFormatter(formatter)
-error_file_handler.setFormatter(formatter)
-
-# Force immediate flush for file handlers (important for PyInstaller)
-class FlushFileHandler(logging.FileHandler):
-    def emit(self, record):
-        super().emit(record)
-        self.flush()
-
-# Replace file handlers with flushing versions
-main_file_handler = FlushFileHandler(main_log_file, mode='a', encoding='utf-8')
-error_file_handler = FlushFileHandler(error_log_file, mode='a', encoding='utf-8')
-
-# Set levels and formatters again
-main_file_handler.setLevel(logging.INFO)
-error_file_handler.setLevel(logging.ERROR)
 main_file_handler.setFormatter(formatter)
 error_file_handler.setFormatter(formatter)
 
@@ -114,38 +80,33 @@ logging.basicConfig(
 # Store log directory for later use
 os.environ['YTPP_LOG_DIR'] = log_dir
 
-def write_test_log():
-    """Write a test log to verify file logging works"""
+def write_session_header():
+    """Mark the start of a session in both log files."""
     try:
-        # Write session header and test to main log
-        session_header = f"""
+        from config import APP_VERSION
+    except Exception:
+        APP_VERSION = 'unknown'
+
+    session_header = f"""
 {'='*60}
 SESSION STARTED: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-YouTube to Premiere Pro Extension v3.0.22
+YouTube to Premiere Pro Extension v{APP_VERSION}
 {'='*60}
 """
-        with open(main_log_file, 'a', encoding='utf-8') as f:
-            f.write(session_header)
-            f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - TEST - INFO - Logging system initialized\n")
-            f.flush()
-        
-        # Write session header to error log
-        with open(error_log_file, 'a', encoding='utf-8') as f:
-            f.write(session_header)
-            f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - TEST - ERROR - Error logging initialized\n")
-            f.flush()
-    except Exception as e:
-        print(f"Failed to write test log: {e}")
+    for path in (main_log_file, error_log_file):
+        try:
+            with open(path, 'a', encoding='utf-8') as f:
+                f.write(session_header)
+                f.flush()
+        except Exception as e:
+            print(f"Failed to write session header to {os.path.basename(path)}: {e}")
 
-# Test direct file writing first
-write_test_log()
+
+write_session_header()
 
 logging.info(f"Logging initialized. Log directory: {log_dir}")
 logging.info(f"Main log file: {main_log_file}")
 logging.info(f"Error log file: {error_log_file}")
-
-# Force an error log to test error handler
-logging.error("Test error log entry - this should appear in errors.log")
 
 # Manual flush of all handlers
 for handler in logging.getLogger().handlers:
@@ -593,7 +554,7 @@ def emit_to_client_type(event, data, client_type=None):
             app_logger.warning(f'[WARN] No {client_type} clients connected to send {event} event!')
             # For critical UI events, fall back to broadcast so the client gets
             # the event even if it briefly reconnected with a new SID.
-            critical_events = {'complete', 'download-failed', 'import_failed', 'download-complete', 'download-cancelled'}
+            critical_events = {'complete', 'download-failed', 'import_failed', 'download-complete', 'download-cancelled', 'import_video'}
             if event in critical_events:
                 app_logger.info(f'[FALLBACK] Broadcasting {event} to all clients (no {client_type} registered)')
                 socketio.emit(event, data)

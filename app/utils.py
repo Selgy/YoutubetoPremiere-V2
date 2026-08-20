@@ -17,6 +17,79 @@ _settings_cache_time = 0
 # FFmpeg path cache — resolved once per process lifetime (never changes at runtime)
 _ffmpeg_path_cache = None
 
+def rotate_log_files(paths):
+    """Move each existing log aside to <path>.1 so it survives a restart.
+
+    The app used to blank its logs on startup, which meant a crash erased the
+    very lines explaining it before anyone could read them.
+    """
+    for path in paths:
+        try:
+            if os.path.exists(path) and os.path.getsize(path) > 0:
+                previous = path + '.1'
+                if os.path.exists(previous):
+                    os.remove(previous)
+                os.replace(path, previous)
+        except Exception as e:
+            # Never let log housekeeping stop the app from starting
+            print(f"Warning: could not rotate {os.path.basename(path)}: {e}")
+
+
+class SharedFileHandler(logging.FileHandler):
+    """File handler that does not hold the log file open.
+
+    A normal FileHandler keeps a write handle for the whole session. On Windows
+    that makes the file unreadable for any tool opening it with the default
+    share mode (Notepad, most editors, dragging it into a bug report), which is
+    why the logs looked empty or stale while the app was running. Opening in
+    append mode per record and closing straight after keeps the file readable
+    at all times, and leaves nothing buffered if the process dies.
+
+    Volume is a few hundred records per session, so the extra open/close is not
+    worth optimising away.
+    """
+
+    def __init__(self, filename, encoding=None, max_bytes=5 * 1024 * 1024):
+        # delay=True: do not open the file until something is actually logged
+        super().__init__(filename, mode='a', encoding=encoding, delay=True)
+        self.max_bytes = max_bytes
+
+    def emit(self, record):
+        try:
+            self._truncate_if_oversized()
+            super().emit(record)
+        except Exception:
+            # A log write must never take the app down. FileHandler.emit lets
+            # errors from opening the file (deleted directory, revoked
+            # permissions, full disk) escape, so catch them here and use the
+            # logging module's own error path.
+            self.handleError(record)
+        finally:
+            # Release the handle so external readers are never locked out
+            if self.stream:
+                try:
+                    self.stream.close()
+                except Exception:
+                    pass
+                finally:
+                    self.stream = None
+
+    def _truncate_if_oversized(self):
+        """Guard against a runaway log filling the disk."""
+        try:
+            if self.max_bytes and os.path.exists(self.baseFilename):
+                if os.path.getsize(self.baseFilename) > self.max_bytes:
+                    if self.stream:
+                        self.stream.close()
+                        self.stream = None
+                    stamp = time.strftime('%Y-%m-%d %H:%M:%S')
+                    with open(self.baseFilename, 'w', encoding=self.encoding) as f:
+                        f.write(f"[log truncated at {stamp} - exceeded "
+                                f"{self.max_bytes // (1024 * 1024)} MB]\n")
+        except Exception:
+            pass
+
+
 # --- Live "active project" tracking ---------------------------------------
 # The Premiere panel reports its CURRENTLY active project path via the
 # 'project_path_response' socket event. routes.py feeds every such response
@@ -28,10 +101,32 @@ _current_project_path = {'path': None}
 _project_path_event = threading.Event()
 
 
+def normalize_project_path(path):
+    """Normalize a project path coming from ExtendScript.
+
+    The panel sends File(...).fsName, which is already a native path on both
+    Windows and macOS. This is a safety net for any value that still arrives
+    URI-encoded (app.project.path returns e.g. /Users/me/My%20Project on Mac):
+    only decode when doing so actually resolves to something on disk, so a
+    literal '%' in a real folder name is left alone.
+    """
+    if not path or '%' not in path:
+        return path
+    try:
+        from urllib.parse import unquote
+        decoded = unquote(path)
+        if decoded != path and os.path.exists(decoded) and not os.path.exists(path):
+            logging.info(f"Decoded URI-encoded project path: {path} -> {decoded}")
+            return decoded
+    except Exception as e:
+        logging.debug(f"Could not normalize project path {path}: {e}")
+    return path
+
+
 def update_current_project_path(path):
     """Record the active project path reported by the Premiere panel."""
     if path:
-        _current_project_path['path'] = path
+        _current_project_path['path'] = normalize_project_path(path)
     # Wake any download waiting on a live query, even on a null/empty answer.
     _project_path_event.set()
 
@@ -188,7 +283,28 @@ def load_settings():
             json.dump(settings, f, indent=4)
 
     settings['SETTINGS_FILE'] = settings_path
-    
+
+    # One-time migration: older versions wrote the auto-generated
+    # 'YoutubeToPremiere_download' folder into downloadPath on every connect.
+    # Such a value now reads as an explicit user choice and would pin every
+    # download to a long-closed project. Clear it once so the setting goes back
+    # to meaning "follow the active project". Guarded by a flag so a user who
+    # deliberately picks a folder with that name keeps it.
+    if not settings.get('autoDownloadPathCleared'):
+        stale = (settings.get('downloadPath', '') or '').strip()
+        if stale.replace('\\', '/').rstrip('/').endswith('YoutubeToPremiere_download'):
+            logging.info(f"Migration: clearing auto-generated downloadPath ({stale}); "
+                         "downloads will follow the active project again")
+            settings['downloadPath'] = ''
+        settings['autoDownloadPathCleared'] = True
+        try:
+            to_save = {k: v for k, v in settings.items()
+                       if k not in ('SETTINGS_FILE', 'ffmpeg_path')}
+            with open(settings_path, 'w') as f:
+                json.dump(to_save, f, indent=4)
+        except Exception as e:
+            logging.warning(f"Could not persist downloadPath migration: {e}")
+
     # Update cache
     _settings_cache = settings.copy()
     _settings_cache_time = now
@@ -289,39 +405,50 @@ def monitor_premiere_and_shutdown():
 def get_default_download_path(socketio=None):
     try:
         download_folder_name = 'YoutubeToPremiere_download'
-        cached_settings = load_settings()
-        user_path = (cached_settings.get('downloadPath', '') or '').strip()
+        user_path = (load_settings().get('downloadPath', '') or '').strip()
 
-        # A path ending in 'YoutubeToPremiere_download' was auto-generated by us
-        # next to some project — it must NOT pin downloads to that old project.
-        # Only a different path counts as an explicit user override.
-        normalized = user_path.replace('\\', '/').rstrip('/')
-        is_custom_path = bool(user_path) and not normalized.endswith(download_folder_name)
+        # Two modes, exactly as the panel advertises:
+        #   settings['downloadPath'] non-empty -> the user picked that folder
+        #   settings['downloadPath'] empty     -> follow the ACTIVE project
+        #
+        # A stored path ending in our own auto folder name was never a user
+        # choice: it is the folder we generate next to a project. Older builds
+        # persisted it, and the panel re-sends the whole settings object on any
+        # change, so it comes back even after the one-shot migration cleared it
+        # — leaving downloads pinned to a project the user closed long ago
+        # (observed: active project Parapactum, files landing in
+        # H:\RobloxFortnite\8_SAVE\YoutubeToPremiere_download).
+        # Deciding this at resolution time is self-healing: whatever writes the
+        # setting, an auto folder never wins over the active project.
+        looks_auto = user_path.replace('\\', '/').rstrip('/').endswith(download_folder_name)
+        if looks_auto:
+            logging.info(f"Ignoring stored auto folder ({user_path}); following the active project instead")
 
-        if is_custom_path:
-            os.makedirs(user_path, exist_ok=True)
-            logging.info(f"Using custom download path: {user_path}")
-            return user_path
+        if user_path and not looks_auto:
+            try:
+                os.makedirs(user_path, exist_ok=True)
+                logging.info(f"Using custom download path: {user_path}")
+                return user_path
+            except OSError as e:
+                # Unwritable/unmounted custom folder (external drive, network
+                # share, macOS permission prompt declined) — fall through.
+                logging.warning(f"Custom download path unusable ({user_path}): {e}")
 
-        # Auto mode: follow the project that is active RIGHT NOW. We query the
-        # panel live every time instead of trusting the connect-time cache,
-        # which pointed at whatever project was open when the socket connected
-        # (the cause of videos landing in the last-opened project).
+        # Auto mode: ask the panel which project is active RIGHT NOW.
         live_project_path = query_live_project_path(socketio, timeout=5)
         if live_project_path:
             download_path = os.path.join(os.path.dirname(live_project_path), download_folder_name)
-            os.makedirs(download_path, exist_ok=True)
-            logging.info(f"Using current project's download path: {download_path}")
-            return download_path
+            try:
+                os.makedirs(download_path, exist_ok=True)
+                logging.info(f"Using current project's download path: {download_path}")
+                return download_path
+            except OSError as e:
+                # Project sitting on a read-only volume, or macOS TCC blocking
+                # writes (Desktop/Documents/removable) — fall back below.
+                logging.warning(f"Cannot create download folder next to project "
+                                f"({download_path}): {e}")
 
-        # Live query failed (panel slow / no project open): fall back to the
-        # last known auto path so we at least keep working.
-        if user_path and os.path.isdir(os.path.dirname(user_path) or user_path):
-            os.makedirs(user_path, exist_ok=True)
-            logging.info(f"Live query unavailable; using cached download path: {user_path}")
-            return user_path
-
-        # If we couldn't get a path from the Premiere project, use fallback paths
+        # No panel answer, or the project folder is not writable: use fallbacks
         # Try to use Documents folder as fallback
         documents_path = os.path.expanduser('~/Documents')
         fallback_path = os.path.join(documents_path, download_folder_name)

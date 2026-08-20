@@ -135,6 +135,46 @@ def set_emit_function(emit_function):
     global _emit_to_client_type
     _emit_to_client_type = emit_function
 
+def is_retryable_download_error(error):
+    """True when a download failure is worth retrying with another player client.
+
+    YouTube commonly answers a perfectly valid stream URL with 403 Forbidden:
+    the URLs are tied to the client that requested them, and which clients are
+    served changes over time and per video. Retrying with a different
+    player_client usually succeeds, so these must not be treated as fatal.
+
+    The fallback chains already existed but were gated on 'empty file' (audio)
+    or cookie-format errors (video) only, so a 403 failed instantly with no
+    retry at all.
+    """
+    message = str(error).lower()
+    return any(marker in message for marker in (
+        '403', 'forbidden',
+        'empty', 'downloaded file is empty',
+        'unable to download video data',
+        'unable to download webpage',
+        'fragment',
+        'requested format is not available',
+        # yt-dlp's external ffmpeg downloader reports the 403 as an exit code
+        # ("ffmpeg exited with code 3436169992"), which used to be fatal.
+        'ffmpeg exited with code',
+    ))
+
+
+def emit_import_video(socketio, payload):
+    """Send an import request to the Premiere panel.
+
+    Goes through emit_to_client_type so the log says plainly when no panel is
+    listening. A clip could download fine and report "Import signal sent" while
+    nothing was connected to receive it, which looked like a silent failure of
+    the import itself.
+    """
+    if _emit_to_client_type:
+        _emit_to_client_type('import_video', payload, 'premiere')
+    else:
+        socketio.emit('import_video', payload)
+
+
 def get_subprocess_creation_flags():
     """Get Windows-specific creation flags to hide console windows"""
     if sys.platform == 'win32':
@@ -1548,8 +1588,7 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
         # Get download parameters from settings
         resolution = settings.get('resolution', '1080')
         download_mp3 = settings.get('downloadMP3', False)
-        download_path = settings.get('downloadPath', '')
-        
+
         # Validate license if required (for video and full downloads)
         # Note: 'full' is the actual type sent by the extension for video downloads
         if download_type in ('video', 'full'):
@@ -1557,13 +1596,15 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             if not license_valid:
                 logging.warning(f"License validation failed for download type: {download_type}")
                 return {"error": "Licence invalide. Veuillez acheter une licence pour télécharger des vidéos."}
-        
-        # If no download path is set, use a default path
+
+        # ALWAYS resolve through get_default_download_path: it honours an explicit
+        # custom folder, but otherwise queries Premiere live so the download follows
+        # the CURRENTLY active project. Reading settings['downloadPath'] directly here
+        # would reuse the auto path saved for a previously opened project.
+        download_path = get_default_download_path(socketio)
         if not download_path:
-            download_path = get_default_download_path(socketio)
-            if not download_path:
-                return {"error": "Download path not set and could not determine default"}
-        
+            return {"error": "Download path not set and could not determine default"}
+
         logging.info(f"Processing {download_type} request for {video_url}")
         logging.info(f"Settings: resolution={resolution}, download_path={download_path}, download_mp3={download_mp3}")
         
@@ -1581,7 +1622,7 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
             )
             
             if result and os.path.exists(result):
-                socketio.emit('import_video', {'path': result, 'bin': settings.get('premiereBin', '')})
+                emit_import_video(socketio, {'path': result, 'bin': settings.get('premiereBin', '')})
                 logging.info("Import signal sent to Premiere Pro extension via SocketIO")
                 return {"success": True, "path": result}
             else:
@@ -1610,10 +1651,10 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
                 cookies=cookies,
                 user_agent=user_agent
             )
-            
+
             if result and result.get("success") and result.get("path") and os.path.exists(result["path"]):
                 # Emit SocketIO event for Premiere extension
-                socketio.emit('import_video', {'path': result["path"], 'bin': settings.get('premiereBin', '')})
+                emit_import_video(socketio, {'path': result["path"], 'bin': settings.get('premiereBin', '')})
                 logging.info("Import signal sent to Premiere Pro extension via SocketIO")
                 return {"success": True, "path": result["path"]}
             else:
@@ -1670,8 +1711,47 @@ def sanitize_resolution(resolution):
         # Default to 1080 if conversion fails
         return 1080
 
+def _pick_audio_format(candidates, preferred_language):
+    """Choose the audio track, honouring the user's language preference.
+
+    YouTube ships every dub as a separate audio format at practically the same
+    bitrate (48.788 vs 48.789 kbps on a real video), so sorting on bitrate alone
+    picks an essentially random language - which is how a clip came out in
+    German. yt-dlp marks the real track with language_preference 10 ("original
+    (default)"); dubs carry -1.
+    """
+    if not candidates:
+        return None
+
+    def is_original(f):
+        return (f.get('language_preference') or -1) >= 10
+
+    def base_lang(f):
+        return str(f.get('language') or '').lower().split('-')[0]
+
+    pool = candidates
+    wanted = (preferred_language or 'original').lower()
+
+    if wanted and wanted != 'original':
+        matches = [f for f in pool if base_lang(f) == wanted]
+        if matches:
+            pool = matches
+        else:
+            # Requested language absent: fall back to the original track rather
+            # than to whichever dub happens to sort first.
+            logging.info(f"[AUDIO-LANG] No '{wanted}' track; falling back to the original")
+            pool = [f for f in pool if is_original(f)] or pool
+    else:
+        originals = [f for f in pool if is_original(f)]
+        if originals:
+            pool = originals
+
+    return max(pool, key=lambda f: f.get('abr') or f.get('tbr') or 0)
+
+
 def _try_direct_ffmpeg_clip(video_info, target_height, clip_start, clip_end,
-                            video_file_path, ffmpeg_path, http_headers, is_cancelled):
+                            video_file_path, ffmpeg_path, http_headers, is_cancelled,
+                            preferred_language='original'):
     """
     Fast clip extraction using FFmpeg's HTTP input-seek.
 
@@ -1744,50 +1824,75 @@ def _try_direct_ffmpeg_clip(video_info, target_height, clip_start, clip_end,
                   and _has_direct_url(f)]
 
     m4a = [f for f in audio_only if f.get('ext') == 'm4a']
-    m4a.sort(key=lambda f: f.get('abr', 0) or f.get('tbr', 0) or 0, reverse=True)
-
-    if m4a:
-        audio_fmt = m4a[0]
-    elif audio_only:
-        audio_only.sort(key=lambda f: f.get('abr', 0) or f.get('tbr', 0) or 0, reverse=True)
-        audio_fmt = audio_only[0]
-    else:
-        audio_fmt = None
+    audio_fmt = _pick_audio_format(m4a or audio_only, preferred_language)
 
     if audio_fmt:
         logging.info(f"[DIRECT-FFmpeg] Audio  : fmt={audio_fmt.get('format_id')} "
-                     f"{audio_fmt.get('ext')} proto={audio_fmt.get('protocol')}")
+                     f"{audio_fmt.get('ext')} lang={audio_fmt.get('language')} "
+                     f"(pref={preferred_language}) proto={audio_fmt.get('protocol')}")
     else:
         logging.warning('[DIRECT-FFmpeg] No audio format found — clip will be silent')
 
     # ---- build FFmpeg command -----------------------------------------------
-    ua = http_headers.get(
-        'User-Agent',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-        'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
-    )
-    # FFmpeg multi-header syntax: separate headers with \r\n
-    hdr = f'User-Agent: {ua}\r\nAccept: */*\r\nAccept-Language: en-US,en;q=0.9'
+    def _ffmpeg_headers(fmt):
+        """Reproduce exactly the headers yt-dlp would send for this format.
+
+        googlevideo URLs are issued for the request that produced them, so
+        fetching one with a different header set is answered with 403. Building
+        a header block by hand used to drop what yt-dlp adds per format —
+        notably X-Forwarded-For, which geo_bypass sets to a generated IP — and
+        every direct-ffmpeg attempt died with
+        "HTTP error 403 Forbidden / Error opening input".
+
+        yt-dlp's native downloader sends these and succeeds on the same URL,
+        so take its headers rather than inventing our own.
+        """
+        headers = dict(http_headers or {})
+        headers.update(fmt.get('http_headers') or {})
+        headers.setdefault(
+            'User-Agent',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36')
+        headers.pop('Range', None)  # ffmpeg manages its own Range for -ss
+        # FFmpeg multi-header syntax: CRLF separated, and it must end with one
+        # ("No trailing CRLF found in HTTP header. Adding it.")
+        return ''.join(f'{k}: {v}\r\n' for k, v in headers.items())
+
+    hdr = _ffmpeg_headers(video_fmt)
+    audio_hdr = _ffmpeg_headers(audio_fmt) if audio_fmt else hdr
 
     ss  = f'{clip_start:.3f}'
     dur = f'{clip_duration:.3f}'
 
     cmd = [ffmpeg_path, '-y', '-hide_banner', '-loglevel', 'warning']
     # Input 0: video — seek BEFORE -i so FFmpeg sends an HTTP Range request
+    # (only the bytes for the clip are downloaded, not the whole file).
     cmd += ['-headers', hdr, '-ss', ss, '-i', video_url_direct]
-    # -avoid_negative_ts make_zero: input-seek (-ss before -i) with stream copy can
-    # leave the first packets with negative/non-zero timestamps, which causes Premiere
-    # "Error retrieving frame" issues. Rebase timestamps to zero so the clip starts clean.
+
+    # Re-encode the video instead of copying it. With -c:v copy the clip can
+    # only begin on the nearest preceding keyframe, so the video gets a
+    # variable lead-in (0..GOP seconds) that has no audio yet — which plays
+    # back as "the audio is late / out of sync", intermittently, depending on
+    # how far clip_start falls from a keyframe. Re-encoding makes the input
+    # seek frame-accurate: both streams start exactly at clip_start, in sync,
+    # and the first frame is a real keyframe (which also fixes Premiere's
+    # "Error retrieving frame"). Input seek still uses HTTP Range, so we keep
+    # the partial-download speed; encoding a short clip is cheap.
+    # -avoid_negative_ts make_zero keeps the first timestamp at zero.
+    venc = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18',
+            '-pix_fmt', 'yuv420p']
     if audio_fmt:
-        # Input 1: audio — same seek before -i (also strip range= param)
-        cmd += ['-headers', hdr, '-ss', ss, '-i', _strip_range_param(audio_fmt['url'])]
-        cmd += ['-t', dur, '-c:v', 'copy', '-c:a', 'copy',
-                '-map', '0:v:0', '-map', '1:a:0',
+        # Input 1: audio — same seek before -i (also strip range= param).
+        # Audio has no keyframes, so its input seek is already frame-accurate;
+        # copy it to avoid a needless quality loss.
+        cmd += ['-headers', audio_hdr, '-ss', ss, '-i', _strip_range_param(audio_fmt['url'])]
+        cmd += ['-t', dur, '-map', '0:v:0', '-map', '1:a:0',
+                *venc, '-c:a', 'copy',
                 '-avoid_negative_ts', 'make_zero',
                 '-movflags', '+faststart', video_file_path]
     else:
-        cmd += ['-t', dur, '-c:v', 'copy',
-                '-map', '0:v:0',
+        cmd += ['-t', dur, '-map', '0:v:0',
+                *venc,
                 '-avoid_negative_ts', 'make_zero',
                 '-movflags', '+faststart', video_file_path]
 
@@ -2216,6 +2321,7 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                     ffmpeg_path=ffmpeg_path,
                     http_headers=ydl_opts.get('http_headers', {}),
                     is_cancelled=is_cancelled,
+                    preferred_language=settings.get('preferredAudioLanguage', 'original'),
                 )
             except Exception as _de:
                 logging.warning(f'[DIRECT-FFmpeg] Unexpected error: {_de} — trying next strategy')
@@ -2372,8 +2478,20 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
             if _vid_actual:
                 # --- Step 2: audio-only download (small, no early stop needed) ---
                 _aud_opts = dict(ydl_opts)
+                # yt-dlp's own sorting already prefers the original track
+                # (language_preference 10), so 'original' needs no filter. A
+                # specific language does: without one, requesting French on a
+                # dubbed video silently returns the original instead.
+                _aud_pref = (settings or {}).get('preferredAudioLanguage', 'original')
+                if _aud_pref and _aud_pref != 'original':
+                    _aud_format = (f'bestaudio[ext=m4a][language^={_aud_pref}]'
+                                   f'/bestaudio[language^={_aud_pref}]'
+                                   f'/140/bestaudio[ext=m4a]/bestaudio')
+                    logging.info(f"[CLIP-PARTIAL] Audio language requested: {_aud_pref}")
+                else:
+                    _aud_format = '140/bestaudio[ext=m4a]/bestaudio'
                 _aud_opts.update({
-                    'format': '140/bestaudio[ext=m4a]/bestaudio',
+                    'format': _aud_format,
                     'outtmpl': _aud_temp,
                     'no_part': True,
                     'progress_hooks': [progress_hook],
@@ -2396,8 +2514,15 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                 if _aud_actual:
                     # --- Step 3: trim + merge with ffmpeg ---
                     try:
+                        # Re-encode the video trim (NOT copy): input seek with copy
+                        # starts at the nearest keyframe before clip_start, giving a
+                        # lead-in with no audio that later reads as A/V desync once
+                        # merged with the frame-accurate audio trim. Re-encoding makes
+                        # the seek frame-accurate so both clips start at clip_start.
                         _fv = [ffmpeg_path, '-ss', f'{clip_start:.3f}', '-t', f'{_clip_dur:.3f}',
-                               '-i', _vid_actual, '-c:v', 'copy', '-avoid_negative_ts', 'make_zero', '-y', _vid_clip_temp]
+                               '-i', _vid_actual, '-c:v', 'libx264', '-preset', 'veryfast',
+                               '-crf', '18', '-pix_fmt', 'yuv420p',
+                               '-avoid_negative_ts', 'make_zero', '-y', _vid_clip_temp]
                         run_hidden_subprocess(_fv, timeout=120, check=True, capture_output=True,
                                               text=True, encoding='utf-8', errors='replace')
 
@@ -2602,21 +2727,21 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                 # Emit events
                 socketio.emit('complete', {'type': 'clip', 'message': 'Clip téléchargé avec succès'})
                 socketio.emit('download-complete', {'url': video_url, 'path': video_file_path})
-                socketio.emit('import_video', {'path': video_file_path, 'bin': settings.get('premiereBin', '')})
+                emit_import_video(socketio, {'path': video_file_path, 'bin': settings.get('premiereBin', '')})
                 logging.info("[CLIP-COMPLETE] Import signal sent to Premiere Pro extension via SocketIO")
                 return {"success": True, "path": video_file_path}
             except subprocess.TimeoutExpired as e:
                 logging.error(f"[CLIP-METADATA] FFmpeg timeout after {e.timeout}s")
                 # Continue anyway, as the clip itself is fine
                 socketio.emit('download-complete', {'url': video_url, 'path': video_file_path})
-                socketio.emit('import_video', {'path': video_file_path, 'bin': settings.get('premiereBin', '')})
+                emit_import_video(socketio, {'path': video_file_path, 'bin': settings.get('premiereBin', '')})
                 logging.info("[CLIP-COMPLETE] Import signal sent (without metadata due to timeout)")
                 return {"success": True, "path": video_file_path}
             except subprocess.CalledProcessError as e:
                 logging.error(f"[CLIP-METADATA] Error adding metadata: {e.stderr}")
                 # Continue anyway, as the clip itself is fine
                 socketio.emit('download-complete', {'url': video_url, 'path': video_file_path})
-                socketio.emit('import_video', {'path': video_file_path, 'bin': settings.get('premiereBin', '')})
+                emit_import_video(socketio, {'path': video_file_path, 'bin': settings.get('premiereBin', '')})
                 logging.info("[CLIP-COMPLETE] Import signal sent (without metadata due to error)")
                 return {"success": True, "path": video_file_path}
         else:
@@ -2985,7 +3110,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                         try:
                             android_fallback_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
                             android_fallback_opts['skip_download'] = True
-                            android_fallback_opts['extractor_args'] = {'youtube': {'player_client': ['android']}}
+                            android_fallback_opts['extractor_args'] = {'youtube': {'player_client': ['default']}}
                             if 'format' in android_fallback_opts:
                                 del android_fallback_opts['format']
 
@@ -3005,7 +3130,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                             try:
                                 tv_fallback_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
                                 tv_fallback_opts['skip_download'] = True
-                                tv_fallback_opts['extractor_args'] = {'youtube': {'player_client': ['tv']}}
+                                tv_fallback_opts['extractor_args'] = {'youtube': {'player_client': ['default']}}
                                 tv_fallback_opts.pop('format', None)
 
                                 with yt_dlp.YoutubeDL(tv_fallback_opts) as ydl_tv:
@@ -3142,7 +3267,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         
         # If Android player client worked, use it for download too
         if use_android_player:
-            ydl_opts['extractor_args'] = {'youtube': {'player_client': ['android']}}
+            ydl_opts['extractor_args'] = {'youtube': {'player_client': ['default']}}
             logging.info("Download will use Android player client (same as extraction)")
         # If Shorts web-client fallback worked, use the same web client for download
         elif use_web_client_for_shorts:
@@ -3483,7 +3608,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 os.replace(f'{actual_file}_with_metadata.mp4', actual_file)
                 
                 logging.info(f"[COMPLETE] Video downloaded and processed: {actual_file}")
-                socketio.emit('import_video', {'path': actual_file, 'bin': settings.get('premiereBin', '')})
+                emit_import_video(socketio, {'path': actual_file, 'bin': settings.get('premiereBin', '')})
                 # Emit both formats to ensure compatibility
                 socketio.emit('download-complete', {'url': video_url, 'path': actual_file})  # Hyphenated format for Chrome extension
                 socketio.emit('complete', {'type': 'full', 'success': True, 'path': actual_file})  # Direct reset for Chrome button
@@ -3494,7 +3619,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 logging.error(f"[METADATA] FFmpeg metadata TIMEOUT after {e.timeout}s")
                 # Still return the file even if metadata failed
                 logging.info(f"[METADATA] Returning file without metadata due to timeout: {actual_file}")
-                socketio.emit('import_video', {'path': actual_file, 'bin': settings.get('premiereBin', '')})
+                emit_import_video(socketio, {'path': actual_file, 'bin': settings.get('premiereBin', '')})
                 socketio.emit('download-complete', {'url': video_url, 'path': actual_file})
                 socketio.emit('complete', {'type': 'full', 'success': True, 'path': actual_file})  # Direct reset for Chrome button
                 logging.info("Import signal sent to Premiere Pro extension via SocketIO")
@@ -3504,7 +3629,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                 logging.error(f"[METADATA] FFmpeg stderr: {e.stderr if hasattr(e, 'stderr') else 'No stderr'}")
                 # Still return the file even if metadata failed
                 logging.info(f"[METADATA] Returning file without metadata: {actual_file}")
-                socketio.emit('import_video', {'path': actual_file, 'bin': settings.get('premiereBin', '')})
+                emit_import_video(socketio, {'path': actual_file, 'bin': settings.get('premiereBin', '')})
                 socketio.emit('download-complete', {'url': video_url, 'path': actual_file})
                 socketio.emit('complete', {'type': 'full', 'success': True, 'path': actual_file})  # Direct reset for Chrome button
                 logging.info("Import signal sent to Premiere Pro extension via SocketIO")
@@ -3526,6 +3651,51 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         logging.error(f"Exception type: {type(e)}")
         logging.error(f"Exception traceback: {traceback.format_exc()}")
         
+        # YouTube frequently answers a valid stream URL with 403 Forbidden
+        # depending on which player client produced it. Retry with other
+        # clients before giving up — this path previously only retried on
+        # cookie-format errors, so a 403 failed instantly.
+        if is_retryable_download_error(e) and 'cancelled' not in str(e).lower():
+            logging.warning(f"[VIDEO] Download failed ({str(e)[:80]}), trying fallback clients...")
+            for label, clients in (
+                ('yt-dlp default selection', None),
+                ('android_vr', ['android_vr']),
+                ('web_safari', ['web_safari']),
+            ):
+                if is_cancelled[0]:
+                    break
+                try:
+                    retry_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
+                    retry_opts.pop('cookiefile', None)
+                    if clients:
+                        retry_opts['extractor_args'] = {'youtube': {'player_client': clients}}
+                    else:
+                        retry_opts.pop('extractor_args', None)
+                    retry_opts.update({
+                        'format': format_string,
+                        'merge_output_format': 'mp4',
+                        'progress_hooks': [progress_hook],
+                        'outtmpl': {
+                            'default': os.path.join(download_path, os.path.splitext(unique_filename)[0] + '.%(ext)s')
+                        },
+                    })
+                    logging.info(f"[VIDEO] Retry with {label}...")
+                    with yt_dlp.YoutubeDL(retry_opts) as ydl_retry:
+                        current_download['ydl'] = ydl_retry
+                        # Re-extract so the URLs come from this client/session
+                        ydl_retry.download([video_url])
+
+                    base = os.path.splitext(os.path.join(download_path, unique_filename))[0]
+                    for ext in ('mp4', 'mkv', 'webm'):
+                        candidate = f"{base}.{ext}"
+                        if os.path.exists(candidate) and os.path.getsize(candidate) > 0:
+                            logging.info(f"[VIDEO] Retry SUCCESS with {label}: {candidate}")
+                            return candidate
+                    logging.warning(f"[VIDEO] Retry with {label} produced no file")
+                except Exception as retry_error:
+                    logging.warning(f"[VIDEO] Retry with {label} failed: {str(retry_error)[:100]}")
+            logging.error("[VIDEO] All fallback clients failed. YouTube may be blocking this request.")
+
         # Check for cookie-related errors and retry without cookies
         if "invalid Netscape format cookies file" in str(e) or "CookieLoadError" in str(e) or "failed to load cookies" in str(e):
             logging.warning("Cookie format error detected. Attempting download without cookies...")
@@ -3561,7 +3731,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                             test_path = os.path.splitext(final_path)[0] + '.' + ext
                             if os.path.exists(test_path):
                                 logging.info(f"Found fallback downloaded file: {test_path}")
-                                socketio.emit('import_video', {'path': test_path, 'bin': settings.get('premiereBin', '')})
+                                emit_import_video(socketio, {'path': test_path, 'bin': settings.get('premiereBin', '')})
                                 socketio.emit('download-complete', {'url': video_url, 'path': test_path})
                                 logging.info("Import signal sent to Premiere Pro extension via SocketIO")
                                 return test_path
@@ -3893,9 +4063,11 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                     except Exception as download_error:
                         error_str = str(download_error)
                         
-                        # Retry with different format if we get "empty file" error (HLS issue)
-                        if 'empty' in error_str.lower() or 'downloaded file is empty' in error_str.lower():
-                            logging.warning(f"[AUDIO] First download attempt failed with empty file, trying fallback methods...")
+                        # Retry on anything YouTube might serve differently to
+                        # another client: empty file (HLS quirk) and, crucially,
+                        # 403 Forbidden, which used to fail instantly here.
+                        if is_retryable_download_error(download_error):
+                            logging.warning(f"[AUDIO] First attempt failed ({error_str[:80]}), trying fallback clients...")
                             
                             # Clean up any partial files
                             temp_pattern_cleanup = os.path.join(download_path, f"temp_{sanitized_title}*")
@@ -3934,15 +4106,17 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                                     except OSError:
                                         pass
                             
-                            # FALLBACK 2: Try with web client explicitly
+                            # FALLBACK 2: different player client. 'web' alone
+                            # tends to expose no usable audio format, whereas
+                            # web_safari serves a downloadable one.
                             if not fallback_success:
-                                logging.info("[AUDIO] Fallback 2: Trying with web client...")
+                                logging.info("[AUDIO] Fallback 2: Trying with web_safari client...")
                                 try:
                                     fallback_opts_web = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
                                     if 'cookiefile' in fallback_opts_web:
                                         del fallback_opts_web['cookiefile']
                                     fallback_opts_web['format'] = 'bestaudio/best'
-                                    fallback_opts_web['extractor_args'] = {'youtube': {'player_client': ['web']}}
+                                    fallback_opts_web['extractor_args'] = {'youtube': {'player_client': ['default']}}
                                     fallback_opts_web['outtmpl'] = os.path.join(download_path, f'temp_{sanitized_title}')
                                     fallback_opts_web['postprocessors'] = ydl_opts.get('postprocessors', [])
                                     fallback_opts_web['progress_hooks'] = [progress_hook]
@@ -3962,16 +4136,18 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                                         except OSError:
                                             pass
                             
-                            # FALLBACK 3: Try with iOS player client (m3u8 formats)
+                            # FALLBACK 3: let yt-dlp pick the client itself.
+                            # Forcing 'ios' alone exposes no usable audio
+                            # format; yt-dlp's own default ordering tracks
+                            # whatever YouTube currently serves.
                             if not fallback_success:
-                                logging.info("[AUDIO] Fallback 3: Trying with iOS player client...")
+                                logging.info("[AUDIO] Fallback 3: Trying with yt-dlp default client selection...")
                                 try:
                                     fallback_opts_ios = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
                                     if 'cookiefile' in fallback_opts_ios:
                                         del fallback_opts_ios['cookiefile']
-                                    # iOS client with m3u8 formats
-                                    fallback_opts_ios['format'] = 'bestaudio[protocol=m3u8_native]/bestaudio/best'
-                                    fallback_opts_ios['extractor_args'] = {'youtube': {'player_client': ['ios']}}
+                                    fallback_opts_ios['format'] = 'bestaudio/best'
+                                    fallback_opts_ios.pop('extractor_args', None)
                                     fallback_opts_ios['outtmpl'] = os.path.join(download_path, f'temp_{sanitized_title}')
                                     fallback_opts_ios['postprocessors'] = ydl_opts.get('postprocessors', [])
                                     fallback_opts_ios['progress_hooks'] = [progress_hook]
@@ -3981,7 +4157,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                                         if fresh_info:
                                             ydl_ios.process_ie_result(fresh_info, download=True)
                                             fallback_success = True
-                                            logging.info("[AUDIO] Fallback 3 SUCCESS: Downloaded with iOS client")
+                                            logging.info("[AUDIO] Fallback 3 SUCCESS: Downloaded with default client selection")
                                 except Exception as e3:
                                     logging.warning(f"[AUDIO] Fallback 3 failed: {str(e3)[:100]}")
                             
@@ -3990,7 +4166,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
                                 logging.error("[AUDIO] All fallback methods failed. YouTube may be blocking this request.")
                                 raise download_error
                         else:
-                            raise download_error  # Re-raise non-empty-file errors
+                            raise download_error  # Not retryable - surface it
                     
                     # IMPORTANT: Wait for post-processing to complete
                     # yt-dlp's process_ie_result is synchronous and should wait,
@@ -4121,7 +4297,7 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
 
                 # Emit both completion events before returning
                 if socketio:
-                    socketio.emit('import_video', {'path': output_path, 'bin': settings.get('premiereBin', '')})
+                    emit_import_video(socketio, {'path': output_path, 'bin': settings.get('premiereBin', '')})
                     # Emit both formats to ensure compatibility
                     socketio.emit('download-complete', {'url': video_url, 'path': output_path})  # Hyphenated format for Chrome extension
                     logging.info("Import signal sent to Premiere Pro extension via SocketIO")
@@ -4302,16 +4478,16 @@ def _setup_nodejs_fallback(base_options, cookies_file=None):
         base_options['js_runtimes'] = {'node': {}}
         if cookies_file:
             # Authenticated: tv_downgraded provides full DASH (up to 1080p)
-            base_options['extractor_args'] = {'youtube': {'player_client': ['tv_downgraded', 'android_vr']}}
+            base_options['extractor_args'] = {'youtube': {'player_client': ['default']}}
             logging.info("[NODE-FALLBACK] Using tv_downgraded+android_vr clients (cookies available)")
         else:
             # Unauthenticated: android provides combined format 18 (360p) reliably
-            base_options['extractor_args'] = {'youtube': {'player_client': ['android_vr', 'android']}}
+            base_options['extractor_args'] = {'youtube': {'player_client': ['default']}}
             logging.info("[NODE-FALLBACK] Using android_vr+android clients (no cookies)")
     else:
         logging.warning("[NODE-FALLBACK] Node.js not found either. Using android client (360p only).")
         # android gives format 18 (combined 360p mp4) without any JS runtime or PO token
-        base_options['extractor_args'] = {'youtube': {'player_client': ['android']}}
+        base_options['extractor_args'] = {'youtube': {'player_client': ['default']}}
         logging.info("[NODE-FALLBACK] Using android client (format 18 = 360p combined mp4)")
 
 
@@ -4410,7 +4586,7 @@ def get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=None):
             # because bestaudio[ext=m4a] (format 140) becomes unavailable.
             # Fix: force ios+android_vr which still provide full HTTPS DASH formats.
             # See: https://github.com/yt-dlp/yt-dlp/issues/12482
-            base_options['extractor_args'] = {'youtube': {'player_client': ['ios', 'android_vr']}}
+            base_options['extractor_args'] = {'youtube': {'player_client': ['default']}}
             logging.info("[FIX-SABR] Using ios+android_vr clients (web_safari is SABR-only, see yt-dlp#12482)")
         else:
             logging.warning("[WARNING] Deno unavailable or not working. Trying Node.js fallback...")
