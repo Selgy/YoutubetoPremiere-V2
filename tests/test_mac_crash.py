@@ -119,7 +119,10 @@ class TestSentryDumps:
                                        report_dirs=[str(tmp_path / 'none')],
                                        sentry_roots=[str(tmp_path / 'Premiere Pro' / '26.0' / 'SentryIO-db')])
         out = tmp_path / 'logs' / 'crash_reports' / 'sentry'
-        assert sorted(os.listdir(out)) == ['abc.dmp', 'abc.envelope']
+        copied = os.listdir(out)
+        # Only the minidump, under a dated unique name (see test_connection_and_sentry.py)
+        assert len(copied) == 1
+        assert copied[0].startswith('minidump_') and copied[0].endswith('_abc.dmp')
 
     def test_no_sentry_folder_is_fine(self, tmp_path):
         collect_premiere_crash_reports(str(tmp_path), report_dirs=[], sentry_roots=[str(tmp_path / 'x')])

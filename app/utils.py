@@ -557,6 +557,23 @@ def save_download_path(download_path):
     return save_settings(settings)
 
 
+def is_sid_connected(socketio, sid, namespace='/'):
+    """True if `sid` is currently connected, per the Socket.IO server's own state.
+
+    Never probe by emitting: Server.emit() takes no `timeout` argument (only
+    call() does), so the old ping probe that passed a timeout to it always
+    raised TypeError, the exception was swallowed, and every live client was
+    reported dead - cleanup_stale_connections() then emptied the registry
+    before each targeted emit, so everything fell back to a broadcast. And
+    even without `timeout`, emitting to an unknown SID raises nothing, so an
+    emit can never tell a live client from a gone one.
+    """
+    try:
+        return bool(socketio.server.manager.is_connected(sid, namespace))
+    except Exception:
+        return False
+
+
 # --- Premiere crash report collection ---------------------------------------
 # Users reported Premiere Pro crashing on macOS while downloading, but nobody
 # could say where: the Adobe crash dialog offers "don't ask again", and even
@@ -718,38 +735,76 @@ def collect_premiere_crash_reports(dest_dir, max_age_days=14, limit=5, report_di
 
 
 def _copy_sentry_dumps(roots, dest_dir, cutoff, limit):
-    """Copy recent files from Premiere's SentryIO-db folders; returns the count."""
+    """Copy real Premiere crash minidumps from Adobe's SentryIO-db; returns the count.
+
+    Only `.dmp` files under SentryIO-db/pending/ and SentryIO-db/completed/ are
+    crashes. Everything else in that tree - the live session's `<uuid>.run/`
+    folder, `settings.dat`, `.lock`, `session.json`, `__sentry-event` - exists
+    in every normal Premiere session; copying those (as the first version did)
+    announced a crash on every launch, and their newer timestamps pushed the
+    one real minidump out of `limit`.
+    """
     picked = []
     for root in roots:
-        for dirpath, _dirs, files in os.walk(root):
-            for name in files:
-                p = os.path.join(dirpath, name)
+        for sub in ('pending', 'completed'):
+            folder = os.path.join(root, sub)
+            if not os.path.isdir(folder):
+                continue
+            for name in os.listdir(folder):
+                if not name.lower().endswith('.dmp'):
+                    continue
+                p = os.path.join(folder, name)
                 try:
                     mtime = os.path.getmtime(p)
                 except OSError:
                     continue
                 if mtime >= cutoff:
-                    picked.append((mtime, p))
+                    picked.append((mtime, p, root))
+
     if not picked:
         return 0
+
     picked.sort(reverse=True)
     out_dir = os.path.join(dest_dir, 'crash_reports', 'sentry')
     copied = 0
     try:
         os.makedirs(out_dir, exist_ok=True)
-        for _, p in picked[:limit]:
-            try:
-                shutil.copy2(p, os.path.join(out_dir, os.path.basename(p)))
-                copied += 1
-            except Exception as e:
-                logging.debug(f"Could not copy {p}: {e}")
     except Exception as e:
         logging.debug(f"Could not prepare {out_dir}: {e}")
+        return 0
+
+    for mtime, p, root in picked[:limit]:
+        uuid = os.path.splitext(os.path.basename(p))[0]
+        stamp = time.strftime('%Y-%m-%d_%H-%M', time.localtime(mtime))
+        # Unique and dated: the same uuid can sit in both pending/ and completed/
+        target = os.path.join(out_dir, f"minidump_{stamp}_{uuid}.dmp")
+        n = 1
+        while os.path.exists(target):
+            target = os.path.join(out_dir, f"minidump_{stamp}_{uuid}_{n}.dmp")
+            n += 1
+        try:
+            shutil.copy2(p, target)
+            copied += 1
+        except Exception as e:
+            logging.debug(f"Could not copy {p}: {e}")
+            continue
+
+        # The event and breadcrumbs for this very crash
+        attachments = os.path.join(root, 'attachments', uuid)
+        if os.path.isdir(attachments):
+            dest_att = os.path.join(out_dir, f"attachments_{uuid}")
+            try:
+                if not os.path.exists(dest_att):
+                    shutil.copytree(attachments, dest_att)
+            except Exception as e:
+                logging.debug(f"Could not copy {attachments}: {e}")
+
     if copied:
-        logging.warning(f"[CRASH-REPORTS] {copied} Premiere crash dump(s) from Adobe's "
+        logging.warning(f"[CRASH-REPORTS] {copied} Premiere crash minidump(s) from Adobe's "
                         f"SentryIO-db copied to {out_dir} - a Premiere crash was caught by "
                         f"Adobe's handler (no Apple report is written for those)")
     return copied
+
 
 def get_temp_dir():
     """Get the temporary directory for files."""

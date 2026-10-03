@@ -9,7 +9,7 @@ from flask_cors import CORS
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO
 from routes import register_routes
-from utils import load_settings, monitor_premiere_and_shutdown, play_notification_sound, get_temp_dir, clear_temp_files, rotate_log_files, SharedFileHandler, collect_premiere_crash_reports
+from utils import load_settings, monitor_premiere_and_shutdown, play_notification_sound, get_temp_dir, clear_temp_files, rotate_log_files, SharedFileHandler, collect_premiere_crash_reports, is_sid_connected
 import re
 import subprocess
 import requests
@@ -521,13 +521,8 @@ def handle_connection_check(data):
         app_logger.error(f'Error in handle_connection_check: {str(e)}')
 
 def is_client_connected(sid):
-    """Check if a client is still connected by testing the connection"""
-    try:
-        # Try to emit a test event to check if connection is alive
-        socketio.emit('ping', {}, room=sid, timeout=1)
-        return True
-    except Exception:
-        return False
+    """Check if a client is still connected, using the server's own state."""
+    return is_sid_connected(socketio, sid)
 
 def cleanup_stale_connections():
     """Clean up connections that are no longer active"""
