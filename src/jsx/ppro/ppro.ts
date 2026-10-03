@@ -11,6 +11,38 @@ import {
   helloArrayStr,
   helloObj,
 } from "../utils/samples";
+// importFiles() returns a boolean, not an array of ProjectItems, so the imported
+// item must be located by its media path. Searches every bin recursively.
+function findItemByMediaPath(container: any, mediaPath: string): any {
+  if (!container || !container.children) return null;
+  //@ts-ignore - ExtendScript globals
+  var want = new File(mediaPath).fsName.toLowerCase();
+  for (var i = 0; i < container.children.numItems; i++) {
+    try {
+      var it = container.children[i];
+      if (!it) continue;
+      if (it.type === 2) {
+        var inner = findItemByMediaPath(it, mediaPath);
+        if (inner) return inner;
+        continue;
+      }
+      //@ts-ignore - ExtendScript globals
+      if (new File(it.getMediaPath()).fsName.toLowerCase() === want) return it;
+    } catch (e) {}
+  }
+  return null;
+}
+
+// openProjectItem() with an invalid argument does not throw: Premiere calls
+// dvacore::config::Abort() and the whole app dies. Only pass a real clip/file.
+function isUsableProjectItem(it: any): boolean {
+  try {
+    return !!it && typeof it === 'object' && !!it.nodeId && it.type !== 2 && it.type !== 3;
+  } catch (e) {
+    return false;
+  }
+}
+
 export { helloError, helloStr, helloNum, helloArrayStr, helloObj, helloVoid };
 import { dispatchTS } from "../utils/utils";
 
@@ -208,7 +240,10 @@ export const importVideoToSource = (videoPath: string, binPath: string = '') => 
     if (newItems.length > 0) {
       importedItem = newItems[0];
     } else {
-      importedItem = importedFiles[0];
+      // importFiles() returns a boolean: importedFiles[0] is undefined, and
+      // undefined in openProjectItem() aborted Premiere. Look it up instead.
+      //@ts-ignore - ExtendScript globals
+      importedItem = findItemByMediaPath(app.project.rootItem, normalizedPath);
     }
     
     // Get the project item ID
@@ -235,6 +270,14 @@ export const importVideoToSource = (videoPath: string, binPath: string = '') => 
       // No $.sleep() before this — it blocks Premiere Pro's main thread on Mac
       // and causes OS watchdog crash reports. openProjectItem() is safe to call
       // immediately since importFiles() already completed synchronously above.
+      if (!isUsableProjectItem(importedItem)) {
+        return {
+          success: true,
+          path: normalizedPath,
+          projectItem: projectItemId,
+          sourceMonitorError: "Imported item not found; Source Monitor not opened"
+        };
+      }
       //@ts-ignore - ExtendScript globals
       var result = app.sourceMonitor.openProjectItem(importedItem);
 

@@ -8,6 +8,34 @@ Object.defineProperty(exports, "helloStr", { enumerable: true, get: function () 
 Object.defineProperty(exports, "helloNum", { enumerable: true, get: function () { return samples_1.helloNum; } });
 Object.defineProperty(exports, "helloArrayStr", { enumerable: true, get: function () { return samples_1.helloArrayStr; } });
 Object.defineProperty(exports, "helloObj", { enumerable: true, get: function () { return samples_1.helloObj; } });
+// importFiles() returns a boolean, not an array of ProjectItems, so the imported
+// item must be located by its media path. Searches every bin recursively.
+function findItemByMediaPath(container, mediaPath) {
+    if (!container || !container.children) return null;
+    var want = new File(mediaPath).fsName.toLowerCase();
+    for (var i = 0; i < container.children.numItems; i++) {
+        try {
+            var it = container.children[i];
+            if (!it) continue;
+            if (it.type === 2) {
+                var inner = findItemByMediaPath(it, mediaPath);
+                if (inner) return inner;
+                continue;
+            }
+            if (new File(it.getMediaPath()).fsName.toLowerCase() === want) return it;
+        } catch (e) {}
+    }
+    return null;
+}
+// openProjectItem() with an invalid argument does not throw: Premiere calls
+// dvacore::config::Abort() and the whole app dies. Only pass a real clip/file.
+function isUsableProjectItem(it) {
+    try {
+        return !!it && typeof it === 'object' && !!it.nodeId && it.type !== 2 && it.type !== 3;
+    } catch (e) {
+        return false;
+    }
+}
 var qeDomFunction = function () {
     if (typeof qe === "undefined") {
         app.enableQE();
@@ -170,7 +198,9 @@ var importVideoToSource = function (videoPath, binPath) {
             importedItem = newItems[0];
         }
         else {
-            importedItem = importedFiles[0];
+            // importFiles() returns a boolean: importedFiles[0] is undefined, and
+            // undefined in openProjectItem() aborted Premiere. Look it up instead.
+            importedItem = findItemByMediaPath(app.project.rootItem, normalizedPath);
         }
         // Get the project item ID
         try {
@@ -195,6 +225,14 @@ var importVideoToSource = function (videoPath, binPath) {
             // thread on Mac and causes OS watchdog crash reports. importFiles() is
             // synchronous so the item is already available when we reach this point.
             // Use the documented method app.sourceMonitor.openProjectItem()
+            if (!isUsableProjectItem(importedItem)) {
+                return {
+                    success: true,
+                    path: normalizedPath,
+                    projectItem: projectItemId,
+                    sourceMonitorError: "Imported item not found; Source Monitor not opened"
+                };
+            }
             //@ts-ignore - ExtendScript globals
             var result = app.sourceMonitor.openProjectItem(importedItem);
             // Done

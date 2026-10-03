@@ -7,6 +7,7 @@ from flask import jsonify
 import sys
 import platform
 import time
+import threading
 import requests
 import hashlib
 
@@ -161,14 +162,40 @@ def is_retryable_download_error(error):
     ))
 
 
+# Paths already sent for import, with the time they were sent.
+_recent_import_emits = {}
+_recent_import_lock = threading.Lock()
+IMPORT_DEDUP_SECONDS = 10
+
+
 def emit_import_video(socketio, payload):
-    """Send an import request to the Premiere panel.
+    """Send an import request to the Premiere panel - once per file.
 
     Goes through emit_to_client_type so the log says plainly when no panel is
     listening. A clip could download fine and report "Import signal sent" while
     nothing was connected to receive it, which looked like a silent failure of
     the import itself.
+
+    Exactly once: download_and_process_clip and download_audio emit on success,
+    and handle_video_url emitted again right behind them, 2 ms apart. The panel
+    then ran two concurrent imports of the same file; Premiere filed the second
+    outside the bin being diffed, the lookup found nothing, and the old JSX
+    passed `undefined` to openProjectItem() - which aborts Premiere on macOS.
+    Every download path gives its file a unique name, so the same path within a
+    few seconds is always a duplicate.
     """
+    path = (payload or {}).get('path')
+    if path:
+        now = time.time()
+        with _recent_import_lock:
+            for p, t in list(_recent_import_emits.items()):
+                if now - t > IMPORT_DEDUP_SECONDS:
+                    del _recent_import_emits[p]
+            if path in _recent_import_emits:
+                logging.info(f"[IMPORT] Duplicate import request ignored: {path}")
+                return
+            _recent_import_emits[path] = now
+
     if _emit_to_client_type:
         _emit_to_client_type('import_video', payload, 'premiere')
     else:

@@ -643,7 +643,8 @@ def summarize_crash_report(path):
         return None
 
 
-def collect_premiere_crash_reports(dest_dir, max_age_days=14, limit=5, report_dirs=None):
+def collect_premiere_crash_reports(dest_dir, max_age_days=14, limit=5, report_dirs=None,
+                                   sentry_roots=None):
     """Copy recent Premiere Pro crash reports into dest_dir and log a summary.
 
     Never raises: this is diagnostics, it must not affect startup.
@@ -654,6 +655,10 @@ def collect_premiere_crash_reports(dest_dir, max_age_days=14, limit=5, report_di
         if report_dirs is None:
             if sys.platform != 'darwin':
                 return summaries
+            if sentry_roots is None:
+                import glob as _glob
+                sentry_roots = _glob.glob(os.path.expanduser(
+                    '~/Library/Caches/Adobe/Premiere Pro/*/SentryIO-db'))
             report_dirs = [
                 os.path.expanduser('~/Library/Logs/DiagnosticReports'),
                 os.path.expanduser('~/Library/Logs/DiagnosticReports/Retired'),
@@ -676,8 +681,15 @@ def collect_premiere_crash_reports(dest_dir, max_age_days=14, limit=5, report_di
                 if mtime >= cutoff:
                     found.append((mtime, p))
 
+        # Adobe's own crash handler (Sentry) catches Premiere's abort() before
+        # macOS does: the minidump lands in SentryIO-db, is uploaded, then
+        # deleted, and DiagnosticReports stays EMPTY for these crashes. Grab
+        # whatever is still there before it goes.
+        sentry_copied = _copy_sentry_dumps(sentry_roots or [], dest_dir, cutoff, limit)
+
         if not found:
-            logging.info("[CRASH-REPORTS] No recent Premiere Pro crash reports")
+            if not sentry_copied:
+                logging.info("[CRASH-REPORTS] No recent Premiere Pro crash reports")
             return summaries
 
         found.sort(reverse=True)
@@ -703,6 +715,41 @@ def collect_premiere_crash_reports(dest_dir, max_age_days=14, limit=5, report_di
         logging.debug(f"Crash report collection failed: {e}")
     return summaries
 
+
+
+def _copy_sentry_dumps(roots, dest_dir, cutoff, limit):
+    """Copy recent files from Premiere's SentryIO-db folders; returns the count."""
+    picked = []
+    for root in roots:
+        for dirpath, _dirs, files in os.walk(root):
+            for name in files:
+                p = os.path.join(dirpath, name)
+                try:
+                    mtime = os.path.getmtime(p)
+                except OSError:
+                    continue
+                if mtime >= cutoff:
+                    picked.append((mtime, p))
+    if not picked:
+        return 0
+    picked.sort(reverse=True)
+    out_dir = os.path.join(dest_dir, 'crash_reports', 'sentry')
+    copied = 0
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        for _, p in picked[:limit]:
+            try:
+                shutil.copy2(p, os.path.join(out_dir, os.path.basename(p)))
+                copied += 1
+            except Exception as e:
+                logging.debug(f"Could not copy {p}: {e}")
+    except Exception as e:
+        logging.debug(f"Could not prepare {out_dir}: {e}")
+    if copied:
+        logging.warning(f"[CRASH-REPORTS] {copied} Premiere crash dump(s) from Adobe's "
+                        f"SentryIO-db copied to {out_dir} - a Premiere crash was caught by "
+                        f"Adobe's handler (no Apple report is written for those)")
+    return copied
 
 def get_temp_dir():
     """Get the temporary directory for files."""
