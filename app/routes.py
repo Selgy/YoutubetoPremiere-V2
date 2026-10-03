@@ -81,7 +81,6 @@ def resolve_clip_anchor_time(current_time, video_url):
     return (reported if reported is not None else 0.0), 'player'
 
 def register_routes(app, socketio, settings, emit_fn=None):
-    connected_clients = set()
 
     # Use the emit_fn passed from YoutubetoPremiere to avoid a circular import.
     # (Previously this did `from YoutubetoPremiere import emit_to_client_type` which
@@ -91,19 +90,14 @@ def register_routes(app, socketio, settings, emit_fn=None):
     # Set the emit function for video_processing to use
     set_emit_function(emit_to_client_type)
     
-    @socketio.on('connect')
-    def handle_connect():
-        client_id = request.sid
-        connected_clients.add(client_id)
-        logging.info(f'Client connected to route handler')
-        socketio.emit('connection_status', {'status': 'connected'}, room=client_id)
-
-    @socketio.on('disconnect')
-    def handle_route_disconnect(sid=None):
-        client_id = request.sid
-        if client_id in connected_clients:
-            connected_clients.remove(client_id)
-        logging.info(f'Client disconnected from route handler')
+    # No 'connect' / 'disconnect' handlers here. Flask-SocketIO keeps ONE handler
+    # per event, and register_routes() runs after YoutubetoPremiere.py's module-
+    # level decorators - so the ones that used to sit here silently replaced the
+    # real handlers, the only place connected_clients is filled. The Premiere
+    # panel was therefore never registered as a 'premiere' client ("[CONNECTED]
+    # New connection attempt" never appeared in any log, only "Client connected
+    # to route handler"), and every targeted emit fell back to a broadcast.
+    # The real handler already sends connection_status.
 
     @app.route('/')
     def root():

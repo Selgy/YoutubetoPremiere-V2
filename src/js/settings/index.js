@@ -4,6 +4,17 @@ import { SystemPath } from '../lib/cep/csinterface';
 import { setupVideoImportHandler } from './videoImport';
 import { initBolt, evalFile, evalES } from '../lib/utils/bolt';
 
+// Node's `process` without relying on CEP's --mixed-context flag.
+//
+// --mixed-context leaks Node globals into the browser context, which is the
+// only reason bare `process.platform` / `process.env` used to work here. That
+// flag is a documented source of host instability - Premiere Pro crashing on
+// macOS with the Adobe crash reporter - and every prior Mac crash fix in this
+// repo went after ExtendScript instead, so it was never removed. cep_node is
+// the supported separate-context bridge and exposes the same `process`.
+const process = (typeof window !== 'undefined' && window.cep_node && window.cep_node.process)
+    || (typeof globalThis !== 'undefined' ? globalThis.process : undefined);
+
 let PythonServerProcess = null;
 let csInterface = null;
 let fsWatcher = null;

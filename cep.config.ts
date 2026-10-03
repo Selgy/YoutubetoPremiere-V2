@@ -22,7 +22,9 @@ const config: CEP_Config = {
   parameters: [
     "--v=0",
     "--enable-nodejs",
-    "--mixed-context",
+    // --mixed-context deliberately NOT set: it merges the Node and browser JS
+    // contexts and is a known cause of the host app crashing on macOS. All Node
+    // access goes through window.cep_node instead (see settings/index.js).
     "--allow-file-access",
     "--disable-web-security",
     "--allow-file-access-from-files",

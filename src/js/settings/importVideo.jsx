@@ -61,6 +61,62 @@
         return ids;
     };
 
+    // ---- crash-safety helpers (Premiere 26.x on macOS) -----------------------
+    // Collect every nodeId in a container and all its sub-bins into `set`.
+    $._ext.collectNodeIds = function(container, set) {
+        if (!container || !container.children) return set;
+        for (var i = 0; i < container.children.numItems; i++) {
+            try {
+                var it = container.children[i];
+                if (!it) continue;
+                if (it.nodeId) set[it.nodeId] = true;
+                if (it.type === 2) $._ext.collectNodeIds(it, set);
+            } catch (e) {}
+        }
+        return set;
+    };
+
+    // Same file on disk? Case-insensitive: default macOS and Windows volumes are.
+    $._ext.samePath = function(a, b) {
+        if (!a || !b) return false;
+        try {
+            return new File(a).fsName.toLowerCase() === new File(b).fsName.toLowerCase();
+        } catch (e) {
+            return false;
+        }
+    };
+
+    // Find the item for mediaPath under container (recursively). Prefer one that
+    // did not exist before the import; otherwise any item for that file.
+    $._ext.findImportedItem = function(container, mediaPath, beforeIds) {
+        var fresh = null, existing = null;
+        var walk = function(c) {
+            if (!c || !c.children) return;
+            for (var i = 0; i < c.children.numItems; i++) {
+                try {
+                    var it = c.children[i];
+                    if (!it) continue;
+                    if (it.type === 2) { walk(it); continue; }
+                    var p = null;
+                    try { p = it.getMediaPath(); } catch (e) {}
+                    if (!$._ext.samePath(p, mediaPath)) continue;
+                    if (!beforeIds[it.nodeId]) { fresh = it; } else if (!existing) { existing = it; }
+                } catch (e) {}
+            }
+        };
+        walk(container);
+        return fresh || existing;
+    };
+
+    // openProjectItem() must only ever receive a real clip/file ProjectItem.
+    $._ext.isUsableProjectItem = function(it) {
+        try {
+            return !!it && typeof it === 'object' && !!it.nodeId && it.type !== 2 && it.type !== 3;
+        } catch (e) {
+            return false;
+        }
+    };
+
     safeDebug("Initializing importVideoToSource function");
 
     // Main function to import a file and open it in the Source Monitor
@@ -133,108 +189,68 @@
             var targetBin = $._ext.getTargetBin(rootItem, binPath || '');
             safeDebug("Target bin: " + targetBin.name);
 
-            // Get the node IDs before import (from target bin)
-            var beforeNodeIds = $._ext.getAllNodeIds(targetBin);
-            safeDebug("Before import: " + beforeNodeIds.length + " items");
+            // Snapshot every item in the WHOLE project, not only the target bin:
+            // Premiere can file the import elsewhere (reproduced when the same file
+            // is imported twice concurrently), and a diff over one bin then finds
+            // nothing at all.
+            var beforeIds = $._ext.collectNodeIds(rootItem, {});
 
-            // Import the file into target bin
+            // importFiles() returns a BOOLEAN ("true if successful, false if not"),
+            // not an array of ProjectItems - measured on 26.3.2: typeof "boolean",
+            // [0] undefined, .length undefined. The old code indexed it as an
+            // array, so its fallback handed `undefined` to openProjectItem().
             safeDebug("Importing file...");
-            var importedFiles = project.importFiles([normalizedPath],
+            var importOk = project.importFiles([normalizedPath],
                 false,             // suppressUI
                 targetBin,         // parentBin
                 false              // importAsNumberedStills
             );
-            
-            // Check if the import actually returned a valid item
-            if (!importedFiles || importedFiles.length === 0) {
-                safeDebug("Import failed - returned null or empty array");
-                return { 
-                    success: false, 
-                    error: "Import returned null or empty array",
+            safeDebug("importFiles returned: " + importOk);
+            if (importOk === false) {
+                return {
+                    success: false,
+                    error: "Premiere refused to import the file",
                     path: videoPath
                 };
             }
-            
-            safeDebug("File imported successfully, getting project update...");
 
-            // NOTE: No $.sleep() here. importFiles() is synchronous in ExtendScript —
-            // the project is already updated when it returns. $.sleep() blocks Premiere Pro's
-            // main thread and triggers Mac OS watchdog crash report dialogs.
-
-            // Get the node IDs after import (from target bin)
-            var afterNodeIds = $._ext.getAllNodeIds(targetBin);
-            safeDebug("After import: " + afterNodeIds.length + " items");
-
-            // Find the new item(s) in the target bin
-            var newItems = [];
-            var newItemIds = [];
-
-            for (var i = 0; i < targetBin.children.numItems; i++) {
-                var item = targetBin.children[i];
-                var found = false;
-
-                // Skip bins
-                if (item.type === 2) { // BIN type
-                    continue;
-                }
-
-                // Check if the item's nodeId is in the before list
-                for (var j = 0; j < beforeNodeIds.length; j++) {
-                    if (item.nodeId === beforeNodeIds[j]) {
-                        found = true;
-                        break;
-                    }
-                }
-
-                // If not found in the before list, it's new
-                if (!found) {
-                    newItems.push(item);
-                    newItemIds.push(item.nodeId);
-                }
-            }
-            
-            safeDebug("Found " + newItems.length + " new items");
-            
-            // If no new items were found, try to use the first imported item
-            var importedItem = null;
+            var importedItem = $._ext.findImportedItem(targetBin, normalizedPath, beforeIds)
+                            || $._ext.findImportedItem(rootItem, normalizedPath, beforeIds);
             var projectItemId = null;
-            
-            if (newItems.length > 0) {
-                importedItem = newItems[0];
-                safeDebug("Using new item: " + importedItem.name);
-            } else {
-                importedItem = importedFiles[0];
-                safeDebug("Using imported file reference: " + importedItem.name);
-            }
-            
-            // Get the project item ID
-            try {
-                projectItemId = importedItem.nodeId;
-                safeDebug("Project item ID: " + projectItemId);
-            } catch(e) {
-                safeDebug("Could not get project item ID: " + e.toString());
-            }
+            try { projectItemId = importedItem ? importedItem.nodeId : null; } catch (e) {}
+            safeDebug("Imported item: " + (importedItem ? importedItem.name : "(not found)"));
 
             // Now try to open in source monitor
             try {
                 safeDebug("Opening in Source Monitor...");
-                
+
                 // Make sure we have a source monitor
                 if (!app.sourceMonitor) {
                     safeDebug("Source monitor not available");
-                    return { 
+                    return {
                         success: true, // Import succeeded even if we can't open in source monitor
                         path: normalizedPath,
                         projectItem: projectItemId,
                         sourceMonitorError: "Source monitor not available"
                     };
                 }
-                
-                // No $.sleep() before openProjectItem() — it blocks Premiere Pro's main
-                // thread on Mac and causes OS watchdog crash reports. importFiles() is
-                // synchronous so the item is already available when we reach this point.
 
-                // Use the documented method app.sourceMonitor.openProjectItem()
+                // openProjectItem() with an invalid argument does NOT throw: Premiere
+                // runs its own signal handler, then dvacore::config::Abort() -> abort(),
+                // and the whole application dies (main-thread stack through
+                // SL::SourceMonitorLiveObject::DVAOpenProjectItem; reproduced with
+                // openProjectItem(null)). This was the Mac crash during downloads.
+                // Only ever pass a validated ProjectItem; otherwise skip the monitor.
+                if (!$._ext.isUsableProjectItem(importedItem)) {
+                    safeDebug("No usable ProjectItem - Source Monitor not opened");
+                    return {
+                        success: true,
+                        path: normalizedPath,
+                        projectItem: projectItemId,
+                        sourceMonitorError: "Imported item not found; Source Monitor not opened"
+                    };
+                }
+
                 safeDebug("Opening project item in source monitor...");
                 var result = app.sourceMonitor.openProjectItem(importedItem);
                 safeDebug("openProjectItem result: " + result);
