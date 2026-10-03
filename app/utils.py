@@ -556,6 +556,154 @@ def save_download_path(download_path):
     settings['downloadPath'] = download_path
     return save_settings(settings)
 
+
+# --- Premiere crash report collection ---------------------------------------
+# Users reported Premiere Pro crashing on macOS while downloading, but nobody
+# could say where: the Adobe crash dialog offers "don't ask again", and even
+# when it shows, users rarely find ~/Library/Logs/DiagnosticReports. So the app
+# gathers the evidence itself on startup - after a crash Premiere relaunches the
+# panel, which relaunches us - copies the reports next to our own logs (the
+# "open logs folder" button then hands over everything) and writes the
+# crashed thread's top frames into the main log.
+
+def _summarize_ips(text):
+    """Summarise a macOS .ips crash report (macOS 12+: JSON header + JSON body)."""
+    header_line, _, body = text.partition('\n')
+    header = json.loads(header_line)
+    data = json.loads(body)
+
+    exc = data.get('exception', {}) or {}
+    images = data.get('usedImages', []) or []
+    threads = data.get('threads', []) or []
+    idx = data.get('faultingThread')
+    crashed = threads[idx] if isinstance(idx, int) and 0 <= idx < len(threads) else \
+        next((t for t in threads if t.get('triggered')), {})
+
+    frames = []
+    for fr in (crashed.get('frames') or [])[:8]:
+        ii = fr.get('imageIndex')
+        image = images[ii].get('name', '?') if isinstance(ii, int) and 0 <= ii < len(images) else '?'
+        frames.append(f"{image}  {fr.get('symbol', '?')}")
+
+    return {
+        'app': header.get('app_name') or data.get('procName', '?'),
+        'version': header.get('app_version', '?'),
+        'time': header.get('timestamp', '?'),
+        'exception': f"{exc.get('type', '?')} {exc.get('signal', '')}".strip(),
+        'thread': crashed.get('name') or crashed.get('queue') or f"#{idx}",
+        'frames': frames,
+    }
+
+
+def _summarize_crash_text(text):
+    """Summarise a legacy plain-text .crash report."""
+    def field(name):
+        for line in text.splitlines():
+            if line.startswith(name):
+                return line.split(':', 1)[1].strip()
+        return '?'
+
+    frames, in_crashed = [], False
+    for line in text.splitlines():
+        if line.startswith('Thread') and 'Crashed' in line:
+            in_crashed = True
+            continue
+        if in_crashed:
+            if not line.strip():
+                break
+            parts = line.split()
+            if len(parts) >= 4:
+                frames.append(f"{parts[1]}  {' '.join(parts[3:])}")
+            if len(frames) >= 8:
+                break
+
+    return {
+        'app': field('Process'),
+        'version': field('Version'),
+        'time': field('Date/Time'),
+        'exception': field('Exception Type'),
+        'thread': 'crashed thread',
+        'frames': frames,
+    }
+
+
+def summarize_crash_report(path):
+    """Return a summary dict for a crash report file, or None if unreadable."""
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            text = f.read()
+        if path.endswith('.ips'):
+            try:
+                return _summarize_ips(text)
+            except Exception:
+                return _summarize_crash_text(text)
+        return _summarize_crash_text(text)
+    except Exception as e:
+        logging.debug(f"Could not summarise crash report {path}: {e}")
+        return None
+
+
+def collect_premiere_crash_reports(dest_dir, max_age_days=14, limit=5, report_dirs=None):
+    """Copy recent Premiere Pro crash reports into dest_dir and log a summary.
+
+    Never raises: this is diagnostics, it must not affect startup.
+    Returns the list of summaries written to the log.
+    """
+    summaries = []
+    try:
+        if report_dirs is None:
+            if sys.platform != 'darwin':
+                return summaries
+            report_dirs = [
+                os.path.expanduser('~/Library/Logs/DiagnosticReports'),
+                os.path.expanduser('~/Library/Logs/DiagnosticReports/Retired'),
+            ]
+
+        cutoff = time.time() - max_age_days * 86400
+        found = []
+        for d in report_dirs:
+            if not os.path.isdir(d):
+                continue
+            for name in os.listdir(d):
+                low = name.lower()
+                if 'premiere' not in low or not low.endswith(('.ips', '.crash')):
+                    continue
+                p = os.path.join(d, name)
+                try:
+                    mtime = os.path.getmtime(p)
+                except OSError:
+                    continue
+                if mtime >= cutoff:
+                    found.append((mtime, p))
+
+        if not found:
+            logging.info("[CRASH-REPORTS] No recent Premiere Pro crash reports")
+            return summaries
+
+        found.sort(reverse=True)
+        out_dir = os.path.join(dest_dir, 'crash_reports')
+        os.makedirs(out_dir, exist_ok=True)
+        logging.warning(f"[CRASH-REPORTS] {len(found)} Premiere Pro crash report(s) in the last "
+                        f"{max_age_days} days - copied to {out_dir}")
+
+        for _, p in found[:limit]:
+            try:
+                shutil.copy2(p, os.path.join(out_dir, os.path.basename(p)))
+            except Exception as e:
+                logging.debug(f"Could not copy {p}: {e}")
+            s = summarize_crash_report(p)
+            if not s:
+                continue
+            summaries.append(s)
+            logging.warning(f"[CRASH-REPORTS] {os.path.basename(p)}: {s['app']} {s['version']} "
+                            f"at {s['time']} - {s['exception']} on {s['thread']}")
+            for fr in s['frames']:
+                logging.warning(f"[CRASH-REPORTS]     {fr}")
+    except Exception as e:
+        logging.debug(f"Crash report collection failed: {e}")
+    return summaries
+
+
 def get_temp_dir():
     """Get the temporary directory for files."""
     import os

@@ -9,7 +9,7 @@ from flask_cors import CORS
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO
 from routes import register_routes
-from utils import load_settings, monitor_premiere_and_shutdown, play_notification_sound, get_temp_dir, clear_temp_files, rotate_log_files, SharedFileHandler
+from utils import load_settings, monitor_premiere_and_shutdown, play_notification_sound, get_temp_dir, clear_temp_files, rotate_log_files, SharedFileHandler, collect_premiere_crash_reports
 import re
 import subprocess
 import requests
@@ -107,6 +107,11 @@ write_session_header()
 logging.info(f"Logging initialized. Log directory: {log_dir}")
 logging.info(f"Main log file: {main_log_file}")
 logging.info(f"Error log file: {error_log_file}")
+
+# After a Premiere crash the panel relaunches us: gather the crash reports so
+# they end up in the logs folder users can open from the panel. Background
+# thread - scanning DiagnosticReports must never delay the server start.
+threading.Thread(target=collect_premiere_crash_reports, args=(log_dir,), daemon=True).start()
 
 # Manual flush of all handlers
 for handler in logging.getLogger().handlers:
