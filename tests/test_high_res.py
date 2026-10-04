@@ -416,6 +416,21 @@ class TestWiring:
         assert 'os.remove(cookies_file)' not in src[:first_attempt_end]
         assert src.rindex('os.remove(cookies_file)') > src.index("('Chrome cookies', 'cookies')")
 
+    def test_throttled_first_attempt_is_detected_and_retried(self):
+        """YouTube sometimes throttles a stream to ~65 KB/s and then resets the
+        connection: the download crawled for minutes and failed with no retry."""
+        from video_processing import is_retryable_download_error
+        from yt_dlp.utils import ThrottledDownload
+        assert is_retryable_download_error(ThrottledDownload())
+        assert is_retryable_download_error(Exception(
+            "ERROR: [download] Got error: ('Connection broken: ConnectionResetError(10054, ...)')"))
+        src = self._src('download_video')
+        first = src.index("'throttledratelimit': THROTTLED_RATE_LIMIT")
+        ladder = src.index("ladder = [")
+        assert first < ladder
+        # the fallbacks re-extract in a loop on ThrottledDownload: no limit there
+        assert 'throttledratelimit' not in src[ladder:]
+
     def test_conversion_stays_cancellable(self):
         """cancel_callback used to be cleared before the H.264 conversion, so the
         cancel route could only kill ffmpeg, never flag the download."""

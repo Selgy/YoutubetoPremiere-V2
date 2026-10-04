@@ -142,6 +142,11 @@ def set_emit_function(emit_function):
     global _emit_to_client_type
     _emit_to_client_type = emit_function
 
+# Below this speed for 3 s, yt-dlp treats the URL as throttled. YouTube
+# throttles some stream URLs to ~65 KB/s while fresh ones run at 10+ MB/s.
+THROTTLED_RATE_LIMIT = 250_000  # bytes/s
+
+
 def is_retryable_download_error(error):
     """True when a download failure is worth retrying with another player client.
 
@@ -165,6 +170,11 @@ def is_retryable_download_error(error):
         # yt-dlp's external ffmpeg downloader reports the 403 as an exit code
         # ("ffmpeg exited with code 3436169992"), which used to be fatal.
         'ffmpeg exited with code',
+        # A throttled URL (~65 KB/s) that YouTube then cuts off, or yt-dlp's
+        # own ThrottledDownload: a fresh URL is usually full speed.
+        'connection broken', 'connectionreseterror', 'connection reset',
+        'incompleteread', 'timed out',
+        'throttle',
     ))
 
 
@@ -3435,7 +3445,11 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             'postprocessor_hooks': [lambda d: socketio.emit('percentage', {'percentage': '100%'}) if d['status'] == 'finished' else None],
             'outtmpl': {
                 'default': os.path.join(download_path, os.path.splitext(unique_filename)[0] + '.%(ext)s')
-            }
+            },
+            # First attempt only: a throttled URL raises ThrottledDownload and
+            # the fallbacks below fetch fresh URLs without this limit, so a
+            # genuinely slow connection cannot loop on re-extraction.
+            'throttledratelimit': THROTTLED_RATE_LIMIT,
         })
         
         # Add browser cookies if that's what we're using (fallback when no cookies file)
