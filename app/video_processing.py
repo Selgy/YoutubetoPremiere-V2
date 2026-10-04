@@ -104,6 +104,12 @@ def clean_environment_path():
     logging.debug(f"PATH length: {len(current_path)} -> {len(cleaned_path)} characters")
     
     return cleaned_path
+from high_res import (
+    ensure_avc1,
+    high_res_video_selector,
+    pick_high_res_format,
+    wants_high_res,
+)
 from utils import (
     play_notification_sound,
     get_default_download_path,
@@ -1741,6 +1747,36 @@ def sanitize_resolution(resolution):
         # Default to 1080 if conversion fails
         return 1080
 
+_http_chunk_args_cache = {}
+
+
+def ffmpeg_http_chunk_args(ffmpeg_path):
+    """Input options making FFmpeg fetch googlevideo URLs in bounded chunks.
+
+    FFmpeg normally reads an HTTP input as one open-ended range request
+    (`Range: bytes=0-`), and YouTube throttles those hard: measured on the
+    same URL, 0.8 MB/s open-ended vs 8 MB/s in 2 MB requests - which is how
+    yt-dlp downloads. A 6 s clip went from timing out after 90 s to 0.4 s
+    (1080p AVC1) and 0.6 s (4K VP9) with -request_size. Older FFmpeg builds
+    reject the option, so it is only used when this build advertises it.
+    """
+    if ffmpeg_path in _http_chunk_args_cache:
+        return _http_chunk_args_cache[ffmpeg_path]
+    args = []
+    try:
+        r = subprocess.run([ffmpeg_path, '-hide_banner', '-h', 'protocol=https'],
+                           capture_output=True, text=True, encoding='utf-8', errors='replace',
+                           timeout=15,
+                           creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
+        if 'request_size' in (r.stdout or ''):
+            args = ['-request_size', '2000000', '-multiple_requests', '1']
+    except Exception as e:
+        logging.debug(f"Could not probe ffmpeg http options: {e}")
+    logging.info(f"[DIRECT-FFmpeg] Chunked HTTP reads: {'on' if args else 'not supported by this ffmpeg'}")
+    _http_chunk_args_cache[ffmpeg_path] = args
+    return args
+
+
 def _pick_audio_format(candidates, preferred_language):
     """Choose the audio track, honouring the user's language preference.
 
@@ -1814,7 +1850,14 @@ def _try_direct_ffmpeg_clip(video_info, target_height, clip_start, clip_end,
                   and (f.get('height', 0) or 0) <= target_height]
     avc1_video.sort(key=lambda f: f.get('height', 0) or 0, reverse=True)
 
-    if not avc1_video:
+    # Above 1080p only VP9/AV1 exist; this path always re-encodes to H.264, so
+    # the high-res stream can be used directly. None when the video tops out at
+    # 1080p, in which case the AVC1 choice below applies unchanged.
+    high_res_fmt = pick_high_res_format(formats, target_height) if wants_high_res(target_height) else None
+
+    if high_res_fmt:
+        video_fmt = high_res_fmt
+    elif not avc1_video:
         fallback = [f for f in video_only if (f.get('height', 0) or 0) <= target_height]
         fallback.sort(key=lambda f: f.get('height', 0) or 0, reverse=True)
         if not fallback:
@@ -1897,7 +1940,8 @@ def _try_direct_ffmpeg_clip(video_info, target_height, clip_start, clip_end,
     cmd = [ffmpeg_path, '-y', '-hide_banner', '-loglevel', 'warning']
     # Input 0: video — seek BEFORE -i so FFmpeg sends an HTTP Range request
     # (only the bytes for the clip are downloaded, not the whole file).
-    cmd += ['-headers', hdr, '-ss', ss, '-i', video_url_direct]
+    chunk = ffmpeg_http_chunk_args(ffmpeg_path)
+    cmd += ['-headers', hdr] + chunk + ['-ss', ss, '-i', video_url_direct]
 
     # Re-encode the video instead of copying it. With -c:v copy the clip can
     # only begin on the nearest preceding keyframe, so the video gets a
@@ -1915,7 +1959,7 @@ def _try_direct_ffmpeg_clip(video_info, target_height, clip_start, clip_end,
         # Input 1: audio — same seek before -i (also strip range= param).
         # Audio has no keyframes, so its input seek is already frame-accurate;
         # copy it to avoid a needless quality loss.
-        cmd += ['-headers', audio_hdr, '-ss', ss, '-i', _strip_range_param(audio_fmt['url'])]
+        cmd += ['-headers', audio_hdr] + chunk + ['-ss', ss, '-i', _strip_range_param(audio_fmt['url'])]
         cmd += ['-t', dur, '-map', '0:v:0', '-map', '1:a:0',
                 *venc, '-c:a', 'copy',
                 '-avoid_negative_ts', 'make_zero',
@@ -2322,6 +2366,10 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                         format_str = '/'.join([f"{fid}+bestaudio[ext=m4a]/{fid}+bestaudio" for fid in format_ids])
                         logging.info(f"[CLIP FORMAT] Using DASH AVC1 format IDs with audio merge: {format_ids}")
         
+        if wants_high_res(sanitized_resolution):
+            format_str = high_res_video_selector(sanitized_resolution) + '/' + format_str
+            logging.info(f"[HIGH-RES] Clip at {sanitized_resolution}p: high-res stream first, AVC1 as fallback")
+
         # Configure yt-dlp options based on what worked for extraction
         if use_cookies_for_download:
             ydl_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file, user_agent=user_agent)
@@ -2456,6 +2504,8 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                     except Exception: pass
 
             _vid_only_fmt = (
+                (high_res_video_selector(_target_h, with_audio=False) + '/'
+                 if wants_high_res(_target_h) else '') +
                 f'bestvideo[height<={_target_h}][vcodec^=avc1][ext=mp4]/'
                 f'bestvideo[height<={_target_h}][vcodec^=avc1]/'
                 f'bestvideo[height<={_target_h}][vcodec*=avc]/'
@@ -2734,6 +2784,11 @@ def download_and_process_clip(video_url, resolution, download_path, clip_start, 
                 logging.error(f"[CLIP-COMPLETE] Downloaded file is too small ({file_size} bytes) — likely corrupt or incomplete. Skipping metadata and import.")
                 socketio.emit('download-failed', {'message': f'Le fichier téléchargé est vide ou corrompu ({file_size} octets). Essayez à nouveau.'})
                 return {"error": f"Downloaded clip is corrupt ({file_size} bytes)"}
+            # No-op unless >1080p was requested and the clip is not H.264
+            # (strategies 1 and 2 already re-encode to H.264; strategy 3 does not)
+            video_file_path = ensure_avc1(ffmpeg_path, video_file_path, sanitized_resolution,
+                                          socketio=socketio, current_download=current_download,
+                                          is_cancelled=lambda: is_cancelled[0])
             socketio.emit('percentage', {'percentage': '100% - Ajout métadonnées clip...'})
 
             # Add URL to metadata using hidden subprocess to prevent CMD popup
@@ -2929,7 +2984,14 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         max_height = int(resolution.replace("p", ""))
         
         format_options = []
-        
+
+        # Above 1080p YouTube has no AVC1: try the high-res VP9/AV1 stream first
+        # (converted to H.264 after download). When the video tops out at 1080p
+        # these all fail and the AVC1 chain below is used, with no conversion.
+        if wants_high_res(max_height):
+            format_options.append(high_res_video_selector(max_height))
+            logging.info(f"[HIGH-RES] {max_height}p requested: high-res stream first, AVC1 as fallback")
+
         # Priority: best video+audio at requested resolution
         if preferred_language != 'original':
             # Try language-specific first
@@ -3618,6 +3680,10 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                             logging.warning(f"Could not move file to expected location: {e}")
 
         if actual_file and os.path.exists(actual_file):
+            # No-op unless >1080p was requested and the file is not H.264
+            actual_file = ensure_avc1(ffmpeg_path, actual_file, max_height, socketio=socketio,
+                                      current_download=current_download,
+                                      is_cancelled=lambda: is_cancelled[0])
             logging.info(f"[METADATA] Starting metadata addition for: {actual_file}")
             socketio.emit('percentage', {'percentage': '100% - Ajout métadonnées...'})
             

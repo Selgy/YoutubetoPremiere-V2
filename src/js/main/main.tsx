@@ -695,11 +695,20 @@ const Main = () => {
               onChange={(e) => saveSettings({ ...settings, resolution: e.target.value })}
               className="input-base"
             >
+              <option value="2160">4K (2160p)</option>
+              <option value="1440">1440p</option>
               <option value="1080">1080p</option>
               <option value="720">720p</option>
               <option value="480">480p</option>
               <option value="360">360p</option>
             </select>
+            {Number(settings.resolution) > 1080 && (
+              <p className="text-sm text-gray-400 mt-2 flex items-center gap-1">
+                <span className="material-symbols-outlined text-xs">info</span>
+                Above 1080p YouTube has no H.264, so the video is converted for Premiere (takes longer).
+                Videos that top out at 1080p are downloaded directly, without conversion.
+              </p>
+            )}
           </div>
 
           {/* Download Path Setting */}
