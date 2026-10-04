@@ -120,6 +120,41 @@ class TestCodecs:
         assert args[args.index('-pix_fmt') + 1] in ('yuv420p', 'nv12')
 
 
+class TestEncoderSpeed:
+    """The NVENC preset, not VP9 decoding, was the bottleneck (p5: 2.8x
+    realtime at 1440p60, p2: 8.9x, same picture)."""
+
+    @pytest.fixture(autouse=True)
+    def _fresh(self, monkeypatch):
+        monkeypatch.setattr(high_res, '_encoder_cache', {})
+        monkeypatch.setattr(high_res, '_speed_ok', {})
+        monkeypatch.setattr(high_res.sys, 'platform', 'win32')
+
+    def test_nvenc_uses_fast_preset(self, monkeypatch):
+        monkeypatch.setattr(high_res, '_encoder_works', lambda f, e, extra=(): e == 'h264_nvenc')
+        assert high_res.select_h264_encoder('ff') == 'h264_nvenc'
+        args = h264_encoder_args('h264_nvenc', 1440)
+        assert args[args.index('-preset') + 1] == 'p2'
+
+    def test_speed_option_rejected_keeps_hardware_encoder(self, monkeypatch):
+        """An old FFmpeg refusing the option must not push us to slow libx264."""
+        monkeypatch.setattr(high_res, '_encoder_works',
+                            lambda f, e, extra=(): e == 'h264_amf' and not extra)
+        assert high_res.select_h264_encoder('ff') == 'h264_amf'
+        assert '-quality' not in h264_encoder_args('h264_amf', 1440)
+
+    @pytest.mark.parametrize('enc,opt', [('h264_qsv', '-preset'), ('h264_amf', '-quality'),
+                                         ('h264_videotoolbox', '-prio_speed')])
+    def test_every_hardware_encoder_gets_a_speed_setting(self, enc, opt):
+        assert opt in h264_encoder_args(enc, 2160)
+
+    @pytest.mark.skipif(not HAVE_FFMPEG, reason='ffmpeg not available')
+    def test_speed_args_accepted_by_bundled_ffmpeg_on_nvidia(self):
+        if not high_res._encoder_works(FFMPEG, 'h264_nvenc'):
+            pytest.skip('no NVIDIA GPU here')
+        assert high_res._encoder_works(FFMPEG, 'h264_nvenc', high_res._SPEED_ARGS['h264_nvenc'])
+
+
 class TestEnsureAvc1Gating:
     def test_no_op_at_1080(self, tmp_path, monkeypatch):
         f = tmp_path / 'v.mp4'
