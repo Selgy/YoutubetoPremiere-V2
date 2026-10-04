@@ -3485,7 +3485,13 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             logging.error(f"No AVC1 formats available! Available codecs: {set(f.get('vcodec', 'none') for f in video_formats)}")
             socketio.emit('download-failed', {'message': f"Aucun format AVC1 disponible pour cette vidéo. Codecs disponibles: {set(f.get('vcodec', 'none') for f in video_formats)}"})
             return None
-        
+
+        # The verified AVC1 IDs above replace the whole format string, so the
+        # high-res stream has to be put back in front of them.
+        if wants_high_res(resolution):
+            ydl_opts['format'] = high_res_video_selector(resolution) + '/' + ydl_opts['format']
+            logging.info(f"[HIGH-RES] Full download at {resolution}p: high-res stream first, verified AVC1 IDs as fallback")
+
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 current_download['ydl'] = ydl

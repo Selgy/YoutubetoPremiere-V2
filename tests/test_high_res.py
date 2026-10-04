@@ -257,6 +257,16 @@ class TestWiring:
         assert 'high_res_video_selector(max_height)' in src
         assert 'ensure_avc1(ffmpeg_path, actual_file, max_height' in src
 
+    def test_full_video_high_res_survives_the_avc1_id_override(self):
+        """The verified AVC1 IDs overwrite ydl_opts['format'] just before the
+        download; the high-res selector must be prepended after that, or a
+        1440p/4K request silently downloads 1080p AVC1."""
+        src = self._src('download_video')
+        last_override = src.rindex("ydl_opts['format'] = actual_format")
+        prepend = src.index("ydl_opts['format'] = high_res_video_selector(resolution) + '/' + ydl_opts['format']")
+        download = src.index('ydl.process_ie_result(info.copy(), download=True)')
+        assert last_override < prepend < download
+
     def test_clip_selector_strategy2_and_conversion(self):
         src = self._src('download_and_process_clip')
         assert 'high_res_video_selector(sanitized_resolution)' in src
