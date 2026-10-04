@@ -2863,6 +2863,62 @@ def get_unique_filename(base_path, filename, extension):
     
     return f"{filename}_{counter}.{extension}"
 
+def _finalize_full_download(actual_file, video_url, max_height, ffmpeg_path, socketio,
+                            settings, current_download, is_cancelled):
+    """Shared end of a full download: H.264 conversion when >1080p was asked,
+    URL metadata, then the import signal. Every download route must end here,
+    retries included, or Premiere never receives the file."""
+    # No-op unless >1080p was requested and the file is not H.264
+    actual_file = ensure_avc1(ffmpeg_path, actual_file, max_height, socketio=socketio,
+                              current_download=current_download, is_cancelled=is_cancelled)
+    logging.info(f"[METADATA] Starting metadata addition for: {actual_file}")
+    socketio.emit('percentage', {'percentage': '100% - Ajout métadonnées...'})
+
+    # Add URL to metadata
+    metadata_command = [
+        ffmpeg_path,  # Use the full path here
+        '-i', actual_file,
+        '-metadata', f'comment={video_url}',
+        '-codec', 'copy'
+    ] + get_ffmpeg_postprocessor_args() + [
+        f'{actual_file}_with_metadata.mp4'
+    ]
+    logging.info(f"[METADATA] Running FFmpeg command: {' '.join(metadata_command)}")
+
+    try:
+        # Use 5 minute timeout for metadata (should be quick with -codec copy)
+        run_hidden_subprocess(metadata_command, timeout=300, check=True)
+        os.replace(f'{actual_file}_with_metadata.mp4', actual_file)
+
+        logging.info(f"[COMPLETE] Video downloaded and processed: {actual_file}")
+        emit_import_video(socketio, {'path': actual_file, 'bin': settings.get('premiereBin', '')})
+        # Emit both formats to ensure compatibility
+        socketio.emit('download-complete', {'url': video_url, 'path': actual_file})  # Hyphenated format for Chrome extension
+        socketio.emit('complete', {'type': 'full', 'success': True, 'path': actual_file})  # Direct reset for Chrome button
+        logging.info("Import signal sent to Premiere Pro extension via SocketIO")
+
+        return actual_file
+    except subprocess.TimeoutExpired as e:
+        logging.error(f"[METADATA] FFmpeg metadata TIMEOUT after {e.timeout}s")
+        # Still return the file even if metadata failed
+        logging.info(f"[METADATA] Returning file without metadata due to timeout: {actual_file}")
+        emit_import_video(socketio, {'path': actual_file, 'bin': settings.get('premiereBin', '')})
+        socketio.emit('download-complete', {'url': video_url, 'path': actual_file})
+        socketio.emit('complete', {'type': 'full', 'success': True, 'path': actual_file})  # Direct reset for Chrome button
+        logging.info("Import signal sent to Premiere Pro extension via SocketIO")
+        return actual_file
+    except subprocess.CalledProcessError as e:
+        logging.error(f"[METADATA] Error adding metadata: {e}")
+        logging.error(f"[METADATA] FFmpeg stderr: {e.stderr if hasattr(e, 'stderr') else 'No stderr'}")
+        # Still return the file even if metadata failed
+        logging.info(f"[METADATA] Returning file without metadata: {actual_file}")
+        emit_import_video(socketio, {'path': actual_file, 'bin': settings.get('premiereBin', '')})
+        socketio.emit('download-complete', {'url': video_url, 'path': actual_file})
+        socketio.emit('complete', {'type': 'full', 'success': True, 'path': actual_file})  # Direct reset for Chrome button
+        logging.info("Import signal sent to Premiere Pro extension via SocketIO")
+        return actual_file
+
+
 def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_path, socketio, settings, current_download, cookies=None, user_agent=None):
     # Clean up PATH environment variable to avoid conflicts
     clean_environment_path()
@@ -2884,6 +2940,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         socketio.emit('download-failed', {'message': error_msg})
         return {"error": error_msg}
 
+    cookies_file = None
     try:
         import yt_dlp
 
@@ -3518,7 +3575,10 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         except Exception as e:
             error_message = f"Error during video download: {str(e)}"
             logging.error(error_message)
-            socketio.emit('download-failed', {'message': error_message})
+            # A retryable error still has fallbacks below; the final failure is
+            # reported once at the end of download_video.
+            if not is_retryable_download_error(e):
+                socketio.emit('download-failed', {'message': error_message})
             raise e
                 
                 # Check for cancellation after download
@@ -3569,14 +3629,8 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         finally:
             current_download['ydl'] = None
             current_download['cancel_callback'] = None
-            
-            # Clean up the cookies file after download (Windows only)
-            if sys.platform == 'win32' and cookies_file and os.path.exists(cookies_file):
-                try:
-                    os.remove(cookies_file)
-                    logging.info(f"[Windows] Cleaned up temporary cookies file: {cookies_file}")
-                except Exception as e:
-                    logging.debug(f"Could not remove cookies file: {e}")
+            # The cookies file is removed at the very end of download_video:
+            # the 403 fallbacks below still need the Chrome cookies.
 
         # Get the final path of the downloaded file
         final_path = output_path
@@ -3686,56 +3740,8 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                             logging.warning(f"Could not move file to expected location: {e}")
 
         if actual_file and os.path.exists(actual_file):
-            # No-op unless >1080p was requested and the file is not H.264
-            actual_file = ensure_avc1(ffmpeg_path, actual_file, max_height, socketio=socketio,
-                                      current_download=current_download,
-                                      is_cancelled=lambda: is_cancelled[0])
-            logging.info(f"[METADATA] Starting metadata addition for: {actual_file}")
-            socketio.emit('percentage', {'percentage': '100% - Ajout métadonnées...'})
-            
-            # Add URL to metadata
-            metadata_command = [
-                ffmpeg_path,  # Use the full path here
-                '-i', actual_file,
-                '-metadata', f'comment={video_url}',
-                '-codec', 'copy'
-            ] + get_ffmpeg_postprocessor_args() + [
-                f'{actual_file}_with_metadata.mp4'
-            ]
-            logging.info(f"[METADATA] Running FFmpeg command: {' '.join(metadata_command)}")
-
-            try:
-                # Use 5 minute timeout for metadata (should be quick with -codec copy)
-                run_hidden_subprocess(metadata_command, timeout=300, check=True)
-                os.replace(f'{actual_file}_with_metadata.mp4', actual_file)
-                
-                logging.info(f"[COMPLETE] Video downloaded and processed: {actual_file}")
-                emit_import_video(socketio, {'path': actual_file, 'bin': settings.get('premiereBin', '')})
-                # Emit both formats to ensure compatibility
-                socketio.emit('download-complete', {'url': video_url, 'path': actual_file})  # Hyphenated format for Chrome extension
-                socketio.emit('complete', {'type': 'full', 'success': True, 'path': actual_file})  # Direct reset for Chrome button
-                logging.info("Import signal sent to Premiere Pro extension via SocketIO")
-
-                return actual_file
-            except subprocess.TimeoutExpired as e:
-                logging.error(f"[METADATA] FFmpeg metadata TIMEOUT after {e.timeout}s")
-                # Still return the file even if metadata failed
-                logging.info(f"[METADATA] Returning file without metadata due to timeout: {actual_file}")
-                emit_import_video(socketio, {'path': actual_file, 'bin': settings.get('premiereBin', '')})
-                socketio.emit('download-complete', {'url': video_url, 'path': actual_file})
-                socketio.emit('complete', {'type': 'full', 'success': True, 'path': actual_file})  # Direct reset for Chrome button
-                logging.info("Import signal sent to Premiere Pro extension via SocketIO")
-                return actual_file
-            except subprocess.CalledProcessError as e:
-                logging.error(f"[METADATA] Error adding metadata: {e}")
-                logging.error(f"[METADATA] FFmpeg stderr: {e.stderr if hasattr(e, 'stderr') else 'No stderr'}")
-                # Still return the file even if metadata failed
-                logging.info(f"[METADATA] Returning file without metadata: {actual_file}")
-                emit_import_video(socketio, {'path': actual_file, 'bin': settings.get('premiereBin', '')})
-                socketio.emit('download-complete', {'url': video_url, 'path': actual_file})
-                socketio.emit('complete', {'type': 'full', 'success': True, 'path': actual_file})  # Direct reset for Chrome button
-                logging.info("Import signal sent to Premiere Pro extension via SocketIO")
-                return actual_file
+            return _finalize_full_download(actual_file, video_url, max_height, ffmpeg_path, socketio,
+                                           settings, current_download, lambda: is_cancelled[0])
         else:
             logging.error(f"[ERROR] No suitable file found. Expected: {final_path}")
             # List all files in directory for debugging
@@ -3759,20 +3765,34 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         # cookie-format errors, so a 403 failed instantly.
         if is_retryable_download_error(e) and 'cancelled' not in str(e).lower():
             logging.warning(f"[VIDEO] Download failed ({str(e)[:80]}), trying fallback clients...")
-            for label, clients in (
+            ladder = [
                 ('yt-dlp default selection', None),
                 ('android_vr', ['android_vr']),
                 ('web_safari', ['web_safari']),
-            ):
+            ]
+            # Cookies sent by the Chrome extension come first: a logged-in
+            # session is what YouTube is least likely to answer with 403.
+            have_cookies = bool(cookies_file and os.path.exists(cookies_file))
+            if have_cookies:
+                ladder.insert(0, ('Chrome cookies', 'cookies'))
+            else:
+                logging.info("[VIDEO] No cookies from the Chrome extension for the retries")
+            for label, clients in ladder:
                 if is_cancelled[0]:
                     break
                 try:
-                    retry_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=None, user_agent=user_agent)
-                    retry_opts.pop('cookiefile', None)
-                    if clients:
-                        retry_opts['extractor_args'] = {'youtube': {'player_client': clients}}
+                    use_cookies = clients == 'cookies'
+                    retry_opts = get_robust_ydl_options(ffmpeg_path, cookies_file=cookies_file if use_cookies else None,
+                                                        user_agent=user_agent)
+                    if use_cookies:
+                        # Keep the default clients: yt-dlp picks the ones that accept cookies
+                        retry_opts['cookiefile'] = cookies_file
                     else:
-                        retry_opts.pop('extractor_args', None)
+                        retry_opts.pop('cookiefile', None)
+                        if clients:
+                            retry_opts['extractor_args'] = {'youtube': {'player_client': clients}}
+                        else:
+                            retry_opts.pop('extractor_args', None)
                     retry_opts.update({
                         'format': format_string,
                         'merge_output_format': 'mp4',
@@ -3792,7 +3812,8 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                         candidate = f"{base}.{ext}"
                         if os.path.exists(candidate) and os.path.getsize(candidate) > 0:
                             logging.info(f"[VIDEO] Retry SUCCESS with {label}: {candidate}")
-                            return candidate
+                            return _finalize_full_download(candidate, video_url, max_height, ffmpeg_path, socketio,
+                                                           settings, current_download, lambda: is_cancelled[0])
                     logging.warning(f"[VIDEO] Retry with {label} produced no file")
                 except Exception as retry_error:
                     logging.warning(f"[VIDEO] Retry with {label} failed: {str(retry_error)[:100]}")
@@ -3833,10 +3854,8 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                             test_path = os.path.splitext(final_path)[0] + '.' + ext
                             if os.path.exists(test_path):
                                 logging.info(f"Found fallback downloaded file: {test_path}")
-                                emit_import_video(socketio, {'path': test_path, 'bin': settings.get('premiereBin', '')})
-                                socketio.emit('download-complete', {'url': video_url, 'path': test_path})
-                                logging.info("Import signal sent to Premiere Pro extension via SocketIO")
-                                return test_path
+                                return _finalize_full_download(test_path, video_url, max_height, ffmpeg_path, socketio,
+                                                               settings, current_download, lambda: is_cancelled[0])
                         
                         logging.warning("Fallback download completed but file not found at expected location")
                         
@@ -3851,6 +3870,14 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         
         socketio.emit('download-failed', {'message': error_message})
         return None
+    finally:
+        # Temporary cookies file written from the Chrome extension's cookies
+        if sys.platform == 'win32' and cookies_file and os.path.exists(cookies_file):
+            try:
+                os.remove(cookies_file)
+                logging.info(f"[Windows] Cleaned up temporary cookies file: {cookies_file}")
+            except Exception as e:
+                logging.debug(f"Could not remove cookies file: {e}")
 
 def download_audio(video_url, download_path, ffmpeg_path, socketio, current_download=None, settings=None, cookies=None, user_agent=None):
     check_result = check_ffmpeg(None, socketio)

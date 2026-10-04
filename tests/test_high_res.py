@@ -255,7 +255,22 @@ class TestWiring:
     def test_full_video_selector_and_conversion(self):
         src = self._src('download_video')
         assert 'high_res_video_selector(max_height)' in src
-        assert 'ensure_avc1(ffmpeg_path, actual_file, max_height' in src
+        assert 'ensure_avc1(ffmpeg_path, actual_file, max_height' in self._src('_finalize_full_download')
+
+    def test_every_full_download_route_ends_in_finalize(self):
+        """The 403 retries used to return the raw file: no H.264 conversion
+        and no import into Premiere."""
+        src = self._src('download_video')
+        assert src.count('return _finalize_full_download(') == 3  # main, 403 retries, cookie fallback
+        assert 'emit_import_video' not in src, 'import must only be sent by _finalize_full_download'
+
+    def test_403_retries_try_chrome_cookies_first(self):
+        src = self._src('download_video')
+        assert "ladder.insert(0, ('Chrome cookies', 'cookies'))" in src
+        # the cookies file must outlive the first attempt so the retries can use it
+        first_attempt_end = src.index("# The cookies file is removed at the very end of download_video")
+        assert 'os.remove(cookies_file)' not in src[:first_attempt_end]
+        assert src.rindex('os.remove(cookies_file)') > src.index("('Chrome cookies', 'cookies')")
 
     def test_full_video_high_res_survives_the_avc1_id_override(self):
         """The verified AVC1 IDs overwrite ydl_opts['format'] just before the
