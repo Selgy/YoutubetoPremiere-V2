@@ -173,7 +173,11 @@ _SPEED_ARGS = {
     'h264_nvenc': ['-preset', 'p2'],
     'h264_qsv': ['-preset', 'veryfast'],
     'h264_amf': ['-quality', 'speed'],
-    'h264_videotoolbox': ['-prio_speed', '1'],
+    # Constant quality instead of a bitrate target. M1 Pro, 20 s of 1440p60:
+    # bitrate mode 9.6 s, -q:v 65 5.5 s for the same file size; -prio_speed
+    # changed nothing. Apple Silicon only: Intel Macs reject it at the probe
+    # and keep the bitrate mode.
+    'h264_videotoolbox': ['-q:v', '65'],
 }
 _speed_ok = {}  # encoder -> whether _SPEED_ARGS[encoder] was accepted
 
@@ -228,7 +232,9 @@ def h264_encoder_args(encoder, height):
     rate = ['-b:v', str(br), '-maxrate', str(int(br * 1.5)), '-bufsize', str(br * 2)]
     speed = _SPEED_ARGS.get(encoder, []) if _speed_ok.get(encoder, True) else []
     if encoder == 'h264_videotoolbox':
-        return ['-c:v', encoder, '-allow_sw', '1', '-profile:v', 'high'] + speed + rate + ['-pix_fmt', 'yuv420p']
+        # -q:v replaces the bitrate target; both together would conflict
+        return (['-c:v', encoder, '-allow_sw', '1', '-profile:v', 'high']
+                + (speed or rate) + ['-pix_fmt', 'yuv420p'])
     if encoder == 'h264_qsv':
         return ['-c:v', encoder, '-profile:v', 'high'] + speed + rate + ['-pix_fmt', 'nv12']
     if encoder == 'h264_nvenc':
@@ -392,7 +398,13 @@ def ensure_avc1(ffmpeg_path, path, target_height, socketio=None,
     _replace_with_retry(tmp_path, final_path)
     took = time.time() - started
     speed = f" ({media['duration'] / took:.1f}x realtime)" if media['duration'] and took else ''
-    logging.info(f"[HIGH-RES] Converted in {took:.0f}s{speed}: {final_path}")
+    mbps = ''
+    if media['duration']:
+        try:
+            mbps = f", {os.path.getsize(tmp_path) * 8 / media['duration'] / 1e6:.0f} Mb/s"
+        except OSError:
+            pass
+    logging.info(f"[HIGH-RES] Converted in {took:.0f}s{speed}{mbps}: {final_path}")
     emit(100)
     return final_path
 

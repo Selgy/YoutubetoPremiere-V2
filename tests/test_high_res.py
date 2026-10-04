@@ -138,6 +138,20 @@ class TestEncoderSpeed:
         args = h264_encoder_args('h264_nvenc', 1440)
         assert args[args.index('-preset') + 1] == 'p2'
 
+    def test_videotoolbox_constant_quality_replaces_bitrate(self, monkeypatch):
+        """M1 Pro: -q:v 65 ran 1.75x faster than the 24 Mb/s target, same size."""
+        args = h264_encoder_args('h264_videotoolbox', 1440)
+        assert args[args.index('-q:v') + 1] == '65'
+        assert '-b:v' not in args, 'bitrate and constant quality conflict'
+
+    def test_intel_mac_without_constant_quality_keeps_bitrate(self, monkeypatch):
+        monkeypatch.setattr(high_res.sys, 'platform', 'darwin')
+        monkeypatch.setattr(high_res, '_encoder_works',
+                            lambda f, e, extra=(): e == 'h264_videotoolbox' and not extra)
+        assert high_res.select_h264_encoder('ff') == 'h264_videotoolbox'
+        args = h264_encoder_args('h264_videotoolbox', 1440)
+        assert '-q:v' not in args and '-b:v' in args
+
     def test_speed_option_rejected_keeps_hardware_encoder(self, monkeypatch):
         """An old FFmpeg refusing the option must not push us to slow libx264."""
         monkeypatch.setattr(high_res, '_encoder_works',
@@ -146,7 +160,7 @@ class TestEncoderSpeed:
         assert '-quality' not in h264_encoder_args('h264_amf', 1440)
 
     @pytest.mark.parametrize('enc,opt', [('h264_qsv', '-preset'), ('h264_amf', '-quality'),
-                                         ('h264_videotoolbox', '-prio_speed')])
+                                         ('h264_videotoolbox', '-q:v')])
     def test_every_hardware_encoder_gets_a_speed_setting(self, enc, opt):
         assert opt in h264_encoder_args(enc, 2160)
 
@@ -168,7 +182,6 @@ class TestMacHardwareDecode:
     def test_pix_fmt_removed_for_gpu_frames(self):
         args = high_res._without_pix_fmt(h264_encoder_args('h264_videotoolbox', 1440))
         assert '-pix_fmt' not in args and 'yuv420p' not in args
-        assert '-prio_speed' in args
 
     def test_watchdog_kills_a_frozen_ffmpeg(self):
         """A frozen hardware decoder never exits by itself."""
