@@ -3628,9 +3628,9 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             raise e
         finally:
             current_download['ydl'] = None
-            current_download['cancel_callback'] = None
-            # The cookies file is removed at the very end of download_video:
-            # the 403 fallbacks below still need the Chrome cookies.
+            # cancel_callback stays set: the H.264 conversion that follows must
+            # still be cancellable. Both are cleared at the end of download_video,
+            # and so is the cookies file, which the 403 fallbacks below still need.
 
         # Get the final path of the downloaded file
         final_path = output_path
@@ -3871,6 +3871,7 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
         socketio.emit('download-failed', {'message': error_message})
         return None
     finally:
+        current_download['cancel_callback'] = None
         # Temporary cookies file written from the Chrome extension's cookies
         if sys.platform == 'win32' and cookies_file and os.path.exists(cookies_file):
             try:

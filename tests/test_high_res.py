@@ -10,7 +10,10 @@ Rule (from the feature request):
 Format fixtures mirror a real 4K YouTube video: AVC1 stops at 1080p, 1440p and
 2160p exist as AV1 (https) and VP9 (https + HLS).
 """
+import math
 import os
+import threading
+import time
 import shutil
 import subprocess
 
@@ -135,6 +138,13 @@ class TestEnsureAvc1Gating:
         assert ensure_avc1(FFMPEG, str(f), 2160) == str(f)
 
 
+def _parse_float(text):
+    try:
+        return float(text.replace(',', '.').strip())
+    except ValueError:
+        return float('nan')
+
+
 def _make_vp9(path, size='320x240', seconds=2):
     """Small VP9 + Opus file, standing in for a downloaded high-res stream."""
     r = subprocess.run([FFMPEG, '-y', '-hide_banner', '-loglevel', 'error',
@@ -175,7 +185,9 @@ class TestRealConversion:
         info = probe_media(FFMPEG, out)
         assert info['vcodec'] == 'h264'
         assert info['acodec'] == 'aac', 'opus must be re-encoded for Premiere'
-        assert progress[0] == 'Conversion H.264 0%' and progress[-1] == 'Conversion H.264 100%'
+        assert progress[0] == '0%' and progress[-1] == '100%'
+        # content.js drops anything parseFloat cannot read (button froze at 100%)
+        assert all(not math.isnan(_parse_float(p.replace('%', ''))) for p in progress)
 
     def test_failed_hardware_encoder_falls_back_to_libx264(self, tmp_path, monkeypatch):
         src = str(tmp_path / 'clip.webm')
@@ -210,6 +222,36 @@ class TestRealConversion:
         ensure_avc1(FFMPEG, src, 2160, current_download=cd)
         assert 'process' in seen, 'the cancel handler kills current_download["process"]'
         assert cd.get('process') is None, 'must be cleared once the conversion ends'
+
+    def test_cancel_from_the_route_is_not_taken_for_an_encoder_failure(self, tmp_path, monkeypatch):
+        """The cancel route terminates current_download['process'] and clears
+        the slot. That exit used to look like an NVENC failure, so libx264
+        restarted, the cancelled video finished and was imported anyway."""
+        src = str(tmp_path / 'clip.webm')
+        if not _make_vp9(src, size='1280x720', seconds=20):
+            pytest.skip('this ffmpeg build cannot encode VP9')
+        monkeypatch.setattr(high_res, 'select_h264_encoder', lambda p: 'libx264')
+        monkeypatch.setattr(high_res, 'h264_encoder_args',
+                            lambda enc, h: ['-c:v', 'libx264', '-preset', 'veryslow', '-pix_fmt', 'yuv420p'])
+        started = []
+        cd = {'process': None, 'ydl': None, 'cancel_callback': None}
+
+        def cancel_route():
+            # same steps as YoutubetoPremiere.py's cancel handler, minus the callback
+            while cd.get('process') is None:
+                time.sleep(0.05)
+            started.append(cd['process'])
+            cd['process'].terminate()
+            cd['process'] = None
+
+        t = threading.Thread(target=cancel_route, daemon=True)
+        t.start()
+        with pytest.raises(Exception, match='cancelled'):
+            ensure_avc1(FFMPEG, src, 1440, current_download=cd)
+        t.join(5)
+        assert len(started) == 1, 'no second encoder may start after a cancel'
+        assert os.path.exists(src)
+        assert not any('avc1-converting' in n for n in os.listdir(tmp_path))
 
 
 class TestChunkedHttpReads:
@@ -268,9 +310,17 @@ class TestWiring:
         src = self._src('download_video')
         assert "ladder.insert(0, ('Chrome cookies', 'cookies'))" in src
         # the cookies file must outlive the first attempt so the retries can use it
-        first_attempt_end = src.index("# The cookies file is removed at the very end of download_video")
+        first_attempt_end = src.index("# cancel_callback stays set: the H.264 conversion that follows must")
         assert 'os.remove(cookies_file)' not in src[:first_attempt_end]
         assert src.rindex('os.remove(cookies_file)') > src.index("('Chrome cookies', 'cookies')")
+
+    def test_conversion_stays_cancellable(self):
+        """cancel_callback used to be cleared before the H.264 conversion, so the
+        cancel route could only kill ffmpeg, never flag the download."""
+        src = self._src('download_video')
+        conversion = src.index('return _finalize_full_download(actual_file')
+        assert "current_download['cancel_callback'] = None" not in src[:conversion]
+        assert src.rindex("current_download['cancel_callback'] = None") > conversion
 
     def test_full_video_high_res_survives_the_avc1_id_override(self):
         """The verified AVC1 IDs overwrite ydl_opts['format'] just before the

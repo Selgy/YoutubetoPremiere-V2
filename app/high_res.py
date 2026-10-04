@@ -271,14 +271,30 @@ def ensure_avc1(ffmpeg_path, path, target_height, socketio=None,
              else ['-c:a', 'aac', '-b:a', '320k'])
 
     def emit(pct):
+        # The Chrome extension drops any percentage that does not parse as a
+        # number, so a text label would leave its button frozen at 100%.
         if socketio:
-            socketio.emit('percentage', {'percentage': f'Conversion H.264 {pct}%'})
+            socketio.emit('percentage', {'percentage': f'{pct}%'})
+        if pct % 25 == 0:
+            logging.info(f"[HIGH-RES] Conversion {pct}%")
+
+    running = []
 
     def register(proc):
+        running[:] = [proc]
         if current_download is not None:
             current_download['process'] = proc
 
-    cancelled = is_cancelled or (lambda: False)
+    def killed_by_cancel():
+        # The cancel route terminates current_download['process'] and clears
+        # the slot; a non-zero exit then is a cancel, not an encoder failure.
+        return (current_download is not None and bool(running)
+                and current_download.get('process') is not running[0])
+
+    flag = is_cancelled or (lambda: False)
+
+    def cancelled():
+        return flag() or killed_by_cancel()
     encoder = select_h264_encoder(ffmpeg_path)
     attempts = [encoder] if encoder == 'libx264' else [encoder, 'libx264']
 
@@ -293,9 +309,11 @@ def ensure_avc1(ffmpeg_path, path, target_height, socketio=None,
                + h264_encoder_args(enc, media['height'])
                + audio + ['-movflags', '+faststart', tmp_path])
         rc = _run_conversion(cmd, media['duration'], emit, register, cancelled)
+        was_cancelled = cancelled()  # before freeing the slot, see killed_by_cancel
         if current_download is not None:
             current_download['process'] = None
-        if cancelled():
+        running.clear()
+        if was_cancelled:
             _silent_remove(tmp_path)
             raise Exception('Download cancelled by user')
         if rc == 0 and os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0:
