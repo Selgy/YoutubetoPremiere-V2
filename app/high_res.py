@@ -33,6 +33,18 @@ _HW_ENCODERS = {
     'win32': ['h264_nvenc', 'h264_qsv', 'h264_amf'],
 }
 
+# Hardware decoding feeding the encoder without a copy back to RAM. On Apple
+# Silicon this roughly doubles VideoToolbox transcode speed, but VP9 hwaccel
+# is known to freeze FFmpeg on some files (trac #9599), so it is tried first
+# under the stall watchdog and software decoding is the fallback. On Windows
+# software VP9 decoding measured as fast as CUDA (17x realtime at 1440p60),
+# so it is left alone there.
+_HW_DECODE = {
+    'h264_videotoolbox': ['-hwaccel', 'videotoolbox', '-hwaccel_output_format', 'videotoolbox_vld'],
+}
+# Kill a conversion whose output position has not moved for this long.
+STALL_SECONDS = 30
+
 _encoder_cache = {}
 _encoder_lock = threading.Lock()
 
@@ -226,8 +238,13 @@ def h264_encoder_args(encoder, height):
     return ['-c:v', encoder] + speed + rate + ['-pix_fmt', 'yuv420p']
 
 
-def _run_conversion(cmd, duration, progress_cb, register_process, is_cancelled):
-    """Run FFmpeg with -progress on stdout; returns the exit code."""
+def _run_conversion(cmd, duration, progress_cb, register_process, is_cancelled,
+                    stall_seconds=STALL_SECONDS):
+    """Run FFmpeg with -progress on stdout; returns the exit code.
+
+    A watchdog kills FFmpeg when its output position stops advancing for
+    `stall_seconds` (a frozen hardware decoder never exits on its own).
+    """
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, encoding='utf-8', errors='replace',
                             creationflags=_creationflags())
@@ -235,28 +252,46 @@ def _run_conversion(cmd, duration, progress_cb, register_process, is_cancelled):
         register_process(proc)
 
     tail = []
+    last_advance = [time.time(), -1]
+    stalled = [False]
 
     def _drain_stderr():
         for line in proc.stderr:
             tail.append(line.rstrip())
             del tail[:-20]
 
+    def _watchdog():
+        while proc.poll() is None:
+            time.sleep(0.5)
+            if time.time() - last_advance[0] > stall_seconds and proc.poll() is None:
+                stalled[0] = True
+                proc.kill()
+                return
+
     threading.Thread(target=_drain_stderr, daemon=True).start()
+    if stall_seconds:
+        threading.Thread(target=_watchdog, daemon=True).start()
 
     last = -5
     for line in proc.stdout:
         if is_cancelled and is_cancelled():
             proc.terminate()
             break
-        if line.startswith('out_time_us=') and duration and progress_cb:
+        if line.startswith('out_time_us='):
             try:
-                pct = int(min(99, int(line.split('=', 1)[1]) / 1e6 / duration * 100))
+                us = int(line.split('=', 1)[1])
             except ValueError:
                 continue
-            if pct >= last + 5:
-                last = pct
-                progress_cb(pct)
+            if us > last_advance[1]:
+                last_advance[:] = [time.time(), us]
+            if duration and progress_cb:
+                pct = int(min(99, us / 1e6 / duration * 100))
+                if pct >= last + 5:
+                    last = pct
+                    progress_cb(pct)
     proc.wait()
+    if stalled[0]:
+        logging.warning(f"[HIGH-RES] FFmpeg made no progress for {stall_seconds}s - killed")
     if proc.returncode != 0 and tail:
         logging.warning(f"[HIGH-RES] FFmpeg stderr: {' | '.join(tail[-5:])}")
     return proc.returncode
@@ -315,17 +350,28 @@ def ensure_avc1(ffmpeg_path, path, target_height, socketio=None,
     def cancelled():
         return flag() or killed_by_cancel()
     encoder = select_h264_encoder(ffmpeg_path)
-    attempts = [encoder] if encoder == 'libx264' else [encoder, 'libx264']
+    attempts = []
+    if encoder in _HW_DECODE:
+        attempts.append((encoder, True))
+    if encoder != 'libx264':
+        attempts.append((encoder, False))
+    attempts.append(('libx264', False))
 
     logging.info(f"[HIGH-RES] Converting {media['vcodec']} {media['height']}p -> H.264 "
                  f"with {encoder}: {path}")
     emit(0)
     started = time.time()
-    for enc in attempts:
+    for enc, hw_decode in attempts:
+        enc_args = h264_encoder_args(enc, media['height'])
+        dec_args = _HW_DECODE.get(enc, []) if hw_decode else []
+        if dec_args:
+            # Frames stay in GPU memory: a -pix_fmt would force a software copy
+            enc_args = _without_pix_fmt(enc_args)
+        logging.info(f"[HIGH-RES] Pass: {enc}, {'hardware' if dec_args else 'software'} decoding")
         cmd = ([ffmpeg_path, '-y', '-hide_banner', '-nostdin', '-loglevel', 'error',
-                '-progress', 'pipe:1', '-nostats', '-i', path,
+                '-progress', 'pipe:1', '-nostats'] + dec_args + ['-i', path,
                 '-map', '0:v:0', '-map', '0:a:0?']
-               + h264_encoder_args(enc, media['height'])
+               + enc_args
                + audio + ['-movflags', '+faststart', tmp_path])
         rc = _run_conversion(cmd, media['duration'], emit, register, cancelled)
         was_cancelled = cancelled()  # before freeing the slot, see killed_by_cancel
@@ -337,8 +383,8 @@ def ensure_avc1(ffmpeg_path, path, target_height, socketio=None,
             raise Exception('Download cancelled by user')
         if rc == 0 and os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0:
             break
-        logging.warning(f"[HIGH-RES] {enc} failed (exit {rc})"
-                        + (", retrying with libx264" if enc != 'libx264' else ""))
+        logging.warning(f"[HIGH-RES] {enc} ({'hardware' if dec_args else 'software'} decoding) "
+                        f"failed (exit {rc}), trying the next pass")
         _silent_remove(tmp_path)
     else:
         raise RuntimeError('Conversion to H.264 failed')
@@ -346,9 +392,19 @@ def ensure_avc1(ffmpeg_path, path, target_height, socketio=None,
     if final_path != path:
         _silent_remove(path)
     _replace_with_retry(tmp_path, final_path)
-    logging.info(f"[HIGH-RES] Converted in {time.time() - started:.0f}s: {final_path}")
+    took = time.time() - started
+    speed = f" ({media['duration'] / took:.1f}x realtime)" if media['duration'] and took else ''
+    logging.info(f"[HIGH-RES] Converted in {took:.0f}s{speed}: {final_path}")
     emit(100)
     return final_path
+
+
+def _without_pix_fmt(args):
+    out = list(args)
+    if '-pix_fmt' in out:
+        k = out.index('-pix_fmt')
+        del out[k:k + 2]
+    return out
 
 
 def _silent_remove(p):

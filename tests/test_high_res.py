@@ -11,6 +11,8 @@ Format fixtures mirror a real 4K YouTube video: AVC1 stops at 1080p, 1440p and
 2160p exist as AV1 (https) and VP9 (https + HLS).
 """
 import math
+import sys
+import logging
 import os
 import threading
 import time
@@ -153,6 +155,56 @@ class TestEncoderSpeed:
         if not high_res._encoder_works(FFMPEG, 'h264_nvenc'):
             pytest.skip('no NVIDIA GPU here')
         assert high_res._encoder_works(FFMPEG, 'h264_nvenc', high_res._SPEED_ARGS['h264_nvenc'])
+
+
+class TestMacHardwareDecode:
+    """Apple Silicon: VideoToolbox decode -> encode without a RAM copy, guarded
+    against the known VP9 hwaccel freeze (FFmpeg trac #9599)."""
+
+    def test_videotoolbox_tries_zero_copy_decode(self):
+        assert high_res._HW_DECODE['h264_videotoolbox'] == [
+            '-hwaccel', 'videotoolbox', '-hwaccel_output_format', 'videotoolbox_vld']
+
+    def test_pix_fmt_removed_for_gpu_frames(self):
+        args = high_res._without_pix_fmt(h264_encoder_args('h264_videotoolbox', 1440))
+        assert '-pix_fmt' not in args and 'yuv420p' not in args
+        assert '-prio_speed' in args
+
+    def test_watchdog_kills_a_frozen_ffmpeg(self):
+        """A frozen hardware decoder never exits by itself."""
+        frozen = [sys.executable, '-c', 'import time; time.sleep(60)']
+        start = time.time()
+        rc = high_res._run_conversion(frozen, 10, None, None, None, stall_seconds=1.5)
+        assert rc != 0 and time.time() - start < 10
+
+    @pytest.mark.skipif(not HAVE_FFMPEG, reason='ffmpeg not available')
+    def test_failed_hardware_decode_falls_back_to_software(self, tmp_path, monkeypatch, caplog):
+        src = str(tmp_path / 'clip.webm')
+        if not _make_vp9(src):
+            pytest.skip('this ffmpeg build cannot encode VP9')
+        monkeypatch.setattr(high_res, 'select_h264_encoder', lambda p: 'libx264')
+        monkeypatch.setattr(high_res, '_HW_DECODE', {'libx264': ['-hwaccel', 'no_such_hwaccel']})
+        with caplog.at_level(logging.INFO):
+            out = ensure_avc1(FFMPEG, src, 1440)
+        assert probe_media(FFMPEG, out)['vcodec'] == 'h264'
+        assert 'libx264, hardware decoding' in caplog.text
+        assert 'libx264, software decoding' in caplog.text
+
+    def test_pass_order_on_mac(self, monkeypatch):
+        """Hardware decode first, then software decode, then libx264."""
+        seen = []
+        monkeypatch.setattr(high_res, 'select_h264_encoder', lambda p: 'h264_videotoolbox')
+        monkeypatch.setattr(high_res, 'probe_media', lambda f, p: {
+            'vcodec': 'vp9', 'acodec': 'opus', 'height': 1440, 'duration': 10})
+        monkeypatch.setattr(high_res, '_run_conversion',
+                            lambda cmd, *a, **k: seen.append(cmd) or 1)
+        monkeypatch.setattr(high_res.os.path, 'exists', lambda p: True)
+        with pytest.raises(RuntimeError):
+            ensure_avc1('ff', 'x.webm', 2160)
+        assert len(seen) == 3
+        assert '-hwaccel' in seen[0] and 'h264_videotoolbox' in seen[0]
+        assert '-hwaccel' not in seen[1] and 'h264_videotoolbox' in seen[1]
+        assert 'libx264' in seen[2]
 
 
 class TestEnsureAvc1Gating:
