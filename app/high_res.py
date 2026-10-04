@@ -33,15 +33,13 @@ _HW_ENCODERS = {
     'win32': ['h264_nvenc', 'h264_qsv', 'h264_amf'],
 }
 
-# Hardware decoding feeding the encoder without a copy back to RAM. On Apple
-# Silicon this roughly doubles VideoToolbox transcode speed, but VP9 hwaccel
-# is known to freeze FFmpeg on some files (trac #9599), so it is tried first
-# under the stall watchdog and software decoding is the fallback. On Windows
-# software VP9 decoding measured as fast as CUDA (17x realtime at 1440p60),
-# so it is left alone there.
-_HW_DECODE = {
-    'h264_videotoolbox': ['-hwaccel', 'videotoolbox', '-hwaccel_output_format', 'videotoolbox_vld'],
-}
+# Hardware decoding to put in front of an encoder (tried first, software
+# decoding as fallback). Empty on purpose, measured on 1440p60 VP9:
+# - M1 Pro: VideoToolbox VP9 decode 2.3x realtime vs 15x in software, so it
+#   made the whole conversion run at 2.0x (FFmpeg trac #10963), and it can
+#   also freeze FFmpeg (trac #9599).
+# - Windows/RTX 5080: CUDA decode no faster than software (17x).
+_HW_DECODE = {}
 # Kill a conversion whose output position has not moved for this long.
 STALL_SECONDS = 30
 

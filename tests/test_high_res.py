@@ -158,12 +158,12 @@ class TestEncoderSpeed:
 
 
 class TestMacHardwareDecode:
-    """Apple Silicon: VideoToolbox decode -> encode without a RAM copy, guarded
-    against the known VP9 hwaccel freeze (FFmpeg trac #9599)."""
+    """Hardware decode passes and the stall watchdog that guards them."""
 
-    def test_videotoolbox_tries_zero_copy_decode(self):
-        assert high_res._HW_DECODE['h264_videotoolbox'] == [
-            '-hwaccel', 'videotoolbox', '-hwaccel_output_format', 'videotoolbox_vld']
+    def test_mac_decodes_vp9_in_software(self):
+        """M1 Pro: VideoToolbox VP9 decode ran at 2.3x realtime vs 15x in
+        software, capping the whole conversion at 2.0x."""
+        assert 'h264_videotoolbox' not in high_res._HW_DECODE
 
     def test_pix_fmt_removed_for_gpu_frames(self):
         args = high_res._without_pix_fmt(h264_encoder_args('h264_videotoolbox', 1440))
@@ -190,9 +190,11 @@ class TestMacHardwareDecode:
         assert 'libx264, hardware decoding' in caplog.text
         assert 'libx264, software decoding' in caplog.text
 
-    def test_pass_order_on_mac(self, monkeypatch):
-        """Hardware decode first, then software decode, then libx264."""
+    def test_pass_order_with_hardware_decode(self, monkeypatch):
+        """When an encoder has hardware decoding: that first, then software
+        decoding, then libx264."""
         seen = []
+        monkeypatch.setattr(high_res, '_HW_DECODE', {'h264_videotoolbox': ['-hwaccel', 'videotoolbox']})
         monkeypatch.setattr(high_res, 'select_h264_encoder', lambda p: 'h264_videotoolbox')
         monkeypatch.setattr(high_res, 'probe_media', lambda f, p: {
             'vcodec': 'vp9', 'acodec': 'opus', 'height': 1440, 'duration': 10})
