@@ -41,7 +41,12 @@ jobs:
       - name: Install Deno for YouTube challenge solver
         run: |
           echo "Installing Deno for yt-dlp EJS challenge solver..."
-          curl -fsSL https://deno.land/install.sh | sh
+          # GitHub release asset instead of deno.land/install.sh: dl.deno.land
+          # stalled at 3% for 21 min and failed the nightly (curl exit 56).
+          mkdir -p "$HOME/.deno/bin"
+          curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors --connect-timeout 30 --max-time 300 https://github.com/denoland/deno/releases/latest/download/deno-aarch64-apple-darwin.zip -o "$RUNNER_TEMP/deno-cli.zip"
+          unzip -o -q "$RUNNER_TEMP/deno-cli.zip" -d "$HOME/.deno/bin"
+          chmod +x "$HOME/.deno/bin/deno"
           echo "$HOME/.deno/bin" >> $GITHUB_PATH
           export PATH="$HOME/.deno/bin:$PATH"
           deno --version
@@ -128,7 +133,7 @@ jobs:
       - name: Download FFmpeg for macOS
         run: |
           echo "Downloading FFmpeg for macOS..."
-          curl -L "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/snapshot/ffmpeg.zip" -o ffmpeg.zip
+          curl -fL --retry 5 --retry-delay 10 --retry-all-errors --connect-timeout 30 --max-time 600 "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/snapshot/ffmpeg.zip" -o ffmpeg.zip
           unzip ffmpeg.zip
           chmod +x ffmpeg
           echo "FFmpeg downloaded and made executable"
@@ -136,7 +141,7 @@ jobs:
       - name: Download Deno standalone for macOS
         run: |
           echo "Downloading Deno standalone for macOS ARM64..."
-          curl -fsSL https://github.com/denoland/deno/releases/latest/download/deno-aarch64-apple-darwin.zip -o deno.zip
+          curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors --connect-timeout 30 --max-time 300 https://github.com/denoland/deno/releases/latest/download/deno-aarch64-apple-darwin.zip -o deno.zip
           unzip deno.zip
           chmod +x deno
           # Move to app directory for PyInstaller
