@@ -142,9 +142,10 @@ def set_emit_function(emit_function):
     global _emit_to_client_type
     _emit_to_client_type = emit_function
 
-# Below this speed for 3 s, yt-dlp treats the URL as throttled. YouTube
-# throttles some stream URLs to ~65 KB/s while fresh ones run at 10+ MB/s.
-THROTTLED_RATE_LIMIT = 250_000  # bytes/s
+# Below this speed for 3 s, yt-dlp treats the URL as throttled. Throttled
+# YouTube URLs ran at ~65 KB/s while fresh ones run at 10+ MB/s; kept low so
+# a slow start on a high-latency line is not mistaken for throttling.
+THROTTLED_RATE_LIMIT = 100_000  # bytes/s
 
 
 def is_retryable_download_error(error):
@@ -172,8 +173,10 @@ def is_retryable_download_error(error):
         'ffmpeg exited with code',
         # A throttled URL (~65 KB/s) that YouTube then cuts off, or yt-dlp's
         # own ThrottledDownload: a fresh URL is usually full speed.
+        # Not timeouts: when the network is down every fallback would time out
+        # again, delaying the error by minutes.
         'connection broken', 'connectionreseterror', 'connection reset',
-        'incompleteread', 'timed out',
+        'incompleteread',
         'throttle',
     ))
 
@@ -1799,6 +1802,11 @@ def _pick_audio_format(candidates, preferred_language):
     if not candidates:
         return None
 
+    # '-drc' variants are YouTube's dynamic-range-compressed copies (squashed
+    # loudness, for phone speakers); keep the untouched track when there is one.
+    candidates = [f for f in candidates
+                  if not str(f.get('format_id', '')).endswith('-drc')] or candidates
+
     def is_original(f):
         return (f.get('language_preference') or -1) >= 10
 
@@ -1823,6 +1831,31 @@ def _pick_audio_format(candidates, preferred_language):
             pool = originals
 
     return max(pool, key=lambda f: f.get('abr') or f.get('tbr') or 0)
+
+
+# Longer waits are left to yt-dlp's own downloader (the fallback strategies).
+MAX_AVAILABLE_AT_WAIT = 30
+
+
+def _wait_until_available(fmts, is_cancelled=None, now=time.time, sleep=time.sleep):
+    """Sleep until every format's 'available_at' has passed.
+
+    Returns False when the wait is too long or the clip is cancelled meanwhile.
+    """
+    available_at = max((f.get('available_at') or 0) for f in fmts if f) if any(fmts) else 0
+    wait = available_at - now()
+    if wait <= 0:
+        return True
+    if wait > MAX_AVAILABLE_AT_WAIT:
+        logging.info(f"[DIRECT-FFmpeg] Stream URLs usable in {wait:.0f}s - leaving it to yt-dlp")
+        return False
+    logging.info(f"[DIRECT-FFmpeg] Waiting {wait:.1f}s for the stream URLs to become usable (available_at)")
+    deadline = now() + wait + 0.5
+    while now() < deadline:
+        if is_cancelled and is_cancelled():
+            return False
+        sleep(min(0.25, max(0.0, deadline - now())))
+    return True
 
 
 def _try_direct_ffmpeg_clip(video_info, target_height, clip_start, clip_end,
@@ -1858,7 +1891,9 @@ def _try_direct_ffmpeg_clip(video_info, target_height, clip_start, clip_end,
     avc1_video = [f for f in video_only
                   if 'avc' in str(f.get('vcodec', '')).lower()
                   and (f.get('height', 0) or 0) <= target_height]
-    avc1_video.sort(key=lambda f: f.get('height', 0) or 0, reverse=True)
+    # Same height: plain https first (HLS ids such as 312 come second); the
+    # chunked-read fix below was measured on https streams.
+    avc1_video.sort(key=lambda f: (f.get('height', 0) or 0, f.get('protocol') == 'https'), reverse=True)
 
     # Above 1080p only VP9/AV1 exist; this path always re-encodes to H.264, so
     # the high-res stream can be used directly. None when the video tops out at
@@ -1943,6 +1978,12 @@ def _try_direct_ffmpeg_clip(video_info, target_height, clip_start, clip_end,
 
     hdr = _ffmpeg_headers(video_fmt)
     audio_hdr = _ffmpeg_headers(audio_fmt) if audio_fmt else hdr
+
+    # Since yt-dlp 2026.10.x, YouTube stream URLs carry 'available_at': they
+    # answer 403 until then (about 5 s after extraction). yt-dlp's downloader
+    # sleeps until that moment; ffmpeg does not, so wait here.
+    if not _wait_until_available([video_fmt, audio_fmt], lambda: bool(is_cancelled and is_cancelled[0])):
+        return False
 
     ss  = f'{clip_start:.3f}'
     dur = f'{clip_duration:.3f}'
@@ -3446,9 +3487,10 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
             'outtmpl': {
                 'default': os.path.join(download_path, os.path.splitext(unique_filename)[0] + '.%(ext)s')
             },
-            # First attempt only: a throttled URL raises ThrottledDownload and
-            # the fallbacks below fetch fresh URLs without this limit, so a
-            # genuinely slow connection cannot loop on re-extraction.
+            # First attempt only, and it must go through process_ie_result
+            # (never ydl.download) so ThrottledDownload escapes once. The
+            # fallbacks fetch fresh URLs without this limit: a genuinely slow
+            # line still finishes there instead of failing or looping.
             'throttledratelimit': THROTTLED_RATE_LIMIT,
         })
         
@@ -3585,7 +3627,12 @@ def download_video(video_url, resolution, download_path, download_mp3, ffmpeg_pa
                     logging.info("[FIX-SABR] Using pre-extracted info dict to avoid SABR re-extraction (process_ie_result)")
                     ydl.process_ie_result(info.copy(), download=True)
                 else:
-                    ydl.download([video_url])
+                    # Extract, then download, instead of ydl.download(): the
+                    # latter wraps the download in yt-dlp's re-extraction loop,
+                    # so ThrottledDownload would retry forever on a slow line
+                    # instead of reaching the fallbacks below.
+                    fresh = ydl.extract_info(video_url, download=False)
+                    ydl.process_ie_result(fresh, download=True)
         except Exception as e:
             error_message = f"Error during video download: {str(e)}"
             logging.error(error_message)
@@ -4188,6 +4235,9 @@ def download_audio(video_url, download_path, ffmpeg_path, socketio, current_down
 
                 # Set output template after getting info
                 ydl_opts['outtmpl'] = os.path.join(download_path, f'temp_{sanitized_title}')
+                # First attempt only (process_ie_result, so it raises once); the
+                # fallbacks below are built from fresh options without it.
+                ydl_opts['throttledratelimit'] = THROTTLED_RATE_LIMIT
                 
                 # Create new YoutubeDL instance with updated options
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl_download:
