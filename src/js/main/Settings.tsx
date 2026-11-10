@@ -19,16 +19,14 @@ const Settings = ({ onBack }: SettingsProps) => {
   });
   const [isTestPlaying, setIsTestPlaying] = useState(false);
   const [availableSounds, setAvailableSounds] = useState<string[]>([]);
-  const [serverIP, setServerIP] = useState('localhost');
+  const serverIP = 'localhost'; // the server only listens on loopback
   const [isOpeningLogsFolder, setIsOpeningLogsFolder] = useState(false);
   const [isOpeningSoundsFolder, setIsOpeningSoundsFolder] = useState(false);
 
 
   useEffect(() => {
-    const storedIP = localStorage.getItem('serverIP');
-    if (storedIP) {
-      setServerIP(storedIP);
-    }
+    // Loopback only: a LAN IP stored by an older version no longer answers
+    localStorage.removeItem('serverIP');
   }, []);
 
   const saveSettings = async (newSettings: typeof settings) => {

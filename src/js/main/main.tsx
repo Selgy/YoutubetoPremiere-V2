@@ -57,7 +57,7 @@ const getLocalIP = async () => {
   }
   
   // If we get here, try to use the last known working IP
-  const lastKnownIP = localStorage.getItem('serverIP');
+  const lastKnownIP = null as string | null;
   if (lastKnownIP && lastKnownIP !== 'localhost') {
     console.log('Trying last known IP:', lastKnownIP);
     try {
@@ -174,9 +174,9 @@ const Main = () => {
   useEffect(() => {
     const initializeConnection = async () => {
       const ip = await getLocalIP();
-      if (ip !== 'localhost') {
-        localStorage.setItem('serverIP', ip);
-      }
+      // The server only listens on loopback now: drop any LAN IP stored by
+      // an older version, it would no longer answer.
+      localStorage.removeItem('serverIP');
       setServerIP(ip);
       console.log('Server IP set to:', ip);
     };

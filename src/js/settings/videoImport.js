@@ -58,7 +58,7 @@ const getServerIP = async () => {
     }
     
     // If we get here, try to use the last known working IP
-    const lastKnownIP = localStorage.getItem('serverIP');
+    const lastKnownIP = null; // loopback only: stored LAN IPs no longer answer
     if (lastKnownIP && lastKnownIP !== 'localhost') {
         console.log('Trying last known IP:', lastKnownIP);
         try {

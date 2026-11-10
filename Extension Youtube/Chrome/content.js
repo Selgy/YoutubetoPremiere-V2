@@ -6,7 +6,7 @@ const T = (key, params) => (window.YTPI18n ? window.YTPI18n.t(key, params) : key
 // Modern button design with icons and improved animations - Original Colors
 
 // Debug: Version check
-console.log('YTP: Content script loaded - Version 3.0.22 with Enhanced Cookie Extraction & Debug');
+console.log('YTP: Content script loaded - version ' + chrome.runtime.getManifest().version);
 
 // Server availability state
 let serverAvailable = false;

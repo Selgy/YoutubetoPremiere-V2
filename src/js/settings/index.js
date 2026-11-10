@@ -572,83 +572,19 @@ function stopPythonServer() {
     // No cleanup needed for original executable location
 }
 
-// Helper function to handle permission errors specifically
-function handleProcessPermissionError(error, execPath, exec, path, extensionRoot) {
-    // Check if this is a permission error
-    const isPermissionError = 
-        error.code === 'EACCES' || 
-        error.message.includes('permission') || 
-        error.message.includes('access') ||
-        error.message.includes('denied');
-    
+// Permission errors are only logged. Relaunching the server elevated (RunAs /
+// "with administrator privileges") would give a network-facing process admin
+// rights, and a normal install never needs it.
+function handleProcessPermissionError(error, execPath) {
+    const msg = (error && error.message) || '';
+    const isPermissionError =
+        (error && error.code === 'EACCES') ||
+        msg.includes('permission') ||
+        msg.includes('access') ||
+        msg.includes('denied');
     if (!isPermissionError) return;
-    
-    console.error('Permission error detected when spawning process');
-    
-    if (process.platform === 'win32') {
-        // For Windows, try to launch with elevated permissions via different methods
-        try {
-            console.log('Attempting to relaunch with elevated permissions...');
-            
-            // Method 1: Try using PowerShell's Start-Process with RunAs verb
-            const psCommand = `powershell.exe -Command "Start-Process -FilePath '${execPath}' -ArgumentList '--verbose' -Verb RunAs -WindowStyle Hidden"`;
-            
-            console.log('Executing elevation command:', psCommand);
-            exec(psCommand, (error, stdout, stderr) => {
-                if (error) {
-                    console.error('PowerShell elevation failed:', error);
-                    
-                    // Method 2: Try using the built-in Windows start command as fallback
-                    const startCommand = `start /B /min "" "${execPath}" --verbose`;
-                    console.log('Trying fallback elevation method:', startCommand);
-                    
-                    exec(startCommand, (startError, startStdout, startStderr) => {
-                        if (startError) {
-                            console.error('Start command elevation failed:', startError);
-                        } else {
-                            console.log('Process started with start command');
-                        }
-                    });
-                } else {
-                    console.log('Process elevated successfully via PowerShell');
-                }
-            });
-        } catch (elevationError) {
-            console.error('Failed to launch with elevation:', elevationError);
-        }
-    } else if (process.platform === 'darwin') {
-        // For macOS, try using AppleScript for better permission handling
-        try {
-            console.log('Attempting to relaunch with improved macOS permissions...');
-            
-            // Method 1: Use AppleScript to launch the application
-            const appleScriptCommand = `tell application "Finder" to launch application "${execPath}"`;
-            const osascript = `osascript -e '${appleScriptCommand}'`;
-            
-            console.log('Executing macOS permission command:', osascript);
-            exec(osascript, (error, stdout, stderr) => {
-                if (error) {
-                    console.error('AppleScript launch failed:', error);
-                    
-                    // Method 2: Try admin privileges as fallback
-                    const adminCommand = `osascript -e 'do shell script "${execPath} --verbose" with administrator privileges'`;
-                    console.log('Trying admin privileges as fallback:', adminCommand);
-                    
-                    exec(adminCommand, (adminError, adminStdout, adminStderr) => {
-                        if (adminError) {
-                            console.error('Admin privileges launch failed:', adminError);
-                        } else {
-                            console.log('Process launched with admin privileges');
-                        }
-                    });
-                } else {
-                    console.log('Process launched via AppleScript');
-                }
-            });
-        } catch (osascriptError) {
-            console.error('Failed to launch with AppleScript:', osascriptError);
-        }
-    }
+    console.error('Permission error when starting the server at', execPath,
+        '- reinstall the plugin or check the file permissions.', error);
 }
 
 // Start the Python server when the extension loads

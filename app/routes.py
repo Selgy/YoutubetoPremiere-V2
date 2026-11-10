@@ -10,6 +10,7 @@ import os
 import sys
 import requests
 import socket
+import security
 import platform
 import re
 import tempfile
@@ -21,6 +22,36 @@ current_download_lock = threading.Lock()
 
 # License validation cache to avoid repeated API calls
 license_cache = {'key': None, 'is_valid': False, 'timestamp': 0}
+
+# Downloads currently running, so that a double click (or a click, a cancel that
+# came too early to stop anything, and another click) does not start a second
+# download of the same thing writing to the same files.
+_active_downloads = set()
+_active_downloads_lock = threading.Lock()
+
+
+def download_key(video_url, download_type, current_time=None):
+    if current_time is not None:
+        try:
+            return (video_url, 'clip', int(float(current_time)))
+        except (TypeError, ValueError):
+            return (video_url, 'clip', str(current_time))
+    return (video_url, download_type)
+
+
+def begin_download(key):
+    """Register a download; False when the same one is already running."""
+    with _active_downloads_lock:
+        if key in _active_downloads:
+            return False
+        _active_downloads.add(key)
+        return True
+
+
+def end_download(key):
+    with _active_downloads_lock:
+        _active_downloads.discard(key)
+
 
 def get_current_download():
     """Get the current download structure for cancellation purposes"""
@@ -218,9 +249,13 @@ def register_routes(app, socketio, settings, emit_fn=None):
 
         try:
             data = request.json or {}
-            download_url = data.get('download_url', '').strip()
+            download_url = str(data.get('download_url') or '').strip()
             if not download_url:
                 return jsonify({'success': False, 'error': 'No download URL provided'}), 400
+            # The file is executed afterwards: only our own release assets.
+            if not security.is_trusted_update_url(download_url):
+                logging.warning(f"[Update] Refused untrusted download URL: {download_url[:120]}")
+                return jsonify({'success': False, 'error': 'Untrusted download URL'}), 400
 
             system = platform.system().lower()
             filename = 'YouTubetoPremiere-Setup.exe' if system == 'windows' else 'YouTubetoPremiere-macOS.pkg'
@@ -284,20 +319,19 @@ def register_routes(app, socketio, settings, emit_fn=None):
     def handle_settings():
         if request.method == 'GET':
             try:
-                current_settings = load_settings()
-                settings_to_send = current_settings.copy()
-                settings_to_send.pop('SETTINGS_FILE', None)
-                settings_to_send.pop('ffmpeg_path', None)
-                settings_to_send.pop('ffmpeg_error', None)
-                return jsonify(settings_to_send), 200
+                return jsonify(security.public_settings(load_settings())), 200
             except Exception as e:
                 logging.error(f"Error reading settings: {e}")
                 return jsonify(error=str(e)), 500
         else:  # POST
             try:
-                new_settings = request.get_json()
+                # Whitelisted keys only, merged into what is on disk: the licence
+                # key is never accepted here and never overwritten from a stale copy.
+                new_settings = security.filter_writable_settings(request.get_json(silent=True))
+                current = load_settings()
+                current.update(new_settings)
                 settings.update(new_settings)
-                if save_settings(settings):
+                if save_settings(current):
                     return jsonify(success=True), 200
                 else:
                     return jsonify(success=False, error="Failed to save settings"), 500
@@ -334,6 +368,11 @@ def register_routes(app, socketio, settings, emit_fn=None):
             # Load current settings
             current_settings = load_settings()
             
+            active_key = download_key(video_url, download_type, data.get('currentTime'))
+            if not begin_download(active_key):
+                logging.info(f"Same download already in progress, ignoring duplicate request: {video_url}")
+                return jsonify({'success': True, 'duplicate': True, 'message': 'Download already in progress'}), 202
+
             # Reset current download structure before starting new download
             reset_current_download()
             logging.info(f"Reset current_download structure before starting {download_type} download (legacy route)")
@@ -400,12 +439,15 @@ def register_routes(app, socketio, settings, emit_fn=None):
                         socketio.emit('percentage', {'percentage': 'Erreur'})
                     except Exception:
                         logging.error("Could not emit error to client")
+                finally:
+                    end_download(active_key)
             
             # Start download in background thread
             try:
                 download_thread = threading.Thread(target=process_legacy_download_async, daemon=True)
                 download_thread.start()
             except RuntimeError as thread_err:
+                end_download(active_key)
                 error_message = f"Could not start download thread: {str(thread_err)}"
                 logging.error(error_message)
                 socketio.emit('download-failed', {'message': error_message})
@@ -471,6 +513,11 @@ def register_routes(app, socketio, settings, emit_fn=None):
             
             logging.info(f"Current settings for download: {settings_for_logging}")
             
+            active_key = download_key(video_url, download_type, data.get('currentTime'))
+            if not begin_download(active_key):
+                logging.info(f"Same download already in progress, ignoring duplicate request: {video_url}")
+                return jsonify({'success': True, 'duplicate': True, 'message': 'Download already in progress'}), 202
+
             # Reset current download structure before starting new download
             reset_current_download()
             logging.info(f"Reset current_download structure before starting {download_type} download")
@@ -546,12 +593,15 @@ def register_routes(app, socketio, settings, emit_fn=None):
                         socketio.emit('percentage', {'percentage': 'Erreur'})
                     except Exception:
                         logging.error("Could not emit error to client")
+                finally:
+                    end_download(active_key)
             
             # Start download in background thread
             try:
                 download_thread = threading.Thread(target=process_download_async, daemon=True)
                 download_thread.start()
             except RuntimeError as thread_err:
+                end_download(active_key)
                 error_message = f"Could not start download thread: {str(thread_err)}"
                 logging.error(error_message)
                 socketio.emit('download-failed', {'message': error_message})
@@ -742,62 +792,9 @@ def register_routes(app, socketio, settings, emit_fn=None):
 
     @app.route('/get-ip', methods=['GET'])
     def get_ip():
-        try:
-            # Try to get all possible IP addresses
-            hostname = socket.gethostname()
-            possible_ips = []
-            
-            # Get all network interfaces - improved for macOS
-            try:
-                for interface in socket.getaddrinfo(hostname, None):
-                    ip = interface[4][0]
-                    # Only include IPv4 addresses that aren't localhost
-                    if '.' in ip and ip != '127.0.0.1' and not ip.startswith('169.254'):
-                        possible_ips.append(ip)
-            except Exception as e:
-                logging.warning(f'getaddrinfo failed: {e}')
-            
-            # Additional method for macOS - try netifaces-like approach
-            if not possible_ips:
-                try:
-                    import subprocess
-                    if sys.platform == 'darwin':
-                        # Use ifconfig to get IP addresses on macOS
-                        result = subprocess.run(['ifconfig'], capture_output=True, text=True, timeout=5)
-                        if result.returncode == 0:
-                            import re
-                            # Look for inet addresses
-                            ip_pattern = r'inet (\d+\.\d+\.\d+\.\d+)'
-                            ips = re.findall(ip_pattern, result.stdout)
-                            for ip in ips:
-                                if ip != '127.0.0.1' and not ip.startswith('169.254'):
-                                    possible_ips.append(ip)
-                except Exception as e:
-                    logging.warning(f'ifconfig method failed: {e}')
-            
-            # If we found any valid IPs, return the first one
-            if possible_ips:
-                # Don't log actual IP addresses for privacy
-                logging.info(f'Found {len(possible_ips)} IP address(es)')
-                return jsonify({'ip': possible_ips[0]})
-            
-            # Fallback methods
-            try:
-                # Try the basic hostname method
-                local_ip = socket.gethostbyname(hostname)
-                if local_ip != '127.0.0.1':
-                    logging.info(f'Using hostname fallback method')
-                    return jsonify({'ip': local_ip})
-            except Exception as e:
-                logging.warning(f'hostname method failed: {e}')
-            
-            # Last resort: return localhost
-            logging.info(f'All IP detection methods failed, returning localhost')
-            return jsonify({'ip': 'localhost'})
-            
-        except Exception as e:
-            logging.error(f'Error getting IP address: {e}')
-            return jsonify({'ip': 'localhost', 'error': str(e)})
+        """Kept for older panels. The server only listens on loopback now, so
+        the address to use is always this one (it used to return the LAN IP)."""
+        return jsonify({'ip': security.BIND_HOST})
 
     @app.route('/get-audio-languages', methods=['POST'])
     def get_audio_languages():
@@ -1046,8 +1043,7 @@ def register_routes(app, socketio, settings, emit_fn=None):
             
             return jsonify({
                 'success': True,
-                'message': f'Successfully stored {len(cookies)} cookies',
-                'cookies_file': cookies_file
+                'message': f'Successfully stored {len(cookies)} cookies'
             })
             
         except Exception as e:
@@ -1112,7 +1108,6 @@ def register_routes(app, socketio, settings, emit_fn=None):
             return jsonify({
                 'status': status,
                 'has_cookies_file': has_cookies,
-                'cookies_file': cookies_file if has_cookies else None
             })
             
         except Exception as e:

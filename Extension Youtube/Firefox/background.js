@@ -1,7 +1,7 @@
 // background.js - Firefox version
 
 // Debug: Version check
-console.log('YTP: Background script loaded - Version 3.0.22 with Enhanced Cookie Extraction (Firefox)');
+console.log('YTP: Background script loaded - version ' + chrome.runtime.getManifest().version);
 
 // Firefox compatibility layer
 const extensionAPI = typeof browser !== 'undefined' ? browser : chrome;
@@ -162,7 +162,7 @@ async function getYouTubeCookies() {
         // Log authentication cookies with detailed info
         authCookiesSorted.forEach(cookie => {
             const expiry = cookie.expirationDate ? new Date(cookie.expirationDate * 1000).toISOString() : 'Session';
-            console.log(`YTP: 🔑 ${cookie.name} (${cookie.domain}) = ${cookie.value.substring(0, 15)}... [expires: ${expiry}]`);
+            console.log(`YTP: 🔑 ${cookie.name} (${cookie.domain}) [expires: ${expiry}]`);
         });
         
         // Check authentication status

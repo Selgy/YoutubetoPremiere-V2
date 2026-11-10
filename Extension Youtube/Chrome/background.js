@@ -1,7 +1,7 @@
 // background.js
 
 // Debug: Version check
-console.log('YTP: Background script loaded - Version 3.0.22 with Enhanced Cookie Extraction & Performance Optimizations');
+console.log('YTP: Background script loaded - version ' + chrome.runtime.getManifest().version);
 
 // Cookie cache to avoid repeated extractions
 let cookiesCache = { data: null, timestamp: 0 };
@@ -258,7 +258,7 @@ async function getYouTubeCookies() {
         // Log authentication cookies with detailed info
         authCookiesSorted.forEach(cookie => {
             const expiry = cookie.expirationDate ? new Date(cookie.expirationDate * 1000).toISOString() : 'Session';
-            console.log(`YTP: 🔑 ${cookie.name} (${cookie.domain}) = ${cookie.value.substring(0, 15)}... [expires: ${expiry}]`);
+            console.log(`YTP: 🔑 ${cookie.name} (${cookie.domain}) [expires: ${expiry}]`);
         });
         
         // Check authentication status

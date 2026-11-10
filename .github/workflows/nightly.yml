@@ -16,6 +16,18 @@ permissions:
   actions: read
 
 jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13.5'
+      - name: Run Python tests
+        run: |
+          pip install -r requirements.txt pytest
+          python -m pytest tests -q
+
   setup:
     runs-on: ubuntu-latest
     outputs:
@@ -335,7 +347,7 @@ jobs:
   windows-build:
     runs-on: windows-latest
     timeout-minutes: 20
-    needs: [setup]
+    needs: [setup, tests]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4.2.2

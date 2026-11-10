@@ -9,6 +9,7 @@ from flask_cors import CORS
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO
 from routes import register_routes
+import security
 from utils import load_settings, monitor_premiere_and_shutdown, play_notification_sound, get_temp_dir, clear_temp_files, rotate_log_files, SharedFileHandler, collect_premiere_crash_reports, is_sid_connected
 import re
 import subprocess
@@ -259,10 +260,13 @@ if not ffmpeg_found:
 logging.info("Initializing Flask...")
 try:
     app = Flask(__name__)
-    CORS(app, resources={r"/*": {"origins": "*", "allow_headers": "*", "expose_headers": "*", "methods": ["GET", "POST", "OPTIONS"]}})
+    # Only our own clients (panel, extension, YouTube pages): see security.py
+    CORS(app, resources={r"/*": {"origins": security.ALLOWED_ORIGIN_PATTERNS,
+                                 "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+                                 "methods": ["GET", "POST", "OPTIONS"]}})
 
     # Configure Flask for better handling of polling requests
-    app.config['SECRET_KEY'] = 'secret!'
+    app.config['SECRET_KEY'] = os.urandom(32)
     app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max-limit
     app.config['PROPAGATE_EXCEPTIONS'] = True
 
@@ -334,11 +338,12 @@ def handle_general_exception(error):
 def after_request(response):
     try:
         # Only add CORS headers if response is valid
-        if response and hasattr(response, 'headers'):
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
-            response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-            response.headers.add('Access-Control-Allow-Credentials', 'true')
+        # CORS headers come from Flask-CORS, limited to our own origins. Chrome
+        # asks for this one before letting a public page (YouTube) reach a
+        # loopback address.
+        if (response is not None and request.method == 'OPTIONS' and request.headers.get('Origin')
+                and security.is_allowed_origin(request.headers.get('Origin'))):
+            response.headers['Access-Control-Allow-Private-Network'] = 'true'
         return response
     except Exception as e:
         app_logger.error(f'Error in after_request handler: {str(e)}')
@@ -413,6 +418,15 @@ def cleanup_disconnected_client(sid):
     except Exception as cleanup_error:
         app_logger.error(f'Error during disconnect cleanup for SID {sid[:8]}...: {cleanup_error}')
 
+@app.before_request
+def reject_foreign_requests():
+    """Refuse anything that is not one of our own clients (see security.py)."""
+    if not security.is_request_allowed(request.headers):
+        app_logger.warning(f'[SECURITY] Rejected {request.method} {request.path} '
+                           f'(Origin={request.headers.get("Origin")!r}, Host={request.headers.get("Host")!r})')
+        return jsonify({'error': 'Forbidden'}), 403
+
+
 # Add pre-connection debugging
 @app.before_request
 def log_request_info():
@@ -433,6 +447,11 @@ def log_request_info():
 
 @socketio.on('connect')
 def handle_connect():
+    # Socket.IO requests do not go through Flask's before_request
+    if not security.is_request_allowed(request.headers):
+        app_logger.warning(f'[SECURITY] Rejected socket connection '
+                           f'(Origin={request.headers.get("Origin")!r}, Host={request.headers.get("Host")!r})')
+        return False
     try:
         sid = request.sid
         client_type = request.args.get('client_type', 'unknown')
@@ -797,7 +816,7 @@ def run_server():
     cleanup_thread = periodic_cleanup()
 
     # Start server without exposing IP addresses
-    logging.info(f'Starting server on all interfaces on port 17845')
+    logging.info(f'Starting server on {security.BIND_HOST} port 17845')
 
     # Disable Werkzeug production warning
     import warnings
@@ -808,7 +827,7 @@ def run_server():
         try:
             socketio.run(
                 app, 
-                host='0.0.0.0',  # Bind to all available interfaces
+                host=security.BIND_HOST,  # loopback only: never reachable from the network
                 port=17845,
                 debug=False,
                 use_reloader=False,
@@ -820,7 +839,7 @@ def run_server():
                 # Fall back to direct Flask app run for older versions
                 logging.warning("Falling back to Flask app.run() due to Werkzeug restrictions")
                 app.run(
-                    host='0.0.0.0',
+                    host=security.BIND_HOST,
                     port=17845,
                     debug=False,
                     use_reloader=False,
