@@ -53,7 +53,7 @@ jobs:
           echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_OUTPUT
 
   mac-build-apple-silicon:
-    runs-on: macos-14
+    runs-on: macos-15  # macos-14 runners were retired by GitHub
     needs: [windows-build, setup]
     steps:
       - name: Checkout code

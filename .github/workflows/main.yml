@@ -27,7 +27,7 @@ jobs:
           python -m pytest tests -q
 
   mac-build-apple-silicon:
-    runs-on: macos-14
+    runs-on: macos-15  # macos-14 runners were retired by GitHub
     needs: [windows-build]
     steps:
       - name: Checkout code
