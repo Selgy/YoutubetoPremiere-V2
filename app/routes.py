@@ -11,6 +11,7 @@ import sys
 import requests
 import socket
 import security
+import sites
 import platform
 import re
 import tempfile
@@ -361,9 +362,9 @@ def register_routes(app, socketio, settings, emit_fn=None):
             if not video_url:
                 return jsonify({'error': 'No URL provided'}), 400
                 
-            # Validate the URL is from YouTube
-            if not validate_youtube_url(video_url):
-                return jsonify({'error': 'Invalid YouTube URL'}), 400
+            # YouTube, TikTok, Instagram, X or Dailymotion (see sites.py)
+            if not sites.is_supported_url(video_url):
+                return jsonify({'error': 'Unsupported site'}), 400
             
             # Load current settings
             current_settings = load_settings()
@@ -495,9 +496,9 @@ def register_routes(app, socketio, settings, emit_fn=None):
             if not video_url:
                 return jsonify({'error': 'No URL provided'}), 400
                 
-            # Validate the URL is from YouTube
-            if not validate_youtube_url(video_url):
-                return jsonify({'error': 'Invalid YouTube URL'}), 400
+            # YouTube, TikTok, Instagram, X or Dailymotion (see sites.py)
+            if not sites.is_supported_url(video_url):
+                return jsonify({'error': 'Unsupported site'}), 400
             
             # Load current settings
             current_settings = load_settings()

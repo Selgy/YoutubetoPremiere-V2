@@ -17,6 +17,10 @@ yt-dlp==2026.10.26               # stable (needs Python >=3.11; builds use 3.13.
 # with 403. Keep this in step when bumping yt-dlp: 2026.10.26 pins ==0.8.0.
 # It is not a hard dependency of yt-dlp, so pip kept a stale 0.3.2 around.
 yt-dlp-ejs>=0.8.0
+# Browser impersonation for yt-dlp: Dailymotion refuses requests without it
+# ("none of these impersonate targets are available"), TikTok often too.
+# yt-dlp 2026.10.26 accepts curl_cffi 0.10.x-0.17.x.
+curl_cffi==0.17.0
 python-socketio==5.8.0
 python-engineio==4.7.1
 psutil==5.9.8

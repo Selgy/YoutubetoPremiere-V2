@@ -2,6 +2,7 @@ import os
 import subprocess
 import logging
 import yt_dlp  # Import yt_dlp directly
+import sites
 import re
 from flask import jsonify
 import sys
@@ -1656,7 +1657,20 @@ def handle_video_url(video_url, download_type, current_download, socketio, setti
 
         logging.info(f"Processing {download_type} request for {video_url}")
         logging.info(f"Settings: resolution={resolution}, download_path={download_path}, download_mp3={download_mp3}")
-        
+
+        # TikTok, Instagram, X, Dailymotion: their own short pipeline (site_download.py)
+        if not sites.is_youtube_url(video_url):
+            if download_type == 'clip':
+                return {"error": "Les clips ne sont disponibles que sur YouTube."}
+            from site_download import download_from_site
+            result = download_from_site(
+                video_url, 'audio' if download_type == 'audio' else 'full', download_path,
+                ffmpeg_path, socketio, settings, current_download=current_download,
+                cookies=cookies, user_agent=user_agent, resolution=resolution)
+            if result.get('path'):
+                return {"success": True, "path": result['path']}
+            return {"error": result.get('error') or "Download failed"}
+
         if download_type == 'audio':
             # Process audio download
             result = download_audio(

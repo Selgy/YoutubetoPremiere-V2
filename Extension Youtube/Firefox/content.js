@@ -114,9 +114,9 @@ async function getCookiesForServer() {
         }
         
         try {
-            chrome.runtime.sendMessage({
-                type: 'GET_YOUTUBE_COOKIES'
-            }, (response) => {
+            chrome.runtime.sendMessage(YTP_SITE.id === 'youtube'
+                ? { type: 'GET_YOUTUBE_COOKIES' }
+                : { type: 'GET_SITE_COOKIES', site: YTP_SITE.id }, (response) => {
                 if (chrome.runtime.lastError) {
                     console.error('YTP: Chrome runtime error:', chrome.runtime.lastError);
                     resolve({ cookies: [], error: chrome.runtime.lastError.message });
@@ -989,12 +989,8 @@ let ytPlayerObserver = null;
 
 // Function to check if we're on a video or shorts page
 function isVideoPage() {
-    const currentPath = window.location.pathname;
-    const hasVideoParam = window.location.search.includes('v=');
-    const isWatchPage = currentPath === '/watch' && hasVideoParam;
-    const isShortsPage = currentPath.startsWith('/shorts/');
-    
-    return isWatchPage || isShortsPage;
+    // YouTube: watch/shorts pages; other sites: see sites.js
+    return YTP_SITE.isVideoPage();
 }
 
 // Function to show/hide the floating container based on page type
@@ -1993,6 +1989,9 @@ function showNotification(message, type = 'info', duration = 5000) {
 
 function sendURL(importType, additionalData = {}) {
     const buttonType = importType === 'full' ? 'premiere' : importType;
+    // Read now: on TikTok/Instagram/X feeds the next video may be on screen
+    // by the time the server and licence checks are done.
+    const pageVideoUrl = YTP_SITE.getVideoUrl();
     
     // Check server availability first
     checkServerAvailability().then(isAvailable => {
@@ -2102,35 +2101,10 @@ function sendURL(importType, additionalData = {}) {
                     }, 3000);
                 }, 300000); // 5 minutes timeout
             
-            // Extract video ID from different YouTube URL formats
-            let videoId = null;
-            let currentVideoUrl = null;
-            
-            // Check if it's a regular YouTube video (/watch?v=...)
-            const urlParams = new URLSearchParams(window.location.search);
-            videoId = urlParams.get('v');
-            
-            // If no videoId found, check if it's a YouTube Short (/shorts/...)
-            if (!videoId) {
-                const pathname = window.location.pathname;
-                const shortsMatch = pathname.match(/^\/shorts\/([a-zA-Z0-9_-]+)/);
-                if (shortsMatch) {
-                    videoId = shortsMatch[1];
-                }
-            }
-            
-            // If no videoId found, try to extract from current URL
-            if (!videoId) {
-                // Try to extract from youtu.be links or other formats
-                const urlMatch = window.location.href.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/);
-                if (urlMatch) {
-                    videoId = urlMatch[1];
-                }
-            }
-            
-            if (videoId) {
-                // Use the current page URL directly to preserve all parameters and context
-                currentVideoUrl = window.location.href;
+            // The video's own URL (sites.js), read when the button was clicked
+            const currentVideoUrl = pageVideoUrl;
+
+            if (currentVideoUrl) {
                 
                 // Always récupérer les cookies YouTube, même si l'authentification semble incomplète
                 getCookiesForServer().then(cookiesData => {
@@ -2616,48 +2590,51 @@ function addButtons() {
                 sendURL('full');
             }));
             
-            buttonsContainer.appendChild(createButton('clip-button', T('btnClip'), () => {
-                let currentTime = null;
+            // Clips need YouTube's own timeline handling: YouTube only
+            if (YTP_SITE.supportsClip) {
+                buttonsContainer.appendChild(createButton('clip-button', T('btnClip'), () => {
+                    let currentTime = null;
 
-                // 1) <video> scoped to the main player only. YouTube is a SPA:
-                //    after in-page navigation the page can hold several <video>
-                //    elements (inline previews, shorts) and the old bare
-                //    querySelectorAll('video')[0] fallback could grab one sitting
-                //    at 0 — which sent currentTime=0 and clipped the video start.
-                //    A reported 0 is treated as unreliable (tier 2 then applies).
-                {
-                    const videoPlayer =
-                        document.querySelector('#movie_player video.html5-main-video') ||
-                        document.querySelector('#movie_player video') ||
-                        document.querySelector('video.html5-main-video');
-                    if (videoPlayer && isFinite(videoPlayer.currentTime) && videoPlayer.currentTime > 0) {
-                        currentTime = videoPlayer.currentTime;
-                        console.log('YTP: Current time from video element:', currentTime);
-                    }
-                }
-
-                // 2) URL t=/start= parameter (page opened via a timestamped link
-                //    and the player never reported a usable time).
-                if (currentTime === null) {
-                    const p = new URLSearchParams(window.location.search);
-                    const raw = p.get('t') || p.get('start');
-                    if (raw) {
-                        const m = String(raw).match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/);
-                        if (m && (m[1] || m[2] || m[3])) {
-                            currentTime = (parseInt(m[1] || 0) * 3600) +
-                                          (parseInt(m[2] || 0) * 60) +
-                                          parseInt(m[3] || 0);
-                            console.log('YTP: Current time from URL parameter:', currentTime);
+                    // 1) <video> scoped to the main player only. YouTube is a SPA:
+                    //    after in-page navigation the page can hold several <video>
+                    //    elements (inline previews, shorts) and the old bare
+                    //    querySelectorAll('video')[0] fallback could grab one sitting
+                    //    at 0 — which sent currentTime=0 and clipped the video start.
+                    //    A reported 0 is treated as unreliable (tier 2 then applies).
+                    {
+                        const videoPlayer =
+                            document.querySelector('#movie_player video.html5-main-video') ||
+                            document.querySelector('#movie_player video') ||
+                            document.querySelector('video.html5-main-video');
+                        if (videoPlayer && isFinite(videoPlayer.currentTime) && videoPlayer.currentTime > 0) {
+                            currentTime = videoPlayer.currentTime;
+                            console.log('YTP: Current time from video element:', currentTime);
                         }
                     }
-                }
 
-                if (currentTime === null) {
-                    currentTime = 0;
-                    console.warn('YTP: Could not determine playback time, defaulting to 0');
-                }
-                sendURL('clip', { currentTime });
-            }));
+                    // 2) URL t=/start= parameter (page opened via a timestamped link
+                    //    and the player never reported a usable time).
+                    if (currentTime === null) {
+                        const p = new URLSearchParams(window.location.search);
+                        const raw = p.get('t') || p.get('start');
+                        if (raw) {
+                            const m = String(raw).match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/);
+                            if (m && (m[1] || m[2] || m[3])) {
+                                currentTime = (parseInt(m[1] || 0) * 3600) +
+                                              (parseInt(m[2] || 0) * 60) +
+                                              parseInt(m[3] || 0);
+                                console.log('YTP: Current time from URL parameter:', currentTime);
+                            }
+                        }
+                    }
+
+                    if (currentTime === null) {
+                        currentTime = 0;
+                        console.warn('YTP: Could not determine playback time, defaulting to 0');
+                    }
+                    sendURL('clip', { currentTime });
+                }));
+            }
             
             buttonsContainer.appendChild(createButton('audio-button', T('btnAudio'), () => {
                 sendURL('audio');
@@ -2786,6 +2763,8 @@ const setupObservers = () => {
         // Stop if extension is invalidated
         if (invalidationHandled || !isExtensionValid) return;
         
+        // Only YouTube has this player; elsewhere this would poll forever
+        if (YTP_SITE.id !== 'youtube') return;
         const ytPlayer = document.querySelector('#movie_player, .html5-video-player');
         if (ytPlayer && ytPlayerObserver) {
             ytPlayerObserver.observe(ytPlayer, { 
@@ -3229,6 +3208,7 @@ function resetAllButtons() {
 async function checkAuthenticationStatus() {
     // Skip auth check if extension is invalidated
     if (invalidationHandled || !isExtensionValid) return;
+    if (YTP_SITE.id !== 'youtube') return;
     
     try {
         const authStatus = await checkYouTubeAuth();
@@ -3281,6 +3261,7 @@ if (document.readyState === 'loading') {
 
 // Enhanced YouTube resource error detection (disabled to prevent console interference)
 function detectYouTubeResourceErrors() {
+    if (YTP_SITE.id !== 'youtube') return;
     // Simplified error detection without intercepting console.error
     // This prevents interference with other extensions and debugging
     
@@ -3333,6 +3314,8 @@ function detectYouTubeResourceErrors() {
 async function enhancedAuthCheck() {
     // Skip auth check if extension is invalidated
     if (invalidationHandled || !isExtensionValid) return false;
+    // Google login cookies only mean something on YouTube
+    if (YTP_SITE.id !== 'youtube') return true;
     
     try {
         const authStatus = await checkYouTubeAuth();

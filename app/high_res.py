@@ -302,15 +302,18 @@ def _run_conversion(cmd, duration, progress_cb, register_process, is_cancelled,
 
 
 def ensure_avc1(ffmpeg_path, path, target_height, socketio=None,
-                current_download=None, is_cancelled=None):
+                current_download=None, is_cancelled=None, force=False):
     """Return a Premiere-compatible version of `path`.
 
     No-op unless the user asked above 1080p and the file is not already H.264
     (a video that tops out at 1080p was downloaded as AVC1 and is left alone).
     Otherwise converts to H.264 + AAC .mp4, replacing the original, and returns
     the new path. Raises on failure or cancellation.
+
+    force=True converts any non-H.264 file whatever the height: sites other
+    than YouTube may only offer HEVC/VP9, which Premiere handles badly.
     """
-    if not wants_high_res(target_height) or not path or not os.path.exists(path):
+    if not (force or wants_high_res(target_height)) or not path or not os.path.exists(path):
         return path
 
     media = probe_media(ffmpeg_path, path)

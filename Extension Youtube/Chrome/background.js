@@ -1,5 +1,8 @@
 // background.js
 
+// Site list shared with the content scripts (cookie domains)
+importScripts('sites.js');
+
 // Debug: Version check
 console.log('YTP: Background script loaded - version ' + chrome.runtime.getManifest().version);
 
@@ -16,6 +19,28 @@ chrome.action.onClicked.addListener((tab) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('YTP: Background script received message:', message);
     
+    // TikTok, Instagram, X, Dailymotion: that site's cookies, so yt-dlp sees
+    // what the logged-in user sees (Instagram serves no sound otherwise)
+    if (message.type === 'GET_SITE_COOKIES') {
+        const domains = (self.YTP_SITE_DOMAINS || {})[message.site];
+        if (!domains || message.site === 'youtube') {
+            sendResponse({ cookies: [] });
+            return true;
+        }
+        const storeId = sender && sender.tab ? sender.tab.cookieStoreId : undefined;
+        Promise.all(domains.map(domain =>
+            chrome.cookies.getAll(storeId ? { domain, storeId } : { domain }).catch(() => [])
+        )).then(lists => {
+            const cookies = lists.flat().map(c => ({
+                name: c.name, value: c.value, domain: c.domain, path: c.path,
+                secure: c.secure, httpOnly: c.httpOnly, expirationDate: c.expirationDate,
+            }));
+            console.log(`YTP: ${cookies.length} ${message.site} cookies for the server`);
+            sendResponse({ cookies });
+        });
+        return true;
+    }
+
     if (message.type === 'GET_YOUTUBE_COOKIES') {
         console.log('YTP: Processing GET_YOUTUBE_COOKIES request');
         

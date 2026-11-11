@@ -183,6 +183,7 @@ jobs:
           --hidden-import=video_processing \
           --hidden-import=utils \
           --hidden-import=routes \
+          --hidden-import=sites --hidden-import=site_download --hidden-import=security \
           --collect-all=yt_dlp --collect-all=yt_dlp_ejs \
           --collect-all=flask \
           --collect-all=flask_socketio \
@@ -669,7 +670,7 @@ jobs:
             --hidden-import=engineio.async_drivers.threading `
             --hidden-import=flask --hidden-import=flask_cors --hidden-import=flask_socketio `
             --hidden-import=yt_dlp --hidden-import=psutil `
-            --hidden-import=video_processing --hidden-import=utils --hidden-import=routes `
+            --hidden-import=video_processing --hidden-import=utils --hidden-import=routes --hidden-import=sites --hidden-import=site_download --hidden-import=security `
             --collect-all=yt_dlp --collect-all=yt_dlp_ejs `
             --collect-all=flask `
             --collect-all=flask_socketio `

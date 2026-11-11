@@ -20,6 +20,8 @@ _ALLOWED_HOSTNAMES = {'localhost', '127.0.0.1', '[::1]', '::1'}
 # Origins of our own clients, as regular expressions (also given to Flask-CORS).
 ALLOWED_ORIGIN_PATTERNS = [
     r'^https://([a-z0-9-]+\.)*youtube\.com$',     # content script on YouTube
+    # content script on the other supported sites (sites.py)
+    r'^https://([a-z0-9-]+\.)*(tiktok|instagram|twitter|x|dailymotion)\.com$',
     r'^chrome-extension://[a-p]{32}$',            # extension background/popup
     r'^moz-extension://[0-9a-f-]{36}$',           # same, Firefox
     r'^https?://(localhost|127\.0\.0\.1)(:\d+)?$',  # panel served by the dev server

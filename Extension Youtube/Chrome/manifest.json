@@ -2,7 +2,7 @@
     "manifest_version": 3,
     "name": "Youtube to Premiere Pro V3",
     "version": "3.0.37",
-    "description": "",
+    "description": "Import videos from YouTube, TikTok, Instagram, X and Dailymotion into Adobe Premiere Pro.",
     "permissions": [
         "activeTab",
         "storage",
@@ -14,7 +14,14 @@
         "https://*.google.com/*",
         "https://*.googleapis.com/*",
         "http://localhost/*",
-        "https://api.github.com/*"
+        "https://api.github.com/*",
+        "https://*.tiktok.com/*",
+        "https://*.instagram.com/*",
+        "https://x.com/*",
+        "https://*.x.com/*",
+        "https://twitter.com/*",
+        "https://*.twitter.com/*",
+        "https://*.dailymotion.com/*"
     ],
     "action": {
         "default_icon": {
@@ -30,11 +37,19 @@
         {
             "matches": [
                 "https://www.youtube.com/*",
-                "https://youtube.com/*"
+                "https://youtube.com/*",
+                "https://*.tiktok.com/*",
+                "https://*.instagram.com/*",
+                "https://x.com/*",
+                "https://*.x.com/*",
+                "https://twitter.com/*",
+                "https://*.twitter.com/*",
+                "https://*.dailymotion.com/*"
             ],
             "js": [
                 "socket.io.min.js",
                 "i18n.js",
+                "sites.js",
                 "content.js"
             ],
             "run_at": "document_idle"
@@ -47,7 +62,14 @@
             ],
             "matches": [
                 "https://www.youtube.com/*",
-                "https://youtube.com/*"
+                "https://youtube.com/*",
+                "https://*.tiktok.com/*",
+                "https://*.instagram.com/*",
+                "https://x.com/*",
+                "https://*.x.com/*",
+                "https://twitter.com/*",
+                "https://*.twitter.com/*",
+                "https://*.dailymotion.com/*"
             ]
         }
     ],
