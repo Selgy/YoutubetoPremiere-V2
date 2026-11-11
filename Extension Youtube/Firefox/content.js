@@ -211,726 +211,456 @@ window.addEventListener('message', async (event) => {
 // Add styles to the document
 const styleSheet = document.createElement("style");
 styleSheet.textContent = `
-    /* Import Google Fonts for icons */
-    @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
+    /* Floating bar shown on YouTube, TikTok, Instagram, X and Dailymotion.
+       Every rule is scoped to our own ids/classes and sets the properties a
+       site stylesheet could change (font, line-height, box-sizing...). */
 
-    .import-button {
-        background: linear-gradient(135deg, #2e2f77 0%, #4e52ff 100%);
-        color: white;
-        padding: 0 12px;
-        border-radius: 18px;
-        border: none;
-        margin: 0 2px;
-        cursor: pointer;
-        position: relative !important;
-        overflow: hidden;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        font-family: "Roboto", "Arial", sans-serif;
-        font-size: 14px;
-        font-weight: 500;
-        box-shadow: 0 4px 12px rgba(46, 47, 119, 0.4);
-        width: 90px;
-        text-align: center;
+    #ytp-floating-container {
+        --ytp-accent: #5b5fff;
+        --ytp-accent-hover: #6e72ff;
+        --ytp-accent-active: #4a4ee6;
+        --ytp-surface: rgba(17, 17, 24, 0.86);
+        --ytp-border: rgba(255, 255, 255, 0.12);
+        --ytp-text: #ffffff;
+        --ytp-muted: rgba(255, 255, 255, 0.72);
+        --ytp-success: #10b981;
+        --ytp-danger: #ef4444;
+        position: fixed !important;
+        z-index: 2147483000 !important;
+        left: 20px;
+        bottom: 20px;
+        pointer-events: auto !important;
+        user-select: none !important;
+        -webkit-user-select: none !important;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+        line-height: 1 !important;
+        transition: opacity 0.2s ease !important;
+    }
+
+    #ytp-floating-container.pinned {
+        position: absolute !important;
+    }
+
+    #ytp-floating-container.dragging {
+        opacity: 0.9 !important;
+        transition: none !important;
+    }
+
+    #ytp-floating-container *,
+    #ytp-floating-container *::before,
+    #ytp-floating-container *::after {
+        box-sizing: border-box !important;
+    }
+
+    /* The pill */
+    #ytp-floating-container .ytp-main-container {
         display: inline-flex !important;
-        align-items: center;
-        justify-content: center;
-        height: 36px;
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        flex-shrink: 0 !important;
-        order: -999 !important;
-        z-index: 50 !important;
-    }
-    
-    /* Empêche YouTube de réorganiser nos boutons */
-    #top-level-buttons-computed .ytp-main-container,
-    #top-level-buttons .ytp-main-container {
-        position: sticky !important;
-        left: 0 !important;
-        top: 0 !important;
-    }
-    
-    /* Force nos boutons à rester visibles même quand YouTube réorganise */
-    .ytp-main-container .ytp-buttons-container,
-    .ytp-main-container .import-button,
-    .ytp-main-container .ytp-toggle-button {
-        position: relative !important;
+        align-items: center !important;
+        gap: 4px !important;
+        height: auto !important;
+        margin: 0 !important;
+        padding: 4px !important;
+        background: var(--ytp-surface) !important;
+        backdrop-filter: blur(14px) saturate(140%) !important;
+        -webkit-backdrop-filter: blur(14px) saturate(140%) !important;
+        border: 1px solid var(--ytp-border) !important;
+        border-radius: 999px !important;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.25) !important;
+        white-space: nowrap !important;
+        overflow: visible !important;
+        cursor: grab !important;
         visibility: visible !important;
+        opacity: 1 !important;
+    }
+
+    #ytp-floating-container.dragging .ytp-main-container {
+        cursor: grabbing !important;
+    }
+
+    /* Show / hide toggle */
+    #ytp-floating-container .ytp-toggle-button {
+        all: unset;
         display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        flex: 0 0 auto !important;
+        width: 32px !important;
+        height: 32px !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border-radius: 50% !important;
+        color: var(--ytp-muted) !important;
+        background: transparent !important;
+        cursor: pointer !important;
+        transition: background-color 0.15s ease, color 0.15s ease !important;
     }
 
-    .import-button::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: -100%;
-        width: 100%;
-        height: 100%;
-        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-        transition: left 0.5s;
+    #ytp-floating-container .ytp-toggle-button:hover {
+        color: var(--ytp-text) !important;
+        background: rgba(255, 255, 255, 0.12) !important;
     }
 
-    .import-button:hover::before {
-        left: 100%;
+    #ytp-floating-container .ytp-toggle-button:focus-visible {
+        outline: 2px solid var(--ytp-accent) !important;
+        outline-offset: 1px !important;
     }
 
-    #send-to-premiere-button {
-        background: linear-gradient(135deg, #2e2f77 0%, #4e52ff 100%);
-        box-shadow: 0 4px 12px rgba(46, 47, 119, 0.4);
+    #ytp-floating-container .ytp-toggle-button.buttons-hidden {
+        color: var(--ytp-text) !important;
+        background: var(--ytp-accent) !important;
     }
 
-    #clip-button {
-        background: linear-gradient(135deg, #2e2f77 0%, #4e52ff 100%);
-        box-shadow: 0 4px 12px rgba(46, 47, 119, 0.4);
+    /* Group of action buttons, folds into the toggle */
+    #ytp-floating-container .ytp-buttons-container {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 4px !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        max-width: 420px !important;
+        opacity: 1 !important;
+        overflow: visible !important;
+        transition: max-width 0.25s ease, opacity 0.2s ease !important;
     }
 
-    #audio-button {
-        background: linear-gradient(135deg, #2e2f77 0%, #4e52ff 100%);
-        box-shadow: 0 4px 12px rgba(46, 47, 119, 0.4);
-    }
-
-    .import-button:hover {
-        transform: scale(1.05);
-        background: linear-gradient(135deg, #4e52ff 0%, #6366f1 100%);
-        box-shadow: 0 8px 25px rgba(78, 82, 255, 0.6);
-    }
-
-    .import-button:active {
-        transform: translateY(0) scale(0.98);
-    }
-
-    .import-button.disabled {
-        background: linear-gradient(135deg, #6b7280 0%, #9ca3af 100%) !important;
-        cursor: not-allowed !important;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
-        opacity: 0.6 !important;
+    #ytp-floating-container .ytp-buttons-container.hidden {
+        max-width: 0 !important;
+        opacity: 0 !important;
+        overflow: hidden !important;
         pointer-events: none !important;
     }
 
-    .import-button.disabled:hover {
-        transform: none !important;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
+    #ytp-floating-container .ytp-main-container.buttons-collapsed {
+        gap: 0 !important;
     }
 
-    .import-button.importing {
-        background: linear-gradient(135deg, #2e2f77 0%, #4e52ff 100%);
-        pointer-events: auto;
-        animation: pulse 2s infinite;
+    /* Action buttons */
+    #ytp-floating-container .import-button {
+        position: relative !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        flex: 0 0 auto !important;
+        min-width: 92px !important;
+        height: 32px !important;
+        margin: 0 !important;
+        padding: 0 14px !important;
+        border: none !important;
+        border-radius: 999px !important;
+        background: var(--ytp-accent) !important;
+        color: var(--ytp-text) !important;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.01em !important;
+        text-transform: none !important;
+        line-height: 1 !important;
+        overflow: hidden !important;
+        cursor: pointer !important;
+        outline: none !important;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18) !important;
+        transition: background-color 0.15s ease, transform 0.1s ease, opacity 0.2s ease !important;
     }
 
-    .import-button.success {
-        background: linear-gradient(135deg, #059669 0%, #10b981 100%);
-        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
-        animation: none;
+    #ytp-floating-container .import-button:hover {
+        background: var(--ytp-accent-hover) !important;
     }
 
-    .import-button .progress-text {
-        position: relative;
-        z-index: 1;
-        transition: all 0.3s ease;
-        width: 100%;
-        height: 100%;
-        text-align: center;
-        line-height: 1;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 6px;
-        font-weight: 500;
-        vertical-align: middle;
+    #ytp-floating-container .import-button:active {
+        background: var(--ytp-accent-active) !important;
+        transform: scale(0.97) !important;
     }
 
-    .import-button .button-icon {
-        font-family: 'Material Symbols Outlined';
-        font-size: 18px;
-        font-weight: 400;
-        line-height: 1;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+    #ytp-floating-container .import-button:focus-visible {
+        box-shadow: 0 0 0 2px var(--ytp-surface), 0 0 0 4px var(--ytp-accent) !important;
     }
 
-    .import-button.importing:hover .progress-text {
-        opacity: 0;
+    #ytp-floating-container .import-button .progress-text {
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        gap: 6px !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        line-height: 1 !important;
+        /* The font's line box puts capitals 1.5px below the middle (measured
+           on Segoe UI): lift the whole label, then put the icon back */
+        padding-bottom: 2.5px !important;
+        transition: opacity 0.15s ease !important;
     }
 
-    .cancel-button {
-        position: absolute;
-        top: 0;
-        right: 0;
-        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-        color: white;
-        width: 100%;
-        height: 100%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        opacity: 0;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        pointer-events: none;
-        border-radius: 12px;
-        z-index: 2;
-        font-size: 16px;
-        font-weight: 600;
-        backdrop-filter: blur(10px);
+    #ytp-floating-container .import-button .progress-text .button-icon {
+        transform: translateY(0.75px) !important;
     }
 
-    .import-button:hover .cancel-button {
-        opacity: 0;
-        pointer-events: none;
+    #ytp-floating-container .import-button .progress-value {
+        font-variant-numeric: tabular-nums !important;
     }
 
-    .import-button.importing:hover .cancel-button,
-    .import-button.loading:hover .cancel-button {
-        opacity: 1;
-        pointer-events: auto;
-        transform: scale(1.05);
+    #ytp-floating-container .button-icon {
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        flex: 0 0 auto !important;
+        width: 16px !important;
+        height: 16px !important;
     }
 
-    @keyframes pulse {
-        0% { 
-            transform: scale(1);
-            box-shadow: 0 4px 12px rgba(46, 47, 119, 0.4);
-        }
-        50% { 
-            transform: scale(1.02);
-            box-shadow: 0 8px 20px rgba(78, 82, 255, 0.6);
-        }
-        100% { 
-            transform: scale(1);
-            box-shadow: 0 4px 12px rgba(46, 47, 119, 0.4);
-        }
+    #ytp-floating-container .ytp-toggle-button .button-icon {
+        width: 18px !important;
+        height: 18px !important;
     }
 
-    @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
+    #ytp-floating-container .button-icon svg {
+        display: block !important;
+        width: 100% !important;
+        height: 100% !important;
+        fill: none !important;
+        stroke: currentColor !important;
+        stroke-width: 2 !important;
+        stroke-linecap: round !important;
+        stroke-linejoin: round !important;
     }
 
-    @keyframes ripple {
-        to {
-            transform: scale(4);
-            opacity: 0;
-        }
+    /* States */
+    #ytp-floating-container .import-button.disabled {
+        opacity: 0.45 !important;
+        cursor: not-allowed !important;
+        pointer-events: none !important;
     }
 
-    .ripple {
-        position: absolute;
-        border-radius: 50%;
-        background: rgba(255, 255, 255, 0.6);
+    #ytp-floating-container .import-button.server-unavailable {
+        background: #3f3f4a !important;
+        color: var(--ytp-muted) !important;
+    }
+
+    #ytp-floating-container .import-button.server-unavailable:hover {
+        background: #4b4b57 !important;
+    }
+
+    #ytp-floating-container .import-button.importing {
+        pointer-events: auto !important;
+        animation: ytp-pulse 1.6s ease-in-out infinite !important;
+    }
+
+    #ytp-floating-container .import-button.loading {
+        pointer-events: none !important;
+    }
+
+    #ytp-floating-container .import-button.loading .progress-text,
+    #ytp-floating-container .import-button.importing:hover .progress-text {
+        opacity: 0 !important;
+    }
+
+    #ytp-floating-container .import-button.success {
+        background: var(--ytp-success) !important;
+        animation: none !important;
+    }
+
+    #ytp-floating-container .import-button.failure {
+        background: var(--ytp-danger) !important;
+        animation: ytp-shake 0.4s ease !important;
+    }
+
+    /* Spinner while the server and licence are checked */
+    #ytp-floating-container .loading-spinner-container {
+        position: absolute !important;
+        inset: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        pointer-events: none !important;
+    }
+
+    #ytp-floating-container .loading-spinner {
+        display: none !important;
+        width: 16px !important;
+        height: 16px !important;
+        border: 2px solid rgba(255, 255, 255, 0.35) !important;
+        border-top-color: #ffffff !important;
+        border-radius: 50% !important;
+        animation: ytp-spin 0.8s linear infinite !important;
+    }
+
+    #ytp-floating-container .import-button.loading .loading-spinner {
+        display: block !important;
+    }
+
+    /* Cancel overlay while a download runs */
+    #ytp-floating-container .cancel-button {
+        position: absolute !important;
+        inset: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        border-radius: inherit !important;
+        background: var(--ytp-danger) !important;
+        color: #ffffff !important;
+        font-size: 13px !important;
+        font-weight: 700 !important;
+        line-height: 1 !important;
+        padding-bottom: 2px !important; /* same lift as the labels */
+        opacity: 0 !important;
+        pointer-events: none !important;
+        cursor: pointer !important;
+        transition: opacity 0.15s ease !important;
+        z-index: 2 !important;
+    }
+
+    #ytp-floating-container .import-button.importing:hover .cancel-button,
+    #ytp-floating-container .import-button.loading:hover .cancel-button {
+        opacity: 1 !important;
+        pointer-events: auto !important;
+    }
+
+    #ytp-floating-container .ripple {
+        position: absolute !important;
+        border-radius: 50% !important;
+        background: rgba(255, 255, 255, 0.45) !important;
         transform: scale(0);
-        animation: ripple 0.6s linear;
-        pointer-events: none;
+        animation: ytp-ripple 0.5s linear !important;
+        pointer-events: none !important;
     }
 
-    .loading-spinner-container {
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        pointer-events: none;
+    /* Sizes chosen in the popup */
+    #ytp-floating-container .ytp-main-container.compact .import-button { height: 28px !important; min-width: 80px !important; font-size: 12px !important; padding: 0 12px !important; }
+    #ytp-floating-container .ytp-main-container.compact .ytp-toggle-button { width: 28px !important; height: 28px !important; }
+    #ytp-floating-container .ytp-main-container.mini .import-button { height: 26px !important; min-width: 70px !important; font-size: 11px !important; padding: 0 10px !important; }
+    #ytp-floating-container .ytp-main-container.mini .ytp-toggle-button { width: 26px !important; height: 26px !important; }
+    #ytp-floating-container .ytp-main-container.mini .button-icon { width: 14px !important; height: 14px !important; }
+    #ytp-floating-container .ytp-main-container.micro .import-button,
+    #ytp-floating-container .ytp-main-container.icon-only .import-button { min-width: 0 !important; width: 30px !important; height: 30px !important; padding: 0 !important; font-size: 0 !important; }
+    #ytp-floating-container .ytp-main-container.micro .progress-text,
+    #ytp-floating-container .ytp-main-container.icon-only .progress-text { gap: 0 !important; }
+    #ytp-floating-container .ytp-main-container.micro .ytp-toggle-button,
+    #ytp-floating-container .ytp-main-container.icon-only .ytp-toggle-button { width: 30px !important; height: 30px !important; }
+
+    @keyframes ytp-spin { to { transform: rotate(360deg); } }
+    @keyframes ytp-ripple { to { transform: scale(4); opacity: 0; } }
+    @keyframes ytp-pulse {
+        0%, 100% { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 0 0 0 rgba(91, 95, 255, 0.55); }
+        50% { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 0 0 5px rgba(91, 95, 255, 0); }
+    }
+    @keyframes ytp-shake {
+        0%, 100% { transform: translateX(0); }
+        25% { transform: translateX(-3px); }
+        75% { transform: translateX(3px); }
     }
 
-    .loading-spinner {
-        display: none;
-        width: 24px;
-        height: 24px;
-        border: 3px solid rgba(255, 255, 255, 0.3);
-        border-radius: 50%;
-        border-top-color: white;
-        animation: spin 1s linear infinite;
-    }
-
-    .import-button.loading {
-        pointer-events: none;
-        background: linear-gradient(135deg, #2e2f77 0%, #4e52ff 100%);
-    }
-
-    .import-button.loading .loading-spinner {
-        display: block;
-    }
-
-    .import-button.loading .progress-text {
-        opacity: 0;
-    }
-
-    @keyframes success {
-        0% { 
-            transform: scale(1); 
-            background: linear-gradient(135deg, #2e2f77 0%, #4e52ff 100%); 
-        }
-        50% { 
-            transform: scale(1.1); 
-            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-            box-shadow: 0 8px 25px rgba(34, 197, 94, 0.6);
-        }
-        100% { 
-            transform: scale(1); 
-            background: linear-gradient(135deg, #2e2f77 0%, #4e52ff 100%); 
-        }
-    }
-
-    .import-button.success {
-        animation: success 1.5s ease forwards;
-    }
-
-    .import-button.failure {
-        animation: failure 1.5s ease forwards;
-    }
-
-    /* Enhanced notification styles */
+    /* Notifications */
     .ytp-notification {
         position: fixed;
         bottom: 24px;
         right: 24px;
-        background: linear-gradient(135deg, rgba(46, 47, 119, 0.95) 0%, rgba(78, 82, 255, 0.95) 100%);
-        backdrop-filter: blur(20px);
-        color: white;
-        padding: 16px 20px;
-        border-radius: 16px;
+        background: rgba(17, 17, 24, 0.94);
+        backdrop-filter: blur(14px);
+        color: #ffffff;
+        padding: 14px 16px;
+        border-radius: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-left: 4px solid #5b5fff;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         font-size: 14px;
         font-weight: 500;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-        z-index: 9999;
+        line-height: 1.4;
+        box-shadow: 0 10px 32px rgba(0, 0, 0, 0.35);
+        z-index: 2147483001;
         display: flex;
         align-items: center;
         gap: 12px;
         min-width: 250px;
         max-width: 400px;
-        transform: translateY(150%) scale(0.8);
-        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        box-sizing: border-box;
+        opacity: 0;
+        transform: translateY(16px);
+        transition: opacity 0.25s ease, transform 0.25s ease;
     }
 
     .ytp-notification.show {
-        transform: translateY(0) scale(1);
+        opacity: 1;
+        transform: translateY(0);
     }
 
-    .ytp-notification.error {
-        background: linear-gradient(135deg, rgba(239, 68, 68, 0.95) 0%, rgba(220, 38, 38, 0.95) 100%);
-    }
-
-    .ytp-notification.warning {
-        background: linear-gradient(135deg, rgba(245, 158, 11, 0.95) 0%, rgba(217, 119, 6, 0.95) 100%);
-    }
-
-    .ytp-notification.success {
-        background: linear-gradient(135deg, rgba(34, 197, 94, 0.95) 0%, rgba(22, 163, 74, 0.95) 100%);
-    }
+    .ytp-notification.error { border-left-color: #ef4444; }
+    .ytp-notification.warning { border-left-color: #f59e0b; }
+    .ytp-notification.success { border-left-color: #10b981; }
 
     .ytp-notification-icon {
-        font-size: 24px;
-        filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+        font-size: 20px;
     }
 
     .ytp-notification-content {
         flex: 1;
-        line-height: 1.4;
     }
 
     .ytp-notification-close {
         cursor: pointer;
-        padding: 4px;
         border-radius: 50%;
-        transition: all 0.2s ease;
-        font-size: 16px;
+        font-size: 14px;
         width: 24px;
         height: 24px;
         display: flex;
         align-items: center;
         justify-content: center;
+        opacity: 0.7;
+        transition: background-color 0.15s ease, opacity 0.15s ease;
     }
 
     .ytp-notification-close:hover {
-        background: rgba(255, 255, 255, 0.2);
-        transform: scale(1.1);
-    }
-
-    /* Enhanced focus states for accessibility */
-    .import-button:focus {
-        outline: none;
-        box-shadow: 0 0 0 3px rgba(78, 82, 255, 0.4);
-    }
-
-    /* Server unavailable state */
-    .import-button.server-unavailable {
-        opacity: 0.7;
-        pointer-events: auto;
-    }
-
-    .import-button.server-unavailable:hover {
-        opacity: 0.9;
-        transform: scale(1.02);
-    }
-
-
-
-    /* Server status indicator */
-    .ytp-status-connected {
-        color: #10b981;
-    }
-
-    .ytp-status-disconnected {
-        color: #ef4444;
-    }
-
-    /* Toggle button styles */
-    .ytp-toggle-button {
-        background: linear-gradient(135deg, rgba(46, 47, 119, 0.9) 0%, rgba(78, 82, 255, 0.9) 100%);
-        color: white;
-        border: none;
-        border-radius: 50%;
-        width: 40px;
-        height: 36px;
-        cursor: pointer;
-        position: relative;
-        margin-left: 0;
-        margin-right: 8px;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        box-shadow: 0 2px 8px rgba(46, 47, 119, 0.3);
-        font-family: 'Material Symbols Outlined';
-        font-size: 18px;
-        z-index: 1000;
-        flex-shrink: 0;
-        order: -1000;
-    }
-
-    .ytp-toggle-button:hover {
-        transform: scale(1.1);
-        background: linear-gradient(135deg, rgba(78, 82, 255, 0.9) 0%, rgba(99, 102, 241, 0.9) 100%);
-        box-shadow: 0 4px 15px rgba(78, 82, 255, 0.5);
-    }
-
-    .ytp-toggle-button:active {
-        transform: scale(0.95);
-    }
-
-    .ytp-buttons-container {
-        display: inline-flex !important;
-        align-items: center;
-        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        background: rgba(255, 255, 255, 0.15);
         opacity: 1;
-        transform: translateX(0);
-        max-width: 500px;
-        overflow: visible;
-        padding: 4px;
-        margin: 0 0 0 4px;
-        flex-shrink: 0 !important;
-        order: 999 !important;
-        position: relative !important;
-        z-index: 100 !important;
     }
 
-    .ytp-buttons-container.hidden {
-        opacity: 0;
-        transform: translateX(-20px);
-        max-width: 0;
-        margin: 0;
-        padding: 0;
-        overflow: hidden;
-    }
-
-    .ytp-buttons-container.hidden .import-button {
-        margin: 0;
-        padding: 0;
-        min-width: 0;
-        pointer-events: none;
-        transform: scale(0);
-    }
-
-    .ytp-toggle-button.buttons-hidden {
-        background: linear-gradient(135deg, rgba(107, 114, 128, 0.9) 0%, rgba(75, 85, 99, 0.9) 100%);
-    }
-
-    .ytp-toggle-button.buttons-hidden:hover {
-        background: linear-gradient(135deg, rgba(75, 85, 99, 0.9) 0%, rgba(55, 65, 81, 0.9) 100%);
-    }
-
-    /* Responsive design for space constraints */
-    .ytp-main-container {
-        display: inline-flex !important;
-        align-items: center;
-        transition: all 0.3s ease;
-        margin-left: 16px;
-        overflow: visible;
-        padding: 8px 0;
-        min-width: fit-content;
-        visibility: visible !important;
-        opacity: 1 !important;
-        max-width: 100%;
-        flex-shrink: 1;
-    }
-
-    /* Special styling when in actions container */
-    #actions .ytp-main-container,
-    #actions-inner .ytp-main-container {
-        margin-left: 16px;
-        margin-right: 8px;
-        padding: 0;
-    }
-
-    /* Align with YouTube's action buttons */
-    #actions .ytp-main-container .import-button,
-    #actions-inner .ytp-main-container .import-button {
-        height: 36px;
-        min-width: 85px;
-    }
-
-    /* Fixed container in bottom left corner */
-    .ytp-floating-container {
-        position: fixed !important;
-        z-index: 10000 !important;
-        pointer-events: auto !important;
-        cursor: move !important;
-        user-select: none !important;
-        transition: left 0.3s ease, bottom 0.3s ease, transform 0.2s ease, opacity 0.2s ease !important;
-    }
-    
-    /* Drag handle for moving the container */
-    .ytp-drag-handle {
-        display: none !important;
-    }
-    
-    /* Pin button for fixing position */
-    .ytp-pin-button {
-        display: none !important;
-    }
-    
-    .ytp-floating-container .ytp-main-container {
-        display: inline-flex !important;
-        align-items: center !important;
-        height: 36px !important;
-        z-index: 10001 !important;
-        white-space: nowrap !important;
-        background: rgba(0, 0, 0, 0.2) !important;
-        backdrop-filter: blur(10px) !important;
-        border-radius: 18px !important;
-        padding: 4px 0px 4px 4px !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
-        transition: padding 0.3s ease !important;
-        position: relative !important;
-        cursor: move !important;
-    }
-    
-    .ytp-floating-container.pinned {
-        position: absolute !important;
-    }
-    
-    .ytp-floating-container.dragging {
-        opacity: 0.8 !important;
-        transform: scale(1.02) !important;
-        transition: none !important;
-    }
-    
-    /* Adjust padding when buttons are hidden */
-    .ytp-floating-container .ytp-main-container.buttons-collapsed {
-        padding: 4px !important;
-    }
-    
-    /* Center toggle button when buttons are hidden */
-    .ytp-floating-container .ytp-main-container.buttons-collapsed .ytp-toggle-button {
-        margin: 0 !important;
-    }
-
-    /* Match YouTube's like/dislike button styling exactly */
-    .ytp-floating-container .ytp-main-container .import-button {
-        height: 36px;
-        width: 90px;
-        padding: 0 12px;
-        margin: 0 2px;
-        border-radius: 18px;
-        font-size: 14px;
-        font-weight: 500;
-        line-height: 1;
-        vertical-align: middle;
-        box-sizing: border-box;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .ytp-floating-container .ytp-main-container .ytp-toggle-button {
-        margin-left: 0;
-        margin-right: 8px;
-        width: 40px;
-        height: 36px;
-        vertical-align: middle;
-        box-sizing: border-box;
-    }
-
-    .ytp-main-container.compact {
-        margin-left: 8px;
-    }
-
-    .ytp-main-container.compact .import-button {
-        height: 32px;
-        padding: 0 10px;
-        font-size: 13px;
-        min-width: 56px;
-        margin: 0 3px;
-        border-radius: 16px;
-    }
-
-    .ytp-main-container.compact .progress-text {
-        gap: 4px;
-    }
-
-    .ytp-main-container.compact .ytp-toggle-button {
-        width: 32px;
-        height: 32px;
-        font-size: 16px;
-        margin-left: 6px;
-    }
-
-    .ytp-main-container.compact .button-icon {
-        font-size: 16px;
-    }
-
-    .ytp-main-container.mini {
-        margin-left: 4px;
-    }
-
-    .ytp-main-container.mini .import-button {
-        height: 28px;
-        padding: 0 8px;
-        font-size: 12px;
-        min-width: 48px;
-        margin: 0 2px;
-        border-radius: 14px;
-    }
-
-    .ytp-main-container.mini .progress-text {
-        gap: 3px;
-    }
-
-    .ytp-main-container.mini .ytp-toggle-button {
-        width: 28px;
-        height: 28px;
-        font-size: 14px;
-        margin-left: 4px;
-    }
-
-    .ytp-main-container.mini .button-icon {
-        font-size: 14px;
-    }
-
-    /* Hide text in very compact mode, show only icons */
-    .ytp-main-container.icon-only .import-button {
-        min-width: 36px;
-        padding: 0 6px;
-        height: 30px;
-        margin: 0 2px;
-        border-radius: 15px;
-    }
-
-    .ytp-main-container.icon-only .progress-text {
-        font-size: 0;
-    }
-
-    .ytp-main-container.icon-only .button-icon {
-        margin: 0;
-        font-size: 18px;
-    }
-
-    .ytp-main-container.icon-only .ytp-toggle-button {
-        width: 26px;
-        height: 26px;
-        font-size: 13px;
-    }
-
-    /* Ultra compact mode for extreme space constraints */
-    .ytp-main-container.micro .import-button {
-        min-width: 24px;
-        padding: 0 2px;
-        height: 24px;
-        margin: 0 1px;
-        border-radius: 12px;
-    }
-
-    .ytp-main-container.micro .progress-text {
-        font-size: 0;
-    }
-
-    .ytp-main-container.micro .button-icon {
-        margin: 0;
-        font-size: 14px;
-    }
-
-    .ytp-main-container.micro .ytp-toggle-button {
-        width: 24px;
-        height: 24px;
-        font-size: 12px;
-        margin-left: 2px;
-    }
-
-    .ytp-main-container.micro {
-        margin-left: 2px;
-    }
-
-    /* Progress states for compact modes */
-    .ytp-main-container.icon-only .import-button.importing .progress-text,
-    .ytp-main-container.micro .import-button.importing .progress-text {
-        font-size: 0;
-    }
-
-    .ytp-main-container.icon-only .import-button.importing .button-icon,
-    .ytp-main-container.micro .import-button.importing .button-icon {
-        font-size: inherit;
-        animation: spin 1s linear infinite;
-    }
-
-    .ytp-main-container.icon-only .import-button.importing .button-icon::after,
-    .ytp-main-container.micro .import-button.importing .button-icon::after {
-        content: '⟳';
-        position: absolute;
-        color: white;
-    }
-
-    /* Mobile responsiveness */
     @media (max-width: 768px) {
-        .import-button {
-            height: 32px;
-            padding: 0 10px;
-            font-size: 13px;
-            min-width: 56px;
-            margin: 0 3px;
-        }
-
         .ytp-notification {
             bottom: 16px;
             right: 16px;
             left: 16px;
             max-width: none;
-            padding: 12px 16px;
-        }
-
-        .ytp-toggle-button {
-            width: 32px;
-            height: 32px;
-            font-size: 16px;
-        }
-
-        .ytp-main-container.compact .import-button {
-            height: 28px;
-            padding: 0 8px;
-            font-size: 11px;
-            min-width: 48px;
         }
     }
 `;
 
 document.head.appendChild(styleSheet);
+
+// Icons drawn as inline SVG (no web font: some sites block it, and the icon
+// names showed as words while it loaded). Built with createElementNS, not
+// innerHTML: YouTube enforces Trusted Types.
+const YTP_ICONS = {
+    movie: ['M4 4h16v16H4z', 'M8 4v16', 'M16 4v16', 'M4 8h4', 'M4 12h16', 'M4 16h4', 'M16 8h4', 'M16 16h4'],
+    content_cut: ['M6 3a3 3 0 1 0 0 6a3 3 0 1 0 0-6z', 'M6 15a3 3 0 1 0 0 6a3 3 0 1 0 0-6z',
+                  'M20 4 8.12 15.88', 'M14.47 14.48 20 20', 'M8.12 8.12 12 12'],
+    music_note: ['M9 18V5l12-2v13', 'M6 15a3 3 0 1 0 0 6a3 3 0 1 0 0-6z', 'M18 13a3 3 0 1 0 0 6a3 3 0 1 0 0-6z'],
+    visibility: ['M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z', 'M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6z'],
+    visibility_off: ['M9.88 9.88a3 3 0 1 0 4.24 4.24', 'M10.73 5.08A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68',
+                     'M6.61 6.61A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.39-1.61', 'M2 2l20 20'],
+};
+
+function setButtonIcon(el, name) {
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    while (el.firstChild) el.removeChild(el.firstChild);
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    for (const d of YTP_ICONS[name] || []) {
+        const path = document.createElementNS(SVG_NS, 'path');
+        path.setAttribute('d', d);
+        svg.appendChild(path);
+    }
+    el.appendChild(svg);
+}
+
+function setToggleIcon(toggleButton, visible) {
+    while (toggleButton.firstChild) toggleButton.removeChild(toggleButton.firstChild);
+    const span = document.createElement('span');
+    span.className = 'button-icon';
+    setButtonIcon(span, visible ? 'visibility' : 'visibility_off');
+    toggleButton.appendChild(span);
+}
+
 
 // Button states tracking
 const buttonStates = {
@@ -1494,11 +1224,11 @@ function initializeSocket() {
                     const icon = document.createElement('span');
                     icon.className = 'button-icon';
                     if (button.id === 'send-to-premiere-button') {
-                        icon.textContent = 'movie';
+                        setButtonIcon(icon, 'movie');
                     } else if (button.id === 'clip-button') {
-                        icon.textContent = 'content_cut';
+                        setButtonIcon(icon, 'content_cut');
                     } else if (button.id === 'audio-button') {
-                        icon.textContent = 'music_note';
+                        setButtonIcon(icon, 'music_note');
                     }
                     
                     progressText.appendChild(icon);
@@ -1691,11 +1421,11 @@ function updateProgress(data) {
                 const icon = document.createElement('span');
                 icon.className = 'button-icon';
                 if (button.id === 'send-to-premiere-button') {
-                    icon.textContent = 'movie';
+                    setButtonIcon(icon, 'movie');
                 } else if (button.id === 'clip-button') {
-                    icon.textContent = 'content_cut';
+                    setButtonIcon(icon, 'content_cut');
                 } else if (button.id === 'audio-button') {
-                    icon.textContent = 'music_note';
+                    setButtonIcon(icon, 'music_note');
                 }
                 
                 // Add space and progress text
@@ -1800,11 +1530,11 @@ function createButton(id, text, onClick) {
     const icon = document.createElement('span');
     icon.className = 'button-icon';
     if (id === 'send-to-premiere-button') {
-        icon.textContent = 'movie'; // Video icon
+        setButtonIcon(icon, 'movie'); // Video icon
     } else if (id === 'clip-button') {
-        icon.textContent = 'content_cut'; // Scissors icon for clip
+        setButtonIcon(icon, 'content_cut'); // Scissors icon for clip
     } else if (id === 'audio-button') {
-        icon.textContent = 'music_note'; // Music note icon
+        setButtonIcon(icon, 'music_note'); // Music note icon
     }
 
     const progressText = document.createElement('span');
@@ -1925,11 +1655,11 @@ function resetButtonState(button) {
             const icon = document.createElement('span');
             icon.className = 'button-icon';
             if (btn.id === 'send-to-premiere-button' || btn.id.includes('send-to-premiere')) {
-                icon.textContent = 'movie';
+                setButtonIcon(icon, 'movie');
             } else if (btn.id === 'clip-button' || btn.id.includes('clip')) {
-                icon.textContent = 'content_cut';
+                setButtonIcon(icon, 'content_cut');
             } else if (btn.id === 'audio-button' || btn.id.includes('audio')) {
-                icon.textContent = 'music_note';
+                setButtonIcon(icon, 'music_note');
             }
             
             progressText.appendChild(icon);
@@ -2225,7 +1955,7 @@ function createToggleButton() {
     toggleButton.className = 'ytp-toggle-button';
     toggleButton.id = 'ytp-toggle-visibility';
     toggleButton.title = buttonsVisible ? T('toggleHide') : T('toggleShow');
-    toggleButton.innerHTML = buttonsVisible ? 'visibility' : 'visibility_off';
+    setToggleIcon(toggleButton, buttonsVisible);
     
     if (!buttonsVisible) {
         toggleButton.classList.add('buttons-hidden');
@@ -2271,12 +2001,12 @@ function toggleButtonsVisibility() {
     if (toggleButton) {
         if (buttonsVisible) {
             toggleButton.classList.remove('buttons-hidden');
-            toggleButton.innerHTML = 'visibility';
+            setToggleIcon(toggleButton, true);
             toggleButton.title = T('toggleHide');
             toggleButton.setAttribute('aria-label', 'Masquer les boutons YouTube to Premiere');
         } else {
             toggleButton.classList.add('buttons-hidden');
-            toggleButton.innerHTML = 'visibility_off';
+            setToggleIcon(toggleButton, false);
             toggleButton.title = T('toggleShow');
             toggleButton.setAttribute('aria-label', 'Afficher les boutons YouTube to Premiere');
         }
@@ -2362,13 +2092,12 @@ function makeDraggable(container) {
 }
 
 function startDrag(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    // Don't start drag if clicking on a button
+    // A press on a button is a click, not a drag: leave the event alone
     if (e.target.closest('.import-button, .ytp-toggle-button')) {
         return;
     }
+    e.preventDefault();
+    e.stopPropagation();
     
     const container = document.querySelector('#ytp-floating-container');
     if (!container) return;
@@ -2524,7 +2253,29 @@ function updateContainerPositioning(container) {
     }
     
     console.log('YTP: Updated positioning - isPinned:', isPinned, 'position:', containerPosition);
+    requestAnimationFrame(() => keepContainerOnScreen(container));
 }
+
+// A position saved in a bigger window (or before a resize) could leave the
+// bar outside the viewport, where it looks like the extension does nothing.
+function keepContainerOnScreen(container) {
+    container = container || document.querySelector('#ytp-floating-container');
+    if (!container || isPinned || isDragging) return;
+    const rect = container.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const margin = 8;
+    const maxX = Math.max(margin, window.innerWidth - rect.width - margin);
+    const maxY = Math.max(margin, window.innerHeight - rect.height - margin);
+    const x = Math.min(Math.max(containerPosition.x, margin), maxX);
+    const y = Math.min(Math.max(containerPosition.y, margin), maxY);
+    if (x !== containerPosition.x || y !== containerPosition.y) {
+        containerPosition = { x, y };
+        container.style.left = x + 'px';
+        container.style.bottom = y + 'px';
+    }
+}
+
+window.addEventListener('resize', () => keepContainerOnScreen());
 
 function checkAvailableSpace() {
     const mainContainer = document.getElementById('ytp-main-container');
@@ -3004,8 +2755,8 @@ function handleResetAllSettings(settings) {
     
     // Reset buttons visibility
     if (settings['ytp-buttons-visible'] !== undefined) {
-        buttonsVisible = settings['ytp-buttons-visible'] === 'true';
-        localStorage.setItem('ytp-buttons-visible', buttonsVisible.toString());
+        // toggleButtonsVisibility() flips the flag, so start from the opposite
+        buttonsVisible = settings['ytp-buttons-visible'] !== 'true';
         toggleButtonsVisibility();
     }
     
